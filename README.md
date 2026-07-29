@@ -43,7 +43,7 @@ Docker support has been added to the project via Laravel Sail.
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/Af1ah/unified-attedence.git bio-notifier
+   git clone https://github.com/Af1ah/bio-notifier.git bio-notifier
    cd bio-notifier
    ```
 

@@ -2,7 +2,7 @@
 
 Since we have merged everything into a single, unified application, deploying to a fresh production instance (like a VPS or Laravel Forge) is now incredibly simple. 
 
-You no longer need to worry about custom packages, symlinks, or private repositories. Your entire app lives in one place on GitHub: `https://github.com/Af1ah/unified-attedence`.
+You no longer need to worry about custom packages, symlinks, or private repositories. Your entire app lives in one place on GitHub: `https://github.com/Af1ah/bio-notifier`.
 
 ## Prerequisites
 
@@ -48,7 +48,7 @@ sudo apt install supervisor -y
 ### 1. Clone the Repository
 SSH into your production server and navigate to your web directory (e.g. `/var/www/html`), then clone your repository:
 ```bash
-git clone https://github.com/Af1ah/unified-attedence.git .
+git clone https://github.com/Af1ah/bio-notifier.git .
 ```
 
 ### 2. Install Dependencies
@@ -218,8 +218,8 @@ Docker support has been added to the project via Laravel Sail. This makes it inc
 
 1. **Clone the repository:**
 ```bash
-git clone https://github.com/Af1ah/unified-attedence.git
-cd unified-attedence
+git clone https://github.com/Af1ah/bio-notifier.git
+cd bio-notifier
 ```
 
 2. **Install Composer Dependencies (using a small Docker container):**
