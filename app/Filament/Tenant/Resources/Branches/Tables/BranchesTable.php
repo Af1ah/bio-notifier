@@ -1,0 +1,54 @@
+<?php
+
+namespace App\Filament\Tenant\Resources\Branches\Tables;
+
+use Filament\Actions\BulkActionGroup;
+use Filament\Actions\DeleteBulkAction;
+use Filament\Actions\EditAction;
+use Filament\Tables\Columns\TextColumn;
+use Filament\Tables\Table;
+
+class BranchesTable
+{
+    public static function configure(Table $table): Table
+    {
+        return $table
+            ->columns([
+
+                TextColumn::make('name')
+                    ->searchable(),
+                TextColumn::make('location')
+                    ->searchable(),
+                TextColumn::make('phone_number')
+                    ->searchable(),
+                TextColumn::make('users_count')
+                    ->counts('users')
+                    ->label('Users'),
+                TextColumn::make('devices_count')
+                    ->counts('devices')
+                    ->label('Devices'),
+                TextColumn::make('pin_code')
+                    ->searchable(),
+                TextColumn::make('created_at')
+                    ->dateTime()
+                    ->sortable()
+                    ->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('updated_at')
+                    ->dateTime()
+                    ->sortable()
+                    ->toggleable(isToggledHiddenByDefault: true),
+            ])
+            ->filters([
+                //
+            ])
+            ->recordActions([
+                \Filament\Actions\ViewAction::make(),
+                \Filament\Actions\EditAction::make(),
+            ])
+            ->toolbarActions([
+                BulkActionGroup::make([
+                    DeleteBulkAction::make(),
+                ]),
+            ]);
+    }
+}
