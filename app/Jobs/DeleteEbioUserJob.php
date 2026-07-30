@@ -17,17 +17,19 @@ class DeleteEbioUserJob implements ShouldQueue
 
     public $organisation;
     public $employeeCode;
+    public $location;
 
-    public function __construct(Organisation $organisation, string $employeeCode)
+    public function __construct(Organisation $organisation, string $employeeCode, string $location = '')
     {
         $this->organisation = $organisation;
         $this->employeeCode = $employeeCode;
+        $this->location = $location;
     }
 
     public function handle(EbioSoapService $service): void
     {
         try {
-            $service->deleteUser($this->organisation, $this->employeeCode);
+            $service->deleteUser($this->organisation, $this->employeeCode, $this->location);
         } catch (\Exception $e) {
             Log::error("Failed to delete user {$this->employeeCode} from eBioServer: " . $e->getMessage());
             $this->fail($e);

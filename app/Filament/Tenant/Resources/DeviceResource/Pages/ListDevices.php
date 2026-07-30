@@ -49,6 +49,7 @@ class ListDevices extends ListRecords
                             });
                         })
                         ->required()
+                        ->searchable()
                         ->live()
                         ->afterStateUpdated(fn (callable $set) => $set('command', null))
                         ->default(fn () => \App\Models\Device::count() === 1 ? \App\Models\Device::first()->id : null),
@@ -103,7 +104,76 @@ class ListDevices extends ListRecords
                             ->send();
                     }
                 }),
-            Actions\CreateAction::make(),
+            Actions\CreateAction::make()
+                ->label('Add Device')
+                ->icon('heroicon-o-plus')
+                ->modalHeading('Add New Device to eBioServer')
+                ->form([
+                    \Filament\Schemas\Components\Grid::make(2)->schema([
+                        \Filament\Forms\Components\TextInput::make('serial_number')
+                            ->required()
+                            ->label('Serial Number')
+                            ->columnSpan('full'),
+                        \Filament\Forms\Components\TextInput::make('name')
+                            ->required()
+                            ->label('Device Name'),
+                        \Filament\Forms\Components\TextInput::make('location')
+                            ->required()
+                            ->label('Location'),
+                        \Filament\Forms\Components\Select::make('direction')
+                            ->options(['IN' => 'IN', 'OUT' => 'OUT', 'OTHER' => 'OTHER'])
+                            ->required()
+                            ->label('Direction'),
+                        \Filament\Forms\Components\TextInput::make('device_type')
+                            ->default('Attendance')
+                            ->required()
+                            ->label('Device Type'),
+                        \Filament\Forms\Components\TextInput::make('time_zone')
+                            ->default('Asia/Kolkata')
+                            ->required()
+                            ->label('Time Zone'),
+                        \Filament\Forms\Components\TextInput::make('activation_code')
+                            ->default('0')
+                            ->label('Activation Code'),
+                        \Filament\Forms\Components\Select::make('is_attendance_device')
+                            ->options(['true' => 'Yes', 'false' => 'No'])
+                            ->default('true')
+                            ->required()
+                            ->label('Is Attendance Device'),
+                    ])
+                ])
+                ->using(function (array $data, string $model): \Illuminate\Database\Eloquent\Model {
+                    $service = new \App\Services\EbioSoapService();
+                    
+                    try {
+                        $success = $service->addDevice(tenant(), $data);
+                        if (!$success) {
+                            throw new \Exception("eBioServer API rejected the device addition.");
+                        }
+                    } catch (\Exception $e) {
+                        \Filament\Notifications\Notification::make()
+                            ->title('Add Device Failed')
+                            ->body($e->getMessage())
+                            ->danger()
+                            ->send();
+                        
+                        throw \Illuminate\Validation\ValidationException::withMessages([
+                            'serial_number' => $e->getMessage()
+                        ]);
+                    }
+
+                    return $model::create([
+                        'serial_number' => $data['serial_number'],
+                        'name' => $data['name'],
+                        'status' => 'offline',
+                        'options' => [
+                            'location' => $data['location'],
+                            'direction' => $data['direction'],
+                            'type' => $data['device_type'],
+                            'timezone' => $data['time_zone'],
+                        ]
+                    ]);
+                }),
         ];
     }
 }

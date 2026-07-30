@@ -278,18 +278,100 @@ class UserResource extends Resource
             ->bulkActions([
                 \Filament\Actions\BulkActionGroup::make([
                     \Filament\Actions\DeleteBulkAction::make(),
+                    \Filament\Actions\BulkAction::make('enableUsers')
+                        ->label('Enable on Devices')
+                        ->icon('heroicon-o-check-circle')
+                        ->color('success')
+                        ->form([
+                            \Filament\Forms\Components\Select::make('location')
+                                ->label('Select Device(s)')
+                                ->options(function () {
+                                    return \App\Models\Device::all()->mapWithKeys(function ($d) {
+                                        $loc = $d->options['location'] ?? null;
+                                        return $loc ? [$loc => ($d->name ?: $d->serial_number) . " (Location: $loc)"] : [];
+                                    })->filter()->toArray();
+                                })
+                                ->searchable()
+                                ->multiple()
+                                ->placeholder('Leave blank for all devices'),
+                        ])
+                        ->action(function (\Illuminate\Database\Eloquent\Collection $records, array $data) {
+                            $location = !empty($data['location']) ? (is_array($data['location']) ? implode(',', $data['location']) : $data['location']) : '';
+                            $organisation = tenancy()->tenant;
+                            $count = 0;
+                            foreach ($records as $record) {
+                                $record->update(['is_enabled' => true]);
+                                \App\Jobs\PushEbioUserJob::dispatch($organisation, $record->id, $location);
+                                $count++;
+                            }
+                            \Filament\Notifications\Notification::make()
+                                ->title('Enabled and Queued')
+                                ->body("{$count} user(s) enabled and queued for sync.")
+                                ->success()
+                                ->send();
+                        })
+                        ->deselectRecordsAfterCompletion(),
+                    \Filament\Actions\BulkAction::make('disableUsers')
+                        ->label('Disable on Devices')
+                        ->icon('heroicon-o-x-circle')
+                        ->color('warning')
+                        ->form([
+                            \Filament\Forms\Components\Select::make('location')
+                                ->label('Select Device(s)')
+                                ->options(function () {
+                                    return \App\Models\Device::all()->mapWithKeys(function ($d) {
+                                        $loc = $d->options['location'] ?? null;
+                                        return $loc ? [$loc => ($d->name ?: $d->serial_number) . " (Location: $loc)"] : [];
+                                    })->filter()->toArray();
+                                })
+                                ->searchable()
+                                ->multiple()
+                                ->placeholder('Leave blank for all devices'),
+                        ])
+                        ->action(function (\Illuminate\Database\Eloquent\Collection $records, array $data) {
+                            $location = !empty($data['location']) ? (is_array($data['location']) ? implode(',', $data['location']) : $data['location']) : '';
+                            $organisation = tenancy()->tenant;
+                            $count = 0;
+                            foreach ($records as $record) {
+                                $record->update(['is_enabled' => false]);
+                                \App\Jobs\PushEbioUserJob::dispatch($organisation, $record->id, $location);
+                                $count++;
+                            }
+                            \Filament\Notifications\Notification::make()
+                                ->title('Disabled and Queued')
+                                ->body("{$count} user(s) disabled and queued for sync.")
+                                ->success()
+                                ->send();
+                        })
+                        ->deselectRecordsAfterCompletion(),
                     \Filament\Actions\BulkAction::make('pushToDevice')
                         ->icon('heroicon-o-arrow-up-on-square')
                         ->color('success')
                         ->label('Push to Device / Location')
                         ->form([
-                            \Filament\Forms\Components\TextInput::make('location')
-                                ->label('Location Code (Optional)')
-                                ->placeholder('Leave blank for all locations')
-                                ->hint('Comma separated if multiple locations'),
+                            \Filament\Forms\Components\Select::make('location')
+                                ->label('Select Device(s)')
+                                ->options(function () {
+                                    $devices = \App\Models\Device::all();
+                                    $options = [];
+                                    foreach ($devices as $d) {
+                                        $loc = $d->options['location'] ?? null;
+                                        if ($loc) {
+                                            $label = ($d->name ?: $d->serial_number) . " (Location: $loc)";
+                                            $options[$loc] = $label;
+                                        }
+                                    }
+                                    return $options;
+                                })
+                                ->searchable()
+                                ->multiple()
+                                ->placeholder('Leave blank for all devices'),
                         ])
                         ->action(function (\Illuminate\Database\Eloquent\Collection $records, array $data) {
-                            $location = $data['location'] ?? '';
+                            $location = '';
+                            if (!empty($data['location'])) {
+                                $location = is_array($data['location']) ? implode(',', $data['location']) : $data['location'];
+                            }
                             
                             $organisation = tenancy()->tenant;
                             $count = 0;
@@ -311,12 +393,36 @@ class UserResource extends Resource
                         ->color('danger')
                         ->label('Delete from Devices')
                         ->requiresConfirmation()
-                        ->action(function (\Illuminate\Database\Eloquent\Collection $records) {
+                        ->form([
+                            \Filament\Forms\Components\Select::make('location')
+                                ->label('Select Device(s)')
+                                ->options(function () {
+                                    $devices = \App\Models\Device::all();
+                                    $options = [];
+                                    foreach ($devices as $d) {
+                                        $loc = $d->options['location'] ?? null;
+                                        if ($loc) {
+                                            $label = ($d->name ?: $d->serial_number) . " (Location: $loc)";
+                                            $options[$loc] = $label;
+                                        }
+                                    }
+                                    return $options;
+                                })
+                                ->searchable()
+                                ->multiple()
+                                ->placeholder('Leave blank for all devices'),
+                        ])
+                        ->action(function (\Illuminate\Database\Eloquent\Collection $records, array $data) {
+                            $location = '';
+                            if (!empty($data['location'])) {
+                                $location = is_array($data['location']) ? implode(',', $data['location']) : $data['location'];
+                            }
+                            
                             $organisation = tenancy()->tenant;
                             $count = 0;
                             
                             foreach ($records as $record) {
-                                \App\Jobs\DeleteEbioUserJob::dispatch($organisation, $record->pin);
+                                \App\Jobs\DeleteEbioUserJob::dispatch($organisation, $record->pin, $location);
                                 $count++;
                             }
                             

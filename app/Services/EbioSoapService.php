@@ -258,6 +258,11 @@ class EbioSoapService
         $expiryFrom = $user->valid_from ? \Illuminate\Support\Carbon::parse($user->valid_from)->format('Y-m-d') : '';
         $expiryTo = $user->valid_to ? \Illuminate\Support\Carbon::parse($user->valid_to)->format('Y-m-d') : '';
         
+        // Disable on device by expiring them yesterday
+        if (!$user->is_enabled) {
+            $expiryTo = \Illuminate\Support\Carbon::yesterday()->format('Y-m-d');
+        }
+        
         $verificationType = !empty($photo) ? '15' : ''; // 15 = Face
 
         $xml = '<?xml version="1.0" encoding="utf-8"?>
@@ -306,7 +311,7 @@ class EbioSoapService
     /**
      * Delete user from eBioServer.
      */
-    public function deleteUser(Organisation $organisation, string $employeeCode): bool
+    public function deleteUser(Organisation $organisation, string $employeeCode, string $location = ''): bool
     {
         if (empty($organisation->ebio_url) || empty($organisation->ebio_soap_username)) {
             throw new \Exception("eBioServer SOAP credentials are not configured for this organisation.");
@@ -320,7 +325,13 @@ class EbioSoapService
             <DeleteEmployee xmlns="http://tempuri.org/">
               <UserName>'.$organisation->ebio_soap_username.'</UserName>
               <Password>'.$organisation->ebio_soap_password.'</Password>
-              <EmployeeCode>'.$employeeCode.'</EmployeeCode>
+              <EmployeeCode>'.$employeeCode.'</EmployeeCode>';
+
+        if (!empty($location)) {
+            $xml .= '<Location>'.$location.'</Location>';
+        }
+
+        $xml .= '
             </DeleteEmployee>
           </soap:Body>
         </soap:Envelope>';
@@ -338,8 +349,15 @@ class EbioSoapService
 
         preg_match('/<DeleteEmployeeResult>(.*?)<\/DeleteEmployeeResult>/', $response->body(), $matches);
         $result = $matches[1] ?? '';
+        
+        $resultLower = strtolower($result);
+        
+        // Treat "success" and "not found" variants as successful deletion
+        if ($resultLower === 'success' || str_contains($resultLower, 'not found') || str_contains($resultLower, 'does not exist')) {
+            return true;
+        }
 
-        return strtolower($result) === 'success';
+        return false;
     /**
      * Reboot a device remotely.
      */
@@ -452,6 +470,52 @@ class EbioSoapService
         }
 
         preg_match('/<DeviceCommand_ResetTransactionStampResult>(.*?)<\/DeviceCommand_ResetTransactionStampResult>/', $response->body(), $matches);
+        $result = $matches[1] ?? '';
+
+        return strtolower($result) === 'success';
+    }
+
+    /**
+     * Add or update device on eBioServer.
+     */
+    public function addDevice(Organisation $organisation, array $data): bool
+    {
+        if (empty($organisation->ebio_url) || empty($organisation->ebio_soap_username)) {
+            throw new \Exception("eBioServer SOAP credentials are not configured for this organisation.");
+        }
+
+        $url = rtrim($organisation->ebio_url, '/') . '/webservice.asmx';
+        
+        $xml = '<?xml version="1.0" encoding="utf-8"?>
+        <soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+          <soap:Body>
+            <UpdateDevice xmlns="http://tempuri.org/">
+              <UserName>'.$organisation->ebio_soap_username.'</UserName>
+              <Password>'.$organisation->ebio_soap_password.'</Password>
+              <DeviceSerialNumber>'.$data['serial_number'].'</DeviceSerialNumber>
+              <DeviceName>'.htmlspecialchars($data['name']).'</DeviceName>
+              <DeviceDiretion>'.($data['direction'] ?? '').'</DeviceDiretion>
+              <DeviceType>'.($data['device_type'] ?? '').'</DeviceType>
+              <TimeZone>'.($data['time_zone'] ?? '').'</TimeZone>
+              <DeviceActivationCode>'.($data['activation_code'] ?? '').'</DeviceActivationCode>
+              <Location>'.htmlspecialchars($data['location'] ?? '').'</Location>
+              <IsAttendanceDevice>'.($data['is_attendance_device'] ?? 'true').'</IsAttendanceDevice>
+            </UpdateDevice>
+          </soap:Body>
+        </soap:Envelope>';
+
+        $response = Http::withHeaders([
+            'Content-Type' => 'text/xml; charset=utf-8',
+            'SOAPAction' => '"http://tempuri.org/UpdateDevice"'
+        ])->send('POST', $url, [
+            'body' => $xml
+        ]);
+
+        if (!$response->successful()) {
+            return false;
+        }
+
+        preg_match('/<UpdateDeviceResult>(.*?)<\/UpdateDeviceResult>/', $response->body(), $matches);
         $result = $matches[1] ?? '';
 
         return strtolower($result) === 'success';
