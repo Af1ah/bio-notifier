@@ -38,6 +38,9 @@ class MasterPanelProvider extends PanelProvider
             ->pages([
                 Dashboard::class,
             ])
+            ->spa()
+            ->unsavedChangesAlerts()
+            ->databaseTransactions()
             ->discoverWidgets(in: app_path('Filament/Master/Widgets'), for: 'App\Filament\Master\Widgets')
             ->widgets([
                 AccountWidget::class,

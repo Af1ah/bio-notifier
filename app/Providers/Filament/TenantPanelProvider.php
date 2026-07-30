@@ -38,6 +38,9 @@ class TenantPanelProvider extends PanelProvider
             ->pages([
                 Dashboard::class,
             ])
+            ->spa()
+            ->unsavedChangesAlerts()
+            ->databaseTransactions()
             ->discoverWidgets(in: app_path('Filament/Tenant/Widgets'), for: 'App\Filament\Tenant\Widgets')
             ->widgets([
                 AccountWidget::class,

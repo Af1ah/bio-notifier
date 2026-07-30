@@ -57,6 +57,13 @@ php artisan tenants:migrate --force
 
 **Important:** We enforce strict Database composite unique indexes on `(pin, punched_at)` in the `attendance_logs` table to prevent race-condition data loss. Always ensure tenant migrations run successfully.
 
+### Production Optimizations (Required)
+Always run the following commands after deploying to optimize the framework and Filament's assets:
+```bash
+php artisan optimize
+php artisan filament:optimize
+```
+
 ## 4. Hardware Optimization (2 Core / 4 Core VPS)
 
 If hosting around **50 Tenants / 200 Users per Tenant (10,000 Total Users)**:
