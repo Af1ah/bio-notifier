@@ -4,20 +4,19 @@
 
 @if($reportData)
     <div class="overflow-x-auto" id="report-print-area">
-        <div class="p-4 border-b border-gray-200 dark:border-white/10 flex justify-between items-center print:hidden">
-            <div>
-                <h3 class="text-base font-semibold leading-6 text-gray-950 dark:text-white">
-                    {{ ucfirst($activeTab) }} Attendance Report
-                </h3>
-                @php
-                    $dateRange = $this->getTableFilterState('date_range') ?? [];
-                    $fromDate = $dateRange['from_date'] ?? now()->format('Y-m-d');
-                    $toDate = $dateRange['to_date'] ?? now()->format('Y-m-d');
-                @endphp
-                <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                    {{ \Carbon\Carbon::parse($fromDate)->format('M d, Y') }} - {{ \Carbon\Carbon::parse($toDate)->format('M d, Y') }}
-                </p>
-            </div>
+        <div class="p-4 border-b border-gray-200 dark:border-white/10 text-center print:hidden">
+            <h3 class="text-lg font-semibold leading-6 text-gray-950 dark:text-white">
+                {{ ucfirst($activeTab) }} Attendance Report
+            </h3>
+            @php
+                $dateRange = $this->getTableFilterState('date_range') ?? [];
+                $fromDate = $dateRange['from_date'] ?? now()->format('Y-m-d');
+                $toDate = $dateRange['to_date'] ?? now()->format('Y-m-d');
+            @endphp
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                {{ \Carbon\Carbon::parse($fromDate)->format('M d, Y') }} - {{ \Carbon\Carbon::parse($toDate)->format('M d, Y') }}
+            </p>
+        </div>
         <div id="print-only-header">
             <h2 class="text-center font-bold text-lg text-black">{{ ucfirst($activeTab) }} Status Report (Basic Report)</h2>
             <p class="text-center text-sm text-black mb-4">
@@ -98,6 +97,7 @@
             padding: 0.875rem 1rem;
             border-bottom: 1px solid rgb(229 231 235);
             white-space: nowrap;
+            vertical-align: middle;
         }
         .dark .report-matrix-table th, .dark .report-matrix-table td {
             border-bottom-color: rgba(255, 255, 255, 0.05);
@@ -132,21 +132,32 @@
                 size: landscape;
                 margin: 10mm;
             }
-            body * {
-                visibility: hidden;
+            
+            /* Hide Filament Shell UI and Table Filters/Headers */
+            .fi-sidebar, .fi-topbar, .fi-header, .fi-breadcrumbs, .fi-tabs, .fi-page-header, .fi-ta-header, .fi-ta-actions, .fi-ta-pagination, nav, aside, footer {
+                display: none !important;
             }
-            #report-print-area, #report-print-area * {
-                visibility: visible;
+            
+            /* Force all wrapping containers to allow full overflow printing */
+            html, body, .fi-layout, .fi-main, .fi-page, .fi-main-ctn, main {
+                display: block !important;
+                height: auto !important;
+                min-height: auto !important;
+                position: static !important;
+                overflow: visible !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                background: white !important;
                 color: black !important;
-            }
-            #report-print-area {
-                position: absolute;
-                left: 0;
-                top: 0;
-                width: 100%;
                 box-shadow: none !important;
-                background-color: white !important;
             }
+            
+            /* Reset our specific print area */
+            #report-print-area {
+                width: 100% !important;
+                display: block !important;
+            }
+            
             /* Show our custom print header, hide the normal screen header */
             #print-only-header {
                 display: block !important;

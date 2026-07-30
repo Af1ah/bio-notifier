@@ -114,6 +114,10 @@ class ManageOrganisationAdmins extends Page implements HasTable, HasForms
                             ])
                             ->default('admin')
                             ->required(),
+                        Forms\Components\Hidden::make('privilege')
+                            ->default(14),
+                        Forms\Components\Hidden::make('pin')
+                            ->default(fn () => (string) rand(10000, 99999)),
                     ]),
             ])
             ->actions([
@@ -139,6 +143,10 @@ class ManageOrganisationAdmins extends Page implements HasTable, HasForms
                                 'user' => 'User',
                             ])
                             ->required(),
+                        Forms\Components\Hidden::make('privilege')
+                            ->default(14),
+                        Forms\Components\Hidden::make('pin')
+                            ->default(fn () => (string) rand(10000, 99999)),
                     ]),
                 \Filament\Actions\DeleteAction::make(),
             ])

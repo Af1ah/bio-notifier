@@ -23,11 +23,8 @@ class MasterPanelProvider extends PanelProvider
 {
     public function panel(Panel $panel): Panel
     {
-        $centralDomain = parse_url(env('APP_URL', 'http://localhost'), PHP_URL_HOST);
-
         return $panel
             ->id('master')
-            ->domain($centralDomain)
             ->path('master')
             ->login()
             ->colors([

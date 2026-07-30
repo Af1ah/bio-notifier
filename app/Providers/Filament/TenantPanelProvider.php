@@ -23,13 +23,11 @@ class TenantPanelProvider extends PanelProvider
 {
     public function panel(Panel $panel): Panel
     {
-        $centralDomain = parse_url(env('APP_URL', 'http://localhost'), PHP_URL_HOST);
-
         return $panel
             ->id('tenant')
-            ->domain('{tenant}.' . $centralDomain)
             ->path('admin')
             ->login()
+            ->brandName(fn () => tenant()?->name ?? 'BIO-Notifier')
             ->colors([
                 'primary' => Color::Amber,
             ])

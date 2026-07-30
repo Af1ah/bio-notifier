@@ -35,12 +35,19 @@
         <x-filament::icon-button
             icon="heroicon-m-chevron-left"
             wire:click="previousMonth"
+            wire:loading.attr="disabled"
+            wire:target="previousMonth, nextMonth"
             color="gray"
         />
-        <span>{{ $currentMonth->format('F Y') }}</span>
+        <span class="flex items-center gap-2">
+            {{ $currentMonth->format('F Y') }}
+            <x-filament::loading-indicator wire:loading wire:target="previousMonth, nextMonth" class="h-4 w-4 text-gray-500" />
+        </span>
         <x-filament::icon-button
             icon="heroicon-m-chevron-right"
             wire:click="nextMonth"
+            wire:loading.attr="disabled"
+            wire:target="previousMonth, nextMonth"
             color="gray"
         />
     </div>
@@ -54,148 +61,166 @@
             </tr>
         </thead>
         <tbody>
-            <tr>
-            @for ($i = 0; $i < $firstDayOfMonth; $i++)
-                <td style="padding: 0.5rem; border-radius: 0.5rem; border: 1px solid #e5e7eb; background-color: #f9fafb; opacity: 0.5;"></td>
-            @endfor
+            @php
+                $weeks = [];
+                $currentWeek = [];
+                
+                // pad start
+                for ($i = 0; $i < $firstDayOfMonth; $i++) {
+                    $currentWeek[] = ['type' => 'empty'];
+                }
+                
+                // add days
+                for ($day = 1; $day <= $daysInMonth; $day++) {
+                    $currentWeek[] = ['type' => 'day', 'day' => $day];
+                    if (count($currentWeek) === 7) {
+                        $weeks[] = $currentWeek;
+                        $currentWeek = [];
+                    }
+                }
+                
+                // pad end
+                if (count($currentWeek) > 0) {
+                    while (count($currentWeek) < 7) {
+                        $currentWeek[] = ['type' => 'empty'];
+                    }
+                    $weeks[] = $currentWeek;
+                }
+            @endphp
 
-            @php $currentDayOfWeek = $firstDayOfMonth; @endphp
-
-            @for ($day = 1; $day <= $daysInMonth; $day++)
-                @php
-                    $dateString = $currentMonth->format('Y-m-') . str_pad($day, 2, '0', STR_PAD_LEFT);
-                    $dateObj = \Carbon\Carbon::parse($dateString);
-                    $dayOfWeek = $dateObj->dayOfWeek;
-                    
-                    $dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-                    $dayNameStr = $dayNames[$dayOfWeek];
-                    
-                    $dayLogs = $logs->get($dateString, collect());
-                    $firstPunch = $dayLogs->sortBy('punched_at')->first();
-                    
-                    // Match best schedule
-                    $matchedSchedule = null;
-                    if ($firstPunch && $allSchedules->count() > 0) {
-                        $minDiff = INF;
-                        foreach ($allSchedules as $sched) {
-                            // Check valid dates
-                            if ($sched->valid_from && $dateObj->lt(\Carbon\Carbon::parse($sched->valid_from))) continue;
-                            if ($sched->valid_to && $dateObj->gt(\Carbon\Carbon::parse($sched->valid_to))) continue;
+            @foreach ($weeks as $weekIndex => $week)
+            <tr wire:key="week-{{ $this->year }}-{{ $this->month }}-{{ $weekIndex }}">
+                @foreach ($week as $dayIndex => $cell)
+                    @if ($cell['type'] === 'empty')
+                        <td wire:key="empty-{{ $weekIndex }}-{{ $dayIndex }}-{{ $this->year }}-{{ $this->month }}" style="padding: 0.5rem; border-radius: 0.5rem; border: 1px solid #e5e7eb; background-color: #f9fafb; opacity: 0.5;"></td>
+                    @else
+                        @php
+                            $day = $cell['day'];
+                            $dateString = $currentMonth->format('Y-m-') . str_pad($day, 2, '0', STR_PAD_LEFT);
+                            $dateObj = \Carbon\Carbon::parse($dateString);
+                            $dayOfWeek = $dateObj->dayOfWeek;
                             
-                            $rules = $sched->rules;
+                            $dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+                            $dayNameStr = $dayNames[$dayOfWeek];
                             
-                            if (isset($rules['weekly']['days'][$dayNameStr])) {
-                                $dayConfig = $rules['weekly']['days'][$dayNameStr];
-                                if ($dayConfig['is_working'] ?? false) {
-                                    $schedStart = \Carbon\Carbon::parse($dateString . ' ' . ($dayConfig['start'] ?? '09:00'));
-                                    $diff = abs($firstPunch->punched_at->diffInMinutes($schedStart));
-                                    if ($diff < $minDiff) {
-                                        $minDiff = $diff;
-                                        $matchedSchedule = $sched;
+                            $dayLogs = $logs->get($dateString, collect());
+                            $firstPunch = $dayLogs->sortBy('punched_at')->first();
+                            
+                            // Match best schedule
+                            $matchedSchedule = null;
+                            if ($firstPunch && $allSchedules->count() > 0) {
+                                $minDiff = INF;
+                                foreach ($allSchedules as $sched) {
+                                    // Check valid dates
+                                    if ($sched->valid_from && $dateObj->lt(\Carbon\Carbon::parse($sched->valid_from))) continue;
+                                    if ($sched->valid_to && $dateObj->gt(\Carbon\Carbon::parse($sched->valid_to))) continue;
+                                    
+                                    $rules = $sched->rules;
+                                    
+                                    if (isset($rules['weekly']['days'][$dayNameStr])) {
+                                        $dayConfig = $rules['weekly']['days'][$dayNameStr];
+                                        if ($dayConfig['is_working'] ?? false) {
+                                            $schedStart = \Carbon\Carbon::parse($dateString . ' ' . ($dayConfig['start'] ?? '09:00'));
+                                            $diff = abs($firstPunch->punched_at->diffInMinutes($schedStart));
+                                            if ($diff < $minDiff) {
+                                                $minDiff = $diff;
+                                                $matchedSchedule = $sched;
+                                            }
+                                        }
                                     }
                                 }
                             }
-                        }
-                    }
-                    if (!$matchedSchedule) {
-                        $matchedSchedule = $allSchedules->first(); // fallback
-                    }
+                            if (!$matchedSchedule) {
+                                $matchedSchedule = $allSchedules->first(); // fallback
+                            }
 
-                    $rules = $matchedSchedule ? $matchedSchedule->rules : null;
-                    $isWorkingDay = false;
-                    $expectedStartTime = null;
+                            $rules = $matchedSchedule ? $matchedSchedule->rules : null;
+                            $isWorkingDay = false;
+                            $expectedStartTime = null;
 
-                    if ($rules && isset($rules['weekly']['days'][$dayNameStr])) {
-                        $dayConfig = $rules['weekly']['days'][$dayNameStr];
-                        $isWorkingDay = $dayConfig['is_working'] ?? false;
-                        if ($isWorkingDay) {
-                            $expectedStartTime = $dayConfig['start'] ?? null;
-                        }
-                    }
-
-                    $bgColor = '#f3f4f6';
-                    $borderColor = '#e5e7eb';
-                    $textColor = '#6b7280';
-                    $statusText = '';
-
-                    if ($dateObj->isFuture()) {
-                        // Keep default
-                    } elseif (!$isWorkingDay) {
-                        $bgColor = '#e5e7eb';
-                        $textColor = '#9ca3af';
-                        $statusText = 'Off';
-                    } else {
-                        if ($dayLogs->isEmpty()) {
-                            $bgColor = '#fee2e2';
-                            $borderColor = '#fca5a5';
-                            $textColor = '#b91c1c';
-                            $statusText = 'Absent';
-                        } else {
-                            $isLate = false;
-                            if ($expectedStartTime) {
-                                // Default grace period of 15 minutes if not specified
-                                $gracePeriod = $rules['grace_period'] ?? 15;
-                                $expectedCarbon = \Carbon\Carbon::parse($dateString . ' ' . $expectedStartTime);
-                                if ($firstPunch->punched_at->gt($expectedCarbon->addMinutes($gracePeriod))) {
-                                    $isLate = true;
+                            if ($rules && isset($rules['weekly']['days'][$dayNameStr])) {
+                                $dayConfig = $rules['weekly']['days'][$dayNameStr];
+                                $isWorkingDay = $dayConfig['is_working'] ?? false;
+                                if ($isWorkingDay) {
+                                    $expectedStartTime = $dayConfig['start'] ?? null;
                                 }
                             }
 
-                            if ($isLate) {
-                                $bgColor = '#fef3c7';
-                                $borderColor = '#fcd34d';
-                                $textColor = '#b45309';
-                                $statusText = 'Late/Half';
+                            $bgColor = '#f3f4f6';
+                            $borderColor = '#e5e7eb';
+                            $textColor = '#6b7280';
+                            $statusText = '';
+
+                            if ($dateObj->isFuture()) {
+                                // Keep default
+                            } elseif (!$isWorkingDay) {
+                                $bgColor = '#e5e7eb';
+                                $textColor = '#9ca3af';
+                                $statusText = 'Off';
                             } else {
-                                $bgColor = '#dcfce7';
-                                $borderColor = '#86efac';
-                                $textColor = '#15803d';
-                                $statusText = 'Present';
+                                if ($dayLogs->isEmpty()) {
+                                    $bgColor = '#fee2e2';
+                                    $borderColor = '#fca5a5';
+                                    $textColor = '#b91c1c';
+                                    $statusText = 'Absent';
+                                } else {
+                                    $isLate = false;
+                                    if ($expectedStartTime) {
+                                        // Default grace period of 15 minutes if not specified
+                                        $gracePeriod = $rules['grace_period'] ?? 15;
+                                        $expectedCarbon = \Carbon\Carbon::parse($dateString . ' ' . $expectedStartTime);
+                                        if ($firstPunch->punched_at->gt($expectedCarbon->addMinutes($gracePeriod))) {
+                                            $isLate = true;
+                                        }
+                                    }
+
+                                    if ($isLate) {
+                                        $bgColor = '#fef3c7';
+                                        $borderColor = '#fcd34d';
+                                        $textColor = '#b45309';
+                                        $statusText = 'Late/Half';
+                                    } else {
+                                        $bgColor = '#dcfce7';
+                                        $borderColor = '#86efac';
+                                        $textColor = '#15803d';
+                                        $statusText = 'Present';
+                                    }
+                                }
                             }
-                        }
-                    }
-                    
-                    $shiftLabel = $matchedSchedule ? $matchedSchedule->name : 'No Shift';
-                    if ($matchedSchedule && $expectedStartTime) {
-                        $endTime = $rules['weekly']['days'][$dayNameStr]['end'] ?? '';
-                        $shiftLabel .= ' (' . $expectedStartTime . ' - ' . $endTime . ')';
-                    }
-                    
-                    $logsJs = $dayLogs->sortBy('punched_at')->map(function($l) {
-                        return [
-                            'time' => $l->punched_at->format('h:i A'),
-                            'status' => $l->status_label,
-                            'verify' => $l->verify_type_label,
-                        ];
-                    })->values()->toJson();
-                @endphp
+                            
+                            $shiftLabel = $matchedSchedule ? $matchedSchedule->name : 'No Shift';
+                            if ($matchedSchedule && $expectedStartTime) {
+                                $endTime = $rules['weekly']['days'][$dayNameStr]['end'] ?? '';
+                                $shiftLabel .= ' (' . $expectedStartTime . ' - ' . $endTime . ')';
+                            }
+                            
+                            $logsJs = $dayLogs->sortBy('punched_at')->map(function($l) {
+                                return [
+                                    'time' => $l->punched_at->format('h:i A'),
+                                    'status' => $l->status_label,
+                                    'verify' => $l->verify_type_label,
+                                ];
+                            })->values()->toJson();
+                        @endphp
 
-                <td @click="if({{ $dayLogs->count() }} > 0 || '{{ $statusText }}' !== '') { selectedDate = '{{ $dateObj->format('M d, Y') }}'; selectedShift = '{{ $shiftLabel }}'; selectedLogs = {{ $logsJs }}; $dispatch('open-modal', { id: 'attendance-log-modal' }); }" 
-                    style="padding: 0.5rem; border-radius: 0.5rem; border: 1px solid {{ $borderColor }}; background-color: {{ $bgColor }}; text-align: center; vertical-align: middle; height: 5rem; cursor: pointer; transition: all 0.2s;"
-                    onmouseover="this.style.filter='brightness(0.95)'"
-                    onmouseout="this.style.filter='brightness(1)'">
-                    <div style="font-weight: 700; color: {{ $textColor }};">{{ $day }}</div>
-                    @if($statusText)
-                        <div style="font-size: 0.75rem; color: {{ $textColor }}; margin-top: 0.25rem; font-weight: 600;">{{ $statusText }}</div>
+                        <td wire:key="day-{{ $day }}-{{ $this->year }}-{{ $this->month }}" @click="if({{ $dayLogs->count() }} > 0 || '{{ $statusText }}' !== '') { selectedDate = '{{ $dateObj->format('M d, Y') }}'; selectedShift = '{{ $shiftLabel }}'; selectedLogs = {{ $logsJs }}; $dispatch('open-modal', { id: 'attendance-log-modal' }); }" 
+                            style="padding: 0.5rem; border-radius: 0.5rem; border: 1px solid {{ $borderColor }}; background-color: {{ $bgColor }}; text-align: center; vertical-align: middle; height: 5rem; cursor: pointer; transition: all 0.2s;"
+                            onmouseover="this.style.filter='brightness(0.95)'"
+                            onmouseout="this.style.filter='brightness(1)'">
+                            <div style="font-weight: 700; color: {{ $textColor }};">{{ $day }}</div>
+                            @if($statusText)
+                                <div style="font-size: 0.75rem; color: {{ $textColor }}; margin-top: 0.25rem; font-weight: 600;">{{ $statusText }}</div>
+                            @endif
+                            @if($dayLogs->isNotEmpty())
+                                <div style="font-size: 0.65rem; color: #6b7280; margin-top: 0.25rem;" title="Matched Shift: {{ $shiftLabel }}">
+                                    {{ $firstPunch->punched_at->format('h:i A') }}
+                                </div>
+                            @endif
+                        </td>
                     @endif
-                    @if($dayLogs->isNotEmpty())
-                        <div style="font-size: 0.65rem; color: #6b7280; margin-top: 0.25rem;" title="Matched Shift: {{ $shiftLabel }}">
-                            {{ $firstPunch->punched_at->format('h:i A') }}
-                        </div>
-                    @endif
-                </td>
-
-                @php $currentDayOfWeek++; @endphp
-                @if ($currentDayOfWeek === 7 && $day !== $daysInMonth)
-                    </tr><tr>
-                    @php $currentDayOfWeek = 0; @endphp
-                @endif
-            @endfor
-
-            @for ($i = $currentDayOfWeek; $i < 7; $i++)
-                <td style="padding: 0.5rem; border-radius: 0.5rem; border: 1px solid #e5e7eb; background-color: #f9fafb; opacity: 0.5;"></td>
-            @endfor
+                @endforeach
             </tr>
+            @endforeach
         </tbody>
     </table>
 

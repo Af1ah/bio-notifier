@@ -98,8 +98,8 @@ class DeviceResource extends Resource
             ])
             ->recordActions([
                 ViewAction::make(),
-                \Filament\Tables\Actions\ActionGroup::make([
-                    \Filament\Tables\Actions\Action::make('reboot')
+                \Filament\Actions\ActionGroup::make([
+                    \Filament\Actions\Action::make('reboot')
                         ->label('Reboot Device')
                         ->icon('heroicon-o-power')
                         ->requiresConfirmation()
@@ -111,7 +111,7 @@ class DeviceResource extends Resource
                                 ->success()
                                 ->send();
                         }),
-                    \Filament\Tables\Actions\Action::make('clearLogs')
+                    \Filament\Actions\Action::make('clearLogs')
                         ->label('Clear Logs')
                         ->icon('heroicon-o-trash')
                         ->requiresConfirmation()
@@ -124,7 +124,7 @@ class DeviceResource extends Resource
                                 ->success()
                                 ->send();
                         }),
-                    \Filament\Tables\Actions\Action::make('forceFetchLogs')
+                    \Filament\Actions\Action::make('forceFetchLogs')
                         ->label('Force Fetch Logs')
                         ->icon('heroicon-o-arrow-down-tray')
                         ->requiresConfirmation()

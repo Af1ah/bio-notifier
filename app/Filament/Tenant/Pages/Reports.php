@@ -123,7 +123,24 @@ class Reports extends Page implements HasTable, HasForms
 
     public function downloadPdf()
     {
-        $this->dispatch('print-report');
+        $reportData = $this->generateReportData();
+        if (!$reportData) return;
+        
+        $dateRange = $this->getTableFilterState('date_range') ?? [];
+        $fromDate = $dateRange['from_date'] ?? now()->format('Y-m-d');
+        $toDate = $dateRange['to_date'] ?? now()->format('Y-m-d');
+        
+        $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('filament.tenant.pages.pdf.report-matrix', [
+            'reportData' => $reportData,
+            'activeTab' => $this->activeTab,
+            'fromDate' => $fromDate,
+            'toDate' => $toDate,
+            'tenantName' => \Filament\Facades\Filament::getTenant()?->name ?? 'Company Name'
+        ])->setPaper('a4', 'landscape');
+
+        return response()->streamDownload(function () use ($pdf) {
+            echo $pdf->output();
+        }, $this->activeTab . '_report_' . now()->format('Y-m-d') . '.pdf');
     }
 
     public function table(Table $table): Table

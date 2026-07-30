@@ -31,9 +31,41 @@ Route::group([
 Route::post('login', [MatrixController::class, 'login']);
 Route::match(['get', 'post'], 'matrix/{path?}', [MatrixController::class, 'handle'])->where('path', '.*');
 
-Route::get('/{tenant}/impersonate', function () {
-    $user = \App\Models\User::first();
+Route::get('/{tenant}/impersonate', function ($tenantKey) {
+    $tenant = \App\Models\Organisation::where('shortname', $tenantKey)->orWhere('id', $tenantKey)->firstOrFail();
     
+    $centralDomain = request()->getHost();
+    $port = request()->getPort();
+    $scheme = request()->getScheme();
+    $portSuffix = in_array($port, [80, 443]) ? '' : ':' . $port;
+    
+    $tenantUrl = $scheme . '://' . $tenant->shortname . '.' . $centralDomain . $portSuffix;
+
+    $payload = encrypt([
+        'tenant_id' => $tenant->id,
+        'expires_at' => now()->addMinutes(1)->timestamp,
+    ]);
+
+    return redirect($tenantUrl . '/magic-login?payload=' . urlencode($payload));
+})->name('tenant.impersonate')->middleware(['web', 'signed']);
+
+Route::get('/magic-login', function () {
+    $payload = request()->query('payload');
+    if (!$payload) {
+        abort(403, 'Missing impersonation payload.');
+    }
+
+    try {
+        $data = decrypt($payload);
+    } catch (\Exception $e) {
+        abort(403, 'Invalid impersonation token format.');
+    }
+    
+    if (now()->timestamp > $data['expires_at'] || tenant('id') !== $data['tenant_id']) {
+        abort(403, 'Expired or unauthorized impersonation token.');
+    }
+    
+    $user = \App\Models\User::where('privilege', 14)->first();
     if (! $user) {
         $user = \App\Models\User::create([
             'name' => 'Admin',
@@ -41,11 +73,10 @@ Route::get('/{tenant}/impersonate', function () {
             'password' => \Illuminate\Support\Facades\Hash::make(\Illuminate\Support\Str::random(16)),
             'role' => 'admin',
             'privilege' => 14,
-            'pin' => '1',
+            'pin' => (string) rand(100000000, 999999999),
         ]);
     }
     
     \Illuminate\Support\Facades\Auth::guard('web')->login($user);
-    $tenantKey = tenant('shortname') ?: tenant('id');
-    return redirect('/' . $tenantKey . '/admin');
-})->name('tenant.impersonate')->middleware(['web', \App\Http\Middleware\InitializeTenancyByShortname::class, 'signed']);
+    return redirect('/admin');
+})->middleware(['web', \Stancl\Tenancy\Middleware\InitializeTenancyByDomain::class]);

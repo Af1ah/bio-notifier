@@ -75,9 +75,17 @@ class Organisation extends BaseTenant implements TenantWithDatabase
         static::created(function ($tenant) {
             // Automatically create a subdomain based on the tenant's shortname
             $centralDomain = parse_url(env('APP_URL', 'http://localhost'), PHP_URL_HOST);
+            
             $tenant->domains()->create([
                 'domain' => $tenant->shortname . '.' . $centralDomain
             ]);
+
+            // Also create a localhost domain for easy local testing
+            if ($centralDomain !== 'localhost') {
+                $tenant->domains()->create([
+                    'domain' => $tenant->shortname . '.localhost'
+                ]);
+            }
         });
     }
 }
