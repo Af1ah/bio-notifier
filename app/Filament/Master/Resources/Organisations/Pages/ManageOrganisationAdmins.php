@@ -32,34 +32,20 @@ class ManageOrganisationAdmins extends Page implements HasTable, HasForms
 
     public function boot(): void
     {
-        $recordId = request()->route('record') ?? request()->input('components.0.snapshot');
-        // Livewire 3 snapshot handling for record
-        if (!$recordId && isset($this->record)) {
-            $recordId = $this->record->id ?? $this->record;
-        }
-
-        if (is_string($recordId) && str_contains($recordId, '{')) {
-            // Livewire snapshot JSON parsing
-            $snapshot = json_decode($recordId, true);
+        $id = request()->route('record');
+        
+        // Handle Livewire 3 snapshot requests where route parameter is missing
+        if (!$id && request()->has('components.0.snapshot')) {
+            $snapshot = json_decode(request()->input('components.0.snapshot'), true);
             if (isset($snapshot['data']['record'])) {
-                $recordId = $snapshot['data']['record'];
+                $id = $snapshot['data']['record'];
             }
         }
-        
-        // Simpler: let's just resolve the record
-        // In Filament page, $this->record is usually hydrated automatically.
-        if (isset($this->record) && $this->record instanceof \App\Models\Organisation) {
-            tenancy()->initialize($this->record);
-        } else {
-            $id = request()->route('record');
-            if ($id) {
-                $tenant = \App\Models\Organisation::find($id);
-                if ($tenant) {
-                    tenancy()->initialize($tenant);
-                }
-            } else {
-                // If Livewire request, we can get it from the component state
-                // We will rely on mount() to set it first.
+
+        if ($id) {
+            $tenant = \App\Models\Organisation::find($id);
+            if ($tenant) {
+                tenancy()->initialize($tenant);
             }
         }
     }
@@ -104,8 +90,7 @@ class ManageOrganisationAdmins extends Page implements HasTable, HasForms
                         Forms\Components\TextInput::make('password')
                             ->password()
                             ->required()
-                            ->maxLength(255)
-                            ->dehydrateStateUsing(fn ($state) => Hash::make($state)),
+                            ->maxLength(255),
                         Forms\Components\Select::make('role')
                             ->options([
                                 'admin' => 'Admin',
@@ -134,7 +119,6 @@ class ManageOrganisationAdmins extends Page implements HasTable, HasForms
                         Forms\Components\TextInput::make('password')
                             ->password()
                             ->maxLength(255)
-                            ->dehydrateStateUsing(fn ($state) => Hash::make($state))
                             ->dehydrated(fn ($state) => filled($state)),
                         Forms\Components\Select::make('role')
                             ->options([
