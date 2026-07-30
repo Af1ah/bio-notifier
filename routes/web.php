@@ -34,20 +34,35 @@ Route::match(['get', 'post'], 'matrix/{path?}', [MatrixController::class, 'handl
 Route::get('/{tenant}/impersonate', function ($tenantKey) {
     $tenant = \App\Models\Organisation::where('shortname', $tenantKey)->orWhere('id', $tenantKey)->firstOrFail();
     
-    $centralDomain = request()->getHost();
-    $port = request()->getPort();
-    $scheme = request()->getScheme();
-    $portSuffix = in_array($port, [80, 443]) ? '' : ':' . $port;
+    // --- DOMAIN-BASED TENANCY (Commented out for future use) ---
+    // $centralDomain = request()->getHost();
+    // $port = request()->getPort();
+    // $scheme = request()->getScheme();
+    // $portSuffix = in_array($port, [80, 443]) ? '' : ':' . $port;
+    // $domain = $tenant->domains->first()->domain ?? ($tenant->shortname . '.' . $centralDomain);
+    // $tenantUrl = $scheme . '://' . $domain . $portSuffix;
+    // $payload = encrypt([
+    //     'tenant_id' => $tenant->id,
+    //     'expires_at' => now()->addMinutes(1)->timestamp,
+    // ]);
+    // return redirect($tenantUrl . '/magic-login?payload=' . urlencode($payload));
+
+    // --- PATH-BASED TENANCY (Currently Active) ---
+    $user = \App\Models\User::where('privilege', 14)->first();
+    if (! $user) {
+        $user = \App\Models\User::create([
+            'name' => 'Admin',
+            'email' => 'admin@zkteco.local',
+            'password' => \Illuminate\Support\Facades\Hash::make(\Illuminate\Support\Str::random(16)),
+            'role' => 'admin',
+            'privilege' => 14,
+            'pin' => (string) rand(100000000, 999999999),
+        ]);
+    }
     
-    $tenantUrl = $scheme . '://' . $tenant->shortname . '.' . $centralDomain . $portSuffix;
-
-    $payload = encrypt([
-        'tenant_id' => $tenant->id,
-        'expires_at' => now()->addMinutes(1)->timestamp,
-    ]);
-
-    return redirect($tenantUrl . '/magic-login?payload=' . urlencode($payload));
-})->name('tenant.impersonate')->middleware(['web', 'signed']);
+    \Illuminate\Support\Facades\Auth::guard('web')->login($user);
+    return redirect('/' . $tenant->shortname . '/admin');
+})->name('tenant.impersonate')->middleware(['web', \App\Http\Middleware\InitializeTenancyByShortname::class, 'signed']);
 
 Route::get('/magic-login', function () {
     $payload = request()->query('payload');

@@ -23,9 +23,14 @@ class TenantPanelProvider extends PanelProvider
 {
     public function panel(Panel $panel): Panel
     {
+        // Uncomment the domain line and path('admin') for subdomain routing
+        // $centralDomain = parse_url(env('APP_URL', 'http://localhost'), PHP_URL_HOST);
+
         return $panel
             ->id('tenant')
-            ->path('admin')
+            // ->domain('{tenant}.' . $centralDomain)
+            // ->path('admin')
+            ->path('{tenant}/admin')
             ->login()
             ->brandName(fn () => tenant()?->name ?? 'BIO-Notifier')
             ->colors([
@@ -43,7 +48,8 @@ class TenantPanelProvider extends PanelProvider
             ->widgets([
             ])
             ->middleware([
-                \Stancl\Tenancy\Middleware\InitializeTenancyByDomain::class,
+                // \Stancl\Tenancy\Middleware\InitializeTenancyByDomain::class,
+                \App\Http\Middleware\InitializeTenancyByShortname::class,
                 EncryptCookies::class,
                 AddQueuedCookiesToResponse::class,
                 StartSession::class,
