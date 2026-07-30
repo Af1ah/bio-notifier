@@ -31,8 +31,8 @@ Route::group([
 Route::post('login', [MatrixController::class, 'login']);
 Route::match(['get', 'post'], 'matrix/{path?}', [MatrixController::class, 'handle'])->where('path', '.*');
 
-Route::get('/{tenant}/impersonate', function ($tenantKey) {
-    $tenant = \App\Models\Organisation::where('shortname', $tenantKey)->orWhere('id', $tenantKey)->firstOrFail();
+Route::get('/{tenant}/impersonate', function () {
+    $tenant = tenant();
     
     // --- DOMAIN-BASED TENANCY (Commented out for future use) ---
     // $centralDomain = request()->getHost();
