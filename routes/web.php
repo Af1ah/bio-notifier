@@ -3,7 +3,7 @@
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
-    return redirect('/admin');
+    return redirect('/master');
 });
 
 use App\Http\Controllers\Api\Attendance\CDataController;

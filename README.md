@@ -38,6 +38,7 @@ Built on Laravel and the Filament admin panel, it acts as a centralized notifica
 ## ⚙️ Setup & Installation
 
 For production deployments, please refer to the detailed [Deploy.md](./Deploy.md) guide included in this repository. 
+For a complete architectural overview and implementation guidelines, refer to the [Guide.md](./Guide.md) file.
 
 ### Local Development (via Docker/Sail)
 

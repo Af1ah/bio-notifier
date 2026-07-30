@@ -138,24 +138,30 @@ sudo supervisorctl update
 sudo supervisorctl start unified-attendance-worker:*
 ```
 
-### 8. Web Server Configuration (Nginx & Custom Ports)
+### 8. Web Server Configuration (Nginx & Multi-Tenancy)
 
-Instead of using `php artisan serve`, you must configure a production-ready Nginx virtual host. This configuration serves the application securely and allows you to easily run it on a custom port if needed.
+Bio-Notifier uses an isolated domain-based routing system for tenants. To allow clients to have their own domains (like `client1.noti.ariise.cloud`) without breaking other apps on your server, you need to set up a wildcard properly in Nginx.
 
+**DNS Configuration in your Registrar:**
+1. Point an A-record for your base domain (e.g. `noti.ariise.cloud`) to your server IP.
+2. Point a Wildcard A-record (e.g. `*.noti.ariise.cloud`) to your server IP.
+
+**Nginx Setup:**
 1. Create a new Nginx server block configuration:
 ```bash
 sudo nano /etc/nginx/sites-available/unified-attendance
 ```
 
-2. Add the following standard Nginx setup. By default, this uses port `80`. **If you want to use a custom port (e.g., `8080`)**, simply change `listen 80;` to `listen 8080;`.
+2. Add the following standard Nginx setup. Ensure you explicitly list the wildcard in `server_name` so Nginx routes all tenant traffic here!
 
 ```nginx
 server {
     listen 80;
     listen [::]:80;
-    # Change port above if you want a custom port, e.g., listen 8080;
 
-    server_name your_domain_or_IP;
+    # Explicitly catch the master domain AND all subdomains
+    server_name noti.ariise.cloud *.noti.ariise.cloud;
+    
     root /var/www/html/public; # IMPORTANT: This MUST point to the /public directory!
 
     add_header X-Frame-Options "SAMEORIGIN";
@@ -193,6 +199,16 @@ sudo ln -s /etc/nginx/sites-available/unified-attendance /etc/nginx/sites-enable
 sudo nginx -t
 sudo systemctl restart nginx
 ```
+
+### 9. Environment Variables (.env)
+
+Make sure your `.env` contains the correct routing information so the system knows how to build tenant URLs correctly.
+
+```env
+APP_URL=https://noti.ariise.cloud
+CENTRAL_DOMAIN=noti.ariise.cloud
+```
+*Note: Setting `CENTRAL_DOMAIN` guarantees that when you create a tenant named "client1", their URL becomes `client1.noti.ariise.cloud` perfectly without stacking extra domains.*
 
 ## Configuring the Attendance Devices
 
