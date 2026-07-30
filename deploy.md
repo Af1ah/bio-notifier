@@ -8,6 +8,16 @@ Bio-Notifier uses an isolated domain-based routing system for tenants.
 * The Master Admin logs into the root domain (e.g., `https://noti.aflahdev.in/master`).
 * Tenant clients log into their specific subdomains (e.g., `https://company.noti.aflahdev.in/admin`).
 
+### Controlling the Tenant Subdomain (The `CENTRAL_DOMAIN` variable)
+By default, if your `APP_URL` is `https://noti.company.com`, creating a new tenant named "abc" will stack the subdomains and generate **`abc.noti.company.com`**. 
+
+If you want tenant subdomains to be cleaner, like **`abc.company.com`**, you can force the system to use a specific base domain.
+To do this, simply add this line to your `.env` file:
+```env
+CENTRAL_DOMAIN=company.com
+```
+With this setting, the system ignores the `noti` part when creating new tenants and attaches their name directly to `company.com`.
+
 ### DNS Configuration
 You must configure a **Wildcard DNS A-Record** in your domain registrar (e.g., Cloudflare, Route53, Namecheap):
 - **Type:** `A`
