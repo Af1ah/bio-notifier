@@ -16,15 +16,17 @@ Built on Laravel and the Filament admin panel, it acts as a centralized notifica
 - **Automated Compilations:** Generates attendance reports including working hours, present/absent statistics, and late marks.
 - **Filament Integration:** Data visualizations and tables built natively into the beautiful Filament admin dashboard.
 
-### 🏢 Multi-Tenancy Architecture
-- Robust multi-tenant environment powered by `stancl/tenancy`, ensuring complete data isolation.
-- Seamlessly manage multiple organizations, companies, or branches from a single master dashboard.
-- Tenant-specific device management and webhook generation.
+### 🏢 Multi-Tenancy Architecture (Subdomain Routing)
+- Robust multi-tenant environment powered by `stancl/tenancy` ensuring complete PostgreSQL database isolation.
+- **Automated Subdomain Provisioning:** Instantly spins up a new isolated domain (e.g., `company.bionotifier.com/admin`) upon company creation.
+- **Zero Cross-Data Bleed:** Central Master Admin panel and Tenant Admin panels operate on completely decoupled routing networks.
 
-### 🔌 Hardware Integration & Device Sync
-- **eBio Server Webhooks:** Fully compatible with eBioServer AES-encrypted payload structure.
-- **ZKTeco / Hikvision Support:** Direct fallback integration capabilities for pushing user data back to the hardware.
-- Background job processing to ensure non-blocking, reliable data synchronization from physical devices.
+### 🔌 Hardware Integration & Full SOAP Device Sync
+- **eBio Server Webhooks (Fire & Forget):** Asynchronous queue-based architecture capable of handling thousands of simultaneous device pings in <10ms to prevent device lockups.
+- **Biometric Pushing & Pulling:** Push employee details to devices natively.
+- **Advanced Device Commands:** Supports deleting users from specific devices, setting employee expiration dates, and triggering remote device fetches/reboots via SOAP API integration.
+- **Biometric Face & Fingerprint Uploads:** Support for extracting and syncing Base64 biometric templates (Face ID & Fingerprints) across mixed hardware.
+- **ZKTeco / Hikvision / Matrix Support:** Direct fallback integration capabilities for pushing user data back to legacy hardware.
 
 ## 🛠️ Technology Stack
 - **Framework:** [Laravel](https://laravel.com/) (PHP 8.2+)

@@ -69,4 +69,15 @@ class Organisation extends BaseTenant implements TenantWithDatabase
     {
         return $this->where('shortname', $value)->orWhere('id', $value)->firstOrFail();
     }
+
+    protected static function booted()
+    {
+        static::created(function ($tenant) {
+            // Automatically create a subdomain based on the tenant's shortname
+            $centralDomain = parse_url(env('APP_URL', 'http://localhost'), PHP_URL_HOST);
+            $tenant->domains()->create([
+                'domain' => $tenant->shortname . '.' . $centralDomain
+            ]);
+        });
+    }
 }

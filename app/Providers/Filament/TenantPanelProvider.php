@@ -23,9 +23,12 @@ class TenantPanelProvider extends PanelProvider
 {
     public function panel(Panel $panel): Panel
     {
+        $centralDomain = parse_url(env('APP_URL', 'http://localhost'), PHP_URL_HOST);
+
         return $panel
             ->id('tenant')
-            ->path('{tenant}/admin')
+            ->domain('{tenant}.' . $centralDomain)
+            ->path('admin')
             ->login()
             ->colors([
                 'primary' => Color::Amber,
@@ -41,7 +44,7 @@ class TenantPanelProvider extends PanelProvider
                 FilamentInfoWidget::class,
             ])
             ->middleware([
-                \App\Http\Middleware\InitializeTenancyByShortname::class,
+                \Stancl\Tenancy\Middleware\InitializeTenancyByDomain::class,
                 EncryptCookies::class,
                 AddQueuedCookiesToResponse::class,
                 StartSession::class,
