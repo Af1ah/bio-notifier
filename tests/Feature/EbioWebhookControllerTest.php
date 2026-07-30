@@ -12,6 +12,7 @@ class EbioWebhookControllerTest extends TestCase
 {
     public function tearDown(): void
     {
+        tenancy()->end();
         // Clean up physically created databases
         foreach (Organisation::all() as $org) {
             $org->delete();
@@ -31,13 +32,10 @@ class EbioWebhookControllerTest extends TestCase
     {
         Queue::fake();
 
-        $organisation = Organisation::withoutEvents(function () {
-            return Organisation::create([
-                'id' => '0c93ecb4-b72a-4528-b12d-659dc44693c0',
-                'name' => 'Test Org',
-                'db_name' => 'test_org',
-            ]);
-        });
+        $organisation = Organisation::create([
+            'name' => 'Test Org',
+            'db_name' => 'test_org_controller_1',
+        ]);
 
         $payload = [
             [
@@ -64,13 +62,10 @@ class EbioWebhookControllerTest extends TestCase
     {
         Queue::fake();
 
-        $organisation = Organisation::withoutEvents(function () {
-            return Organisation::create([
-                'id' => '0c93ecb4-b72a-4528-b12d-659dc44693c1',
-                'name' => 'Test Org 2',
-                'db_name' => 'test_org_2',
-            ]);
-        });
+        $organisation = Organisation::create([
+            'name' => 'Test Org 2',
+            'db_name' => 'test_org_controller_2',
+        ]);
 
         $payload = [
             'EmployeeCode' => '1002',
