@@ -234,4 +234,226 @@ class EbioSoapService
 
         return ['synced' => $synced];
     }
+
+    /**
+     * Push or update user data on eBioServer (which pushes to devices based on location).
+     */
+    public function pushUser(Organisation $organisation, User $user, string $location = ''): bool
+    {
+        if (empty($organisation->ebio_url) || empty($organisation->ebio_soap_username)) {
+            throw new \Exception("eBioServer SOAP credentials are not configured for this organisation.");
+        }
+
+        $url = rtrim($organisation->ebio_url, '/') . '/webservice.asmx';
+        
+        $role = $user->privilege == 14 ? 'Admin Users' : 'Normal Users';
+        $cardNumber = $user->card_number ?? '';
+        
+        // EmployeePhoto base64 can be included if available.
+        $photo = '';
+        if (!empty($user->face_templates)) {
+            $photo = is_array($user->face_templates) ? ($user->face_templates[0] ?? '') : $user->face_templates;
+        }
+        
+        $expiryFrom = $user->valid_from ? \Illuminate\Support\Carbon::parse($user->valid_from)->format('Y-m-d') : '';
+        $expiryTo = $user->valid_to ? \Illuminate\Support\Carbon::parse($user->valid_to)->format('Y-m-d') : '';
+        
+        $verificationType = !empty($photo) ? '15' : ''; // 15 = Face
+
+        $xml = '<?xml version="1.0" encoding="utf-8"?>
+        <soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+          <soap:Body>
+            <UpdateEmployeeEx xmlns="http://tempuri.org/">
+              <UserName>'.$organisation->ebio_soap_username.'</UserName>
+              <Password>'.$organisation->ebio_soap_password.'</Password>
+              <EmployeeCode>'.$user->pin.'</EmployeeCode>
+              <EmployeeName>'.htmlspecialchars($user->name).'</EmployeeName>
+              <EmployeeLocation>'.$location.'</EmployeeLocation>
+              <EmployeeRole>'.$role.'</EmployeeRole>
+              <EmployeeVerificationType>'.$verificationType.'</EmployeeVerificationType>
+              <EmployeeExpiryFrom>'.$expiryFrom.'</EmployeeExpiryFrom>
+              <EmployeeExpiryTo>'.$expiryTo.'</EmployeeExpiryTo>
+              <EmployeeCardNumber>'.$cardNumber.'</EmployeeCardNumber>
+              <GroupId>'.($user->group ?? 1).'</GroupId>
+              <EmployeePhoto>'.$photo.'</EmployeePhoto>
+            </UpdateEmployeeEx>
+          </soap:Body>
+        </soap:Envelope>';
+
+        $response = Http::withHeaders([
+            'Content-Type' => 'text/xml; charset=utf-8',
+            'SOAPAction' => '"http://tempuri.org/UpdateEmployeeEx"'
+        ])->send('POST', $url, [
+            'body' => $xml
+        ]);
+
+        if (!$response->successful()) {
+            Log::error("eBioServer Webhook: Failed to push user {$user->pin} to eBioServer. HTTP Status: " . $response->status());
+            return false;
+        }
+
+        preg_match('/<UpdateEmployeeExResult>(.*?)<\/UpdateEmployeeExResult>/', $response->body(), $matches);
+        $result = $matches[1] ?? '';
+
+        if ($result === 'success' || strtolower($result) === 'success') {
+            return true;
+        }
+        
+        Log::error("eBioServer Webhook: API returned error for UpdateEmployeeEx for user {$user->pin}: {$result}");
+        return false;
+    }
+
+    /**
+     * Delete user from eBioServer.
+     */
+    public function deleteUser(Organisation $organisation, string $employeeCode): bool
+    {
+        if (empty($organisation->ebio_url) || empty($organisation->ebio_soap_username)) {
+            throw new \Exception("eBioServer SOAP credentials are not configured for this organisation.");
+        }
+
+        $url = rtrim($organisation->ebio_url, '/') . '/webservice.asmx';
+        
+        $xml = '<?xml version="1.0" encoding="utf-8"?>
+        <soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+          <soap:Body>
+            <DeleteEmployee xmlns="http://tempuri.org/">
+              <UserName>'.$organisation->ebio_soap_username.'</UserName>
+              <Password>'.$organisation->ebio_soap_password.'</Password>
+              <EmployeeCode>'.$employeeCode.'</EmployeeCode>
+            </DeleteEmployee>
+          </soap:Body>
+        </soap:Envelope>';
+
+        $response = Http::withHeaders([
+            'Content-Type' => 'text/xml; charset=utf-8',
+            'SOAPAction' => '"http://tempuri.org/DeleteEmployee"'
+        ])->send('POST', $url, [
+            'body' => $xml
+        ]);
+
+        if (!$response->successful()) {
+            return false;
+        }
+
+        preg_match('/<DeleteEmployeeResult>(.*?)<\/DeleteEmployeeResult>/', $response->body(), $matches);
+        $result = $matches[1] ?? '';
+
+        return strtolower($result) === 'success';
+    /**
+     * Reboot a device remotely.
+     */
+    public function rebootDevice(Organisation $organisation, string $serialNumber): bool
+    {
+        if (empty($organisation->ebio_url) || empty($organisation->ebio_soap_username)) {
+            throw new \Exception("eBioServer SOAP credentials are not configured for this organisation.");
+        }
+
+        $url = rtrim($organisation->ebio_url, '/') . '/webservice.asmx';
+        
+        $xml = '<?xml version="1.0" encoding="utf-8"?>
+        <soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+          <soap:Body>
+            <DeviceCommand_Reboot xmlns="http://tempuri.org/">
+              <UserName>'.$organisation->ebio_soap_username.'</UserName>
+              <Password>'.$organisation->ebio_soap_password.'</Password>
+              <DeviceSerialNumber>'.$serialNumber.'</DeviceSerialNumber>
+            </DeviceCommand_Reboot>
+          </soap:Body>
+        </soap:Envelope>';
+
+        $response = Http::withHeaders([
+            'Content-Type' => 'text/xml; charset=utf-8',
+            'SOAPAction' => '"http://tempuri.org/DeviceCommand_Reboot"'
+        ])->send('POST', $url, [
+            'body' => $xml
+        ]);
+
+        if (!$response->successful()) {
+            return false;
+        }
+
+        preg_match('/<DeviceCommand_RebootResult>(.*?)<\/DeviceCommand_RebootResult>/', $response->body(), $matches);
+        $result = $matches[1] ?? '';
+
+        return strtolower($result) === 'success';
+    }
+
+    /**
+     * Clear all logs on a device remotely.
+     */
+    public function clearDeviceLogs(Organisation $organisation, string $serialNumber): bool
+    {
+        if (empty($organisation->ebio_url) || empty($organisation->ebio_soap_username)) {
+            throw new \Exception("eBioServer SOAP credentials are not configured for this organisation.");
+        }
+
+        $url = rtrim($organisation->ebio_url, '/') . '/webservice.asmx';
+        
+        $xml = '<?xml version="1.0" encoding="utf-8"?>
+        <soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+          <soap:Body>
+            <DeviceCommand_ClearLogs xmlns="http://tempuri.org/">
+              <UserName>'.$organisation->ebio_soap_username.'</UserName>
+              <Password>'.$organisation->ebio_soap_password.'</Password>
+              <DeviceSerialNumber>'.$serialNumber.'</DeviceSerialNumber>
+            </DeviceCommand_ClearLogs>
+          </soap:Body>
+        </soap:Envelope>';
+
+        $response = Http::withHeaders([
+            'Content-Type' => 'text/xml; charset=utf-8',
+            'SOAPAction' => '"http://tempuri.org/DeviceCommand_ClearLogs"'
+        ])->send('POST', $url, [
+            'body' => $xml
+        ]);
+
+        if (!$response->successful()) {
+            return false;
+        }
+
+        preg_match('/<DeviceCommand_ClearLogsResult>(.*?)<\/DeviceCommand_ClearLogsResult>/', $response->body(), $matches);
+        $result = $matches[1] ?? '';
+
+        return strtolower($result) === 'success';
+    }
+
+    /**
+     * Force fetch logs from device (Reset transaction stamp)
+     */
+    public function forceFetchDeviceLogs(Organisation $organisation, string $serialNumber): bool
+    {
+        if (empty($organisation->ebio_url) || empty($organisation->ebio_soap_username)) {
+            throw new \Exception("eBioServer SOAP credentials are not configured for this organisation.");
+        }
+
+        $url = rtrim($organisation->ebio_url, '/') . '/webservice.asmx';
+        
+        $xml = '<?xml version="1.0" encoding="utf-8"?>
+        <soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+          <soap:Body>
+            <DeviceCommand_ResetTransactionStamp xmlns="http://tempuri.org/">
+              <UserName>'.$organisation->ebio_soap_username.'</UserName>
+              <Password>'.$organisation->ebio_soap_password.'</Password>
+              <DeviceSerialNumber>'.$serialNumber.'</DeviceSerialNumber>
+            </DeviceCommand_ResetTransactionStamp>
+          </soap:Body>
+        </soap:Envelope>';
+
+        $response = Http::withHeaders([
+            'Content-Type' => 'text/xml; charset=utf-8',
+            'SOAPAction' => '"http://tempuri.org/DeviceCommand_ResetTransactionStamp"'
+        ])->send('POST', $url, [
+            'body' => $xml
+        ]);
+
+        if (!$response->successful()) {
+            return false;
+        }
+
+        preg_match('/<DeviceCommand_ResetTransactionStampResult>(.*?)<\/DeviceCommand_ResetTransactionStampResult>/', $response->body(), $matches);
+        $result = $matches[1] ?? '';
+
+        return strtolower($result) === 'success';
+    }
 }

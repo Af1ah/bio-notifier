@@ -18,7 +18,6 @@ use App\Filament\Tenant\Resources\DeviceResource\Pages;
 use App\Filament\Tenant\Resources\DeviceResource\RelationManagers;
 
 use App\Models\Device;
-use App\Services\Attendance\DeviceCommandBuilder;
 
 class DeviceResource extends Resource
 {
@@ -84,6 +83,10 @@ class DeviceResource extends Resource
                     ->label('Last Ping')
                     ->dateTime()
                     ->sortable(),
+                Tables\Columns\TextColumn::make('last_sync_at')
+                    ->label('Last Sync')
+                    ->dateTime()
+                    ->sortable(),
             ])
             ->filters([
                 Tables\Filters\SelectFilter::make('status')
@@ -95,6 +98,45 @@ class DeviceResource extends Resource
             ])
             ->recordActions([
                 ViewAction::make(),
+                \Filament\Tables\Actions\ActionGroup::make([
+                    \Filament\Tables\Actions\Action::make('reboot')
+                        ->label('Reboot Device')
+                        ->icon('heroicon-o-power')
+                        ->requiresConfirmation()
+                        ->action(function (Device $record) {
+                            \App\Jobs\EbioDeviceCommandJob::dispatch(tenancy()->tenant, $record->serial_number, 'reboot');
+                            \Filament\Notifications\Notification::make()
+                                ->title('Command Queued')
+                                ->body('Reboot command queued.')
+                                ->success()
+                                ->send();
+                        }),
+                    \Filament\Tables\Actions\Action::make('clearLogs')
+                        ->label('Clear Logs')
+                        ->icon('heroicon-o-trash')
+                        ->requiresConfirmation()
+                        ->color('danger')
+                        ->action(function (Device $record) {
+                            \App\Jobs\EbioDeviceCommandJob::dispatch(tenancy()->tenant, $record->serial_number, 'clear_logs');
+                            \Filament\Notifications\Notification::make()
+                                ->title('Command Queued')
+                                ->body('Clear logs command queued.')
+                                ->success()
+                                ->send();
+                        }),
+                    \Filament\Tables\Actions\Action::make('forceFetchLogs')
+                        ->label('Force Fetch Logs')
+                        ->icon('heroicon-o-arrow-down-tray')
+                        ->requiresConfirmation()
+                        ->action(function (Device $record) {
+                            \App\Jobs\EbioDeviceCommandJob::dispatch(tenancy()->tenant, $record->serial_number, 'force_fetch_logs');
+                            \Filament\Notifications\Notification::make()
+                                ->title('Command Queued')
+                                ->body('Force fetch logs command queued.')
+                                ->success()
+                                ->send();
+                        }),
+                ])->icon('heroicon-m-ellipsis-vertical'),
             ])
             ->toolbarActions([]);
     }
@@ -103,7 +145,6 @@ class DeviceResource extends Resource
     {
         return [
             RelationManagers\AttendanceLogsRelationManager::class,
-            RelationManagers\CommandsRelationManager::class,
         ];
     }
 

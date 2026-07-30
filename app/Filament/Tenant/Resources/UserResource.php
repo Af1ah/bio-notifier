@@ -84,6 +84,12 @@ class UserResource extends Resource
                         ->password()
                         ->revealable()
                         ->autocomplete('new-password'),
+                    \Filament\Forms\Components\DatePicker::make('valid_from')
+                        ->label('Valid From')
+                        ->nullable(),
+                    \Filament\Forms\Components\DatePicker::make('valid_to')
+                        ->label('Valid To')
+                        ->nullable(),
                     Toggle::make('is_enabled')
                         ->default(true),
                 ])
@@ -275,67 +281,27 @@ class UserResource extends Resource
                     \Filament\Actions\BulkAction::make('pushToDevice')
                         ->icon('heroicon-o-arrow-up-on-square')
                         ->color('success')
-                        ->label('Push to Device')
+                        ->label('Push to Device / Location')
                         ->form([
-                            \Filament\Forms\Components\Select::make('device_ids')
-                                ->label('Select Devices to Sync To')
-                                ->multiple()
-                                ->options(\App\Models\Device::all()->mapWithKeys(fn($d) => [$d->id => $d->name ?: $d->serial_number])->toArray())
-                                ->default(fn() => \App\Models\Device::count() === 1 ? [\App\Models\Device::first()->id] : [])
-                                ->required(),
-                            \Filament\Forms\Components\CheckboxList::make('sync_properties')
-                                ->label('What to sync?')
-                                ->options([
-                                    'profile' => 'Basic Profile (Name, Card, Privilege, Password)',
-                                    'biometrics' => 'Biometrics (Fingerprints)',
-                                ])
-                                ->default(['profile', 'biometrics'])
-                                ->required()
-                                ->columns(1),
+                            \Filament\Forms\Components\TextInput::make('location')
+                                ->label('Location Code (Optional)')
+                                ->placeholder('Leave blank for all locations')
+                                ->hint('Comma separated if multiple locations'),
                         ])
                         ->action(function (\Illuminate\Database\Eloquent\Collection $records, array $data) {
-                            $deviceIds = $data['device_ids'] ?? [];
-                            if (empty($deviceIds) && \App\Models\Device::count() === 1) {
-                                $deviceIds = [\App\Models\Device::first()->id];
+                            $location = $data['location'] ?? '';
+                            
+                            $organisation = tenancy()->tenant;
+                            $count = 0;
+                            
+                            foreach ($records as $user) {
+                                \App\Jobs\PushEbioUserJob::dispatch($organisation, $user->id, $location);
+                                $count++;
                             }
                             
-                            $syncProfile = in_array('profile', $data['sync_properties']);
-                            $syncBio = in_array('biometrics', $data['sync_properties']);
-                            
-                            $devices = \App\Models\Device::whereIn('id', $deviceIds)->get();
-                            $builder = app(\App\Services\Attendance\DeviceCommandBuilder::class);
-                            
-                            foreach ($devices as $device) {
-                                foreach ($records as $user) {
-                                    if ($syncProfile) {
-                                        $builder->addUser($device, [
-                                            'pin' => $user->pin,
-                                            'name' => $user->name,
-                                            'card' => $user->card_number,
-                                            'privilege' => $user->privilege,
-                                            'password' => $user->device_password,
-                                            'group' => $user->group ?? 1,
-                                        ]);
-                                    }
-                                    
-                                    if ($syncBio) {
-                                        $fingerprints = $user->fingerprints;
-                                        if (is_array($fingerprints)) {
-                                            foreach ($fingerprints as $key => $fp) {
-                                                $id = is_numeric($key) ? (int)$key : ($fp['finger_id'] ?? $fp['fid'] ?? null);
-                                                if ($id !== null && isset($fp['tmp'])) {
-                                                    $builder->addFingerprint($device, $user->pin, $id, $fp['tmp']);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            
-                            $deviceCount = $devices->count();
                             \Filament\Notifications\Notification::make()
-                                ->title('Commands Queued')
-                                ->body("{$records->count()} user(s) synced across {$deviceCount} device(s) for the next ADMS poll.")
+                                ->title('Sync Queued')
+                                ->body("{$count} user(s) queued for sync to eBioServer.")
                                 ->success()
                                 ->send();
                         })
@@ -343,29 +309,22 @@ class UserResource extends Resource
                     \Filament\Actions\BulkAction::make('deleteFromDevice')
                         ->icon('heroicon-o-trash')
                         ->color('danger')
-                        ->label('Delete from Device')
-                        ->form([
-                            \Filament\Forms\Components\Select::make('device_id')
-                                ->label('Select Device')
-                                ->options(\App\Models\Device::all()->mapWithKeys(fn($d) => [$d->id => $d->name ?: $d->serial_number])->toArray())
-                                ->required(),
-                        ])
-                        ->action(function (\Illuminate\Database\Eloquent\Collection $records, array $data) {
-                            $device = \App\Models\Device::find($data['device_id']);
+                        ->label('Delete from Devices')
+                        ->requiresConfirmation()
+                        ->action(function (\Illuminate\Database\Eloquent\Collection $records) {
+                            $organisation = tenancy()->tenant;
+                            $count = 0;
                             
-                            if ($device) {
-                                $count = 0;
-                                foreach ($records as $record) {
-                                    app(\App\Services\Attendance\DeviceCommandBuilder::class)->deleteUser($device, $record->pin);
-                                    $count++;
-                                }
-                                
-                                \Filament\Notifications\Notification::make()
-                                    ->title('Commands queued')
-                                    ->body("{$count} users will be deleted from the device shortly.")
-                                    ->success()
-                                    ->send();
+                            foreach ($records as $record) {
+                                \App\Jobs\DeleteEbioUserJob::dispatch($organisation, $record->pin);
+                                $count++;
                             }
+                            
+                            \Filament\Notifications\Notification::make()
+                                ->title('Deletion Queued')
+                                ->body("{$count} user deletions queued.")
+                                ->success()
+                                ->send();
                         })
                         ->deselectRecordsAfterCompletion(),
                     \Filament\Actions\BulkAction::make('assignCategory')

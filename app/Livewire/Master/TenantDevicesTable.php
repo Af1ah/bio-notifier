@@ -61,6 +61,18 @@ class TenantDevicesTable extends Component implements HasForms, HasTable, HasAct
                 TextColumn::make('options.location')
                     ->label('Location')
                     ->placeholder('-'),
+                TextColumn::make('status')
+                    ->badge()
+                    ->getStateUsing(fn (Device $record): string => $record->isOnline() ? 'online' : 'offline')
+                    ->color(fn (string $state): string => match ($state) {
+                        'online' => 'success',
+                        'offline' => 'danger',
+                        default => 'warning',
+                    }),
+                TextColumn::make('last_activity_at')
+                    ->label('Last Ping')
+                    ->dateTime()
+                    ->placeholder('-'),
                 TextColumn::make('last_sync_at')
                     ->label('Last Sync')
                     ->dateTime()

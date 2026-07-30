@@ -21,7 +21,7 @@ class EbioWebhookController extends Controller
         tenancy()->initialize($organisation);
 
         $payload = $request->all();
-        Log::info("eBioServer Webhook raw payload for {$organisation->name}: ", $payload);
+        Log::info("eBioServer Webhook received for {$organisation->name}.");
 
         // Check if data is encrypted (has 'data' key)
         if (isset($payload['data'])) {
@@ -65,53 +65,8 @@ class EbioWebhookController extends Controller
             $logs = [$logs];
         }
 
-        foreach ($logs as $logData) {
-            if (!isset($logData['EmployeeCode']) || !isset($logData['LogDate'])) {
-                continue;
-            }
-
-            // Lookup or create device
-            $device = null;
-            if (isset($logData['SerialNumber'])) {
-                $device = \App\Models\Device::firstOrCreate(
-                    ['serial_number' => $logData['SerialNumber']],
-                    ['name' => $logData['DeviceName'] ?? 'Unknown Device', 'status' => 'online']
-                );
-            }
-
-            // Map Status (Direction)
-            $status = 0; // Default Check In
-            if (isset($logData['Direction'])) {
-                $dir = strtolower($logData['Direction']);
-                if (str_contains($dir, 'out')) {
-                    $status = 1;
-                }
-            }
-
-            // Map Verify Type
-            $verifyType = 1; // Default Fingerprint
-            if (isset($logData['VerificationType'])) {
-                $vType = strtolower($logData['VerificationType']);
-                if (str_contains($vType, 'face')) {
-                    $verifyType = 15;
-                } elseif (str_contains($vType, 'card')) {
-                    $verifyType = 2;
-                } elseif (str_contains($vType, 'password') || str_contains($vType, 'pin')) {
-                    $verifyType = 0;
-                }
-            }
-
-            // Save to tenant's AttendanceLog table
-            AttendanceLog::updateOrCreate([
-                'pin' => $logData['EmployeeCode'],
-                'punched_at' => \Illuminate\Support\Carbon::parse($logData['LogDate']),
-            ], [
-                'device_id' => $device ? $device->id : 0,
-                'status' => $status,
-                'verify_type' => $verifyType,
-                'work_code' => isset($logData['WorkCode']) ? (int) $logData['WorkCode'] : null,
-                'raw_data' => $logData,
-            ]);
+        if (!empty($logs)) {
+            \App\Jobs\ProcessEbioWebhookJob::dispatch($organisation, $logs);
         }
 
         // Return exact string "Success" as required by the eBioServer manual

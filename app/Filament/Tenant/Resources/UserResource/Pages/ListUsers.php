@@ -23,13 +23,12 @@ class ListUsers extends ListRecords
                 ->modalDescription('This will connect to your eBioServer over the local network and pull all registered users. This may take a few moments depending on the number of users.')
                 ->action(function () {
                     try {
-                        $service = new \App\Services\EbioSoapService();
-                        $result = $service->syncUsers(tenant());
+                        \App\Jobs\SyncEbioUsersJob::dispatch(tenancy()->tenant);
                         
                         \Filament\Notifications\Notification::make()
-                            ->title('Sync Complete')
-                            ->body("Successfully synced {$result['synced']} users." . ($result['errors'] > 0 ? " {$result['errors']} failed." : ""))
-                            ->status($result['errors'] > 0 ? 'warning' : 'success')
+                            ->title('Sync Queued')
+                            ->body("User synchronization has been queued and will run in the background.")
+                            ->success()
                             ->send();
                     } catch (\Exception $e) {
                         \Filament\Notifications\Notification::make()
