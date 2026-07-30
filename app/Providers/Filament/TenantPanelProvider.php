@@ -41,8 +41,6 @@ class TenantPanelProvider extends PanelProvider
             ->databaseTransactions()
             ->discoverWidgets(in: app_path('Filament/Tenant/Widgets'), for: 'App\Filament\Tenant\Widgets')
             ->widgets([
-                AccountWidget::class,
-                FilamentInfoWidget::class,
             ])
             ->middleware([
                 \Stancl\Tenancy\Middleware\InitializeTenancyByDomain::class,
