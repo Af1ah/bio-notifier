@@ -82,12 +82,19 @@ DB_PASSWORD=your_production_db_password
 > Make sure you change `APP_ENV=local` to `APP_ENV=production` and `APP_DEBUG=true` to `APP_DEBUG=false` in your `.env` file!
 
 ### 4. Run Migrations & Setup Database
-Run the database migrations to create all your tables (Users, Devices, Attendance Logs, etc.):
+Because this is a multi-tenant system, you must run migrations for BOTH the central database (Master Admin) and the tenant databases.
+
+1. **Migrate the central database:**
 ```bash
 php artisan migrate --force
 ```
 
-Create your initial Admin user so you can log into the Filament dashboard:
+2. **Migrate all tenant databases:**
+```bash
+php artisan tenants:migrate --force
+```
+
+3. **Create your initial Master Admin user:**
 ```bash
 php artisan make:filament-user
 ```
@@ -112,12 +119,12 @@ To ensure the queue worker (like WhatsApp notifications) runs continuously in th
 
 1. Create a new configuration file:
 ```bash
-sudo nano /etc/supervisor/conf.d/unified-attendance-worker.conf
+sudo nano /etc/supervisor/conf.d/bio-notifier-worker.conf
 ```
 
-2. Add the following configuration (replace `/var/www/html` with your exact project path, e.g. `/var/www/unified-attendance`):
+2. Add the following configuration (replace `/var/www/html` with your exact project path, e.g. `/var/www/bio-notifier`):
 ```ini
-[program:unified-attendance-worker]
+[program:bio-notifier-worker]
 process_name=%(program_name)s_%(process_num)02d
 command=php /var/www/html/artisan queue:work --sleep=3 --tries=3 --max-time=3600
 autostart=true
@@ -135,7 +142,7 @@ stopwaitsecs=3600
 ```bash
 sudo supervisorctl reread
 sudo supervisorctl update
-sudo supervisorctl start unified-attendance-worker:*
+sudo supervisorctl start bio-notifier-worker:*
 ```
 
 ### 8. Web Server Configuration (Nginx & Multi-Tenancy)
@@ -149,7 +156,7 @@ Bio-Notifier uses an isolated domain-based routing system for tenants. To allow 
 **Nginx Setup:**
 1. Create a new Nginx server block configuration:
 ```bash
-sudo nano /etc/nginx/sites-available/unified-attendance
+sudo nano /etc/nginx/sites-available/bio-notifier
 ```
 
 2. Add the following standard Nginx setup. Ensure you explicitly list the wildcard in `server_name` so Nginx routes all tenant traffic here!
@@ -195,7 +202,7 @@ server {
 
 3. Enable the site and restart Nginx:
 ```bash
-sudo ln -s /etc/nginx/sites-available/unified-attendance /etc/nginx/sites-enabled/
+sudo ln -s /etc/nginx/sites-available/bio-notifier /etc/nginx/sites-enabled/
 sudo nginx -t
 sudo systemctl restart nginx
 ```

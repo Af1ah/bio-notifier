@@ -8,4 +8,6 @@ use Filament\Resources\Pages\CreateRecord;
 class CreateOrganisation extends CreateRecord
 {
     protected static string $resource = OrganisationResource::class;
+
+    protected ?bool $hasDatabaseTransactions = false;
 }

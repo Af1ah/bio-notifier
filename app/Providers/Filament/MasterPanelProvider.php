@@ -37,7 +37,6 @@ class MasterPanelProvider extends PanelProvider
             ])
             ->spa()
             ->unsavedChangesAlerts()
-            ->databaseTransactions()
             ->discoverWidgets(in: app_path('Filament/Master/Widgets'), for: 'App\Filament\Master\Widgets')
             ->widgets([
             ])
