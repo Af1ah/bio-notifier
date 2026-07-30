@@ -38,8 +38,22 @@ class ManageOrganisationAdmins extends Page implements HasTable, HasForms
         if (!$id && request()->has('components.0.snapshot')) {
             $snapshot = json_decode(request()->input('components.0.snapshot'), true);
             if (isset($snapshot['data']['record'])) {
-                $id = $snapshot['data']['record'];
+                $recordData = $snapshot['data']['record'];
+                // Livewire 3 synthesizer dehydrates models into arrays, e.g. [null, "UUID"] or ["App\Models\...", "UUID"]
+                if (is_array($recordData)) {
+                    // Usually the ID is the second element, or we find the first string/int
+                    $id = $recordData[1] ?? (is_string($recordData[0]) ? $recordData[0] : null);
+                    if (is_array($id)) {
+                        $id = $id[0] ?? null; // Just in case it's deeply nested
+                    }
+                } else {
+                    $id = $recordData;
+                }
             }
+        }
+
+        if (is_array($id)) {
+            $id = null; // Failsafe
         }
 
         if ($id) {
