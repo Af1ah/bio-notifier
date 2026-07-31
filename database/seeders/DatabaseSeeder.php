@@ -15,11 +15,9 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        // User::factory(10)->create();
-
-        User::factory()->create([
-            'name' => 'Test User',
-            'email' => 'test@example.com',
+        // When a new tenant is created, seed their default schedules.
+        $this->call([
+            ScheduleSeeder::class,
         ]);
     }
 }
