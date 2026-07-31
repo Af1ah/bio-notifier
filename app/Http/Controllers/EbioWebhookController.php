@@ -57,9 +57,9 @@ class EbioWebhookController extends Controller
         }
 
         if (! $logs) {
-            $responseText = 'Success';
+            $responseText = '"Success"';
             return response($responseText)
-                ->header('Content-Type', 'text/plain')
+                ->header('Content-Type', 'application/json')
                 ->header('Content-Length', (string) strlen($responseText));
         }
 
@@ -72,11 +72,10 @@ class EbioWebhookController extends Controller
             \App\Jobs\ProcessEbioWebhookJob::dispatch($organisation, $logs);
         }
 
-        // Return exact string "Success" with explicit Content-Length to avoid chunked transfer encoding,
-        // which eBioServer's older HTTP client might fail to parse, causing infinite retries.
-        $responseText = 'Success';
+        // Try returning it with quotes in case eBioServer uses a JSON parser
+        $responseText = '"Success"'; 
         return response($responseText)
-            ->header('Content-Type', 'text/plain')
+            ->header('Content-Type', 'application/json')
             ->header('Content-Length', (string) strlen($responseText));
     }
 }
