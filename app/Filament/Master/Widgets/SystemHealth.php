@@ -7,6 +7,8 @@ use Filament\Widgets\StatsOverviewWidget\Stat;
 
 class SystemHealth extends StatsOverviewWidget
 {
+    protected ?string $pollingInterval = "30s";
+
     protected static ?int $sort = 3;
 
     protected function getStats(): array

@@ -8,6 +8,7 @@ use Filament\Widgets\StatsOverviewWidget\Stat;
 class TodayOverview extends StatsOverviewWidget
 {
     protected static ?int $sort = 1;
+    protected ?string $pollingInterval = "30s";
 
     protected function getColumns(): array | int | null
     {

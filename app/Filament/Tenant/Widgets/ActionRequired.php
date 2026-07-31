@@ -10,6 +10,8 @@ use Illuminate\Database\Eloquent\Model;
 
 class ActionRequired extends TableWidget
 {
+    protected ?string $pollingInterval = "30s";
+
     protected int | string | array $columnSpan = 'full';
     protected static ?int $sort = 5;
 

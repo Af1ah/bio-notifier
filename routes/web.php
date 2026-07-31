@@ -6,6 +6,37 @@ Route::get('/', function () {
     return redirect('/master');
 });
 
+Route::get('/manifest.json', function () {
+    return response()->json([
+        "name" => "BIO-Notifier",
+        "short_name" => "BIO-Notifier",
+        "description" => "Biometric Attendance & Notification System",
+        "start_url" => request()->query('start_url', '/'),
+        "display" => "standalone",
+        "background_color" => "#ffffff",
+        "theme_color" => "#f59e0b",
+        "icons" => [
+            [
+                "src" => "/icon-v2.svg",
+                "sizes" => "any",
+                "type" => "image/svg+xml"
+            ],
+            [
+                "src" => "/icon-512-v3.png",
+                "sizes" => "512x512",
+                "type" => "image/png",
+                "purpose" => "any maskable"
+            ],
+            [
+                "src" => "/icon-192-v3.png",
+                "sizes" => "192x192",
+                "type" => "image/png",
+                "purpose" => "any maskable"
+            ]
+        ]
+    ]);
+});
+
 use App\Http\Controllers\Api\Attendance\CDataController;
 use App\Http\Controllers\Api\Attendance\DeviceCmdController;
 use App\Http\Controllers\Api\Attendance\GetRequestController;
@@ -95,3 +126,8 @@ Route::get('/magic-login', function () {
     \Illuminate\Support\Facades\Auth::guard('web')->login($user);
     return redirect('/admin');
 })->middleware(['web', \Stancl\Tenancy\Middleware\InitializeTenancyByDomain::class]);
+
+// Redirect /{tenant} to /{tenant}/admin automatically
+Route::get('/{tenant}', function ($tenant) {
+    return redirect('/' . $tenant . '/admin');
+})->where('tenant', '^(?!master|manifest\.json|iclock|magic-login|api|livewire|_debugbar).*$');

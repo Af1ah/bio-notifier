@@ -6,6 +6,8 @@ use Filament\Widgets\ChartWidget;
 
 class AttendanceTrend extends ChartWidget
 {
+    protected ?string $pollingInterval = "30s";
+
     protected static ?int $sort = 2;
     protected int | string | array $columnSpan = 1;
     protected ?string $heading = 'Attendance Trend';

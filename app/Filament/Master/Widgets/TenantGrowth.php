@@ -6,6 +6,8 @@ use Filament\Widgets\ChartWidget;
 
 class TenantGrowth extends ChartWidget
 {
+    protected ?string $pollingInterval = "30s";
+
     protected static ?int $sort = 2;
     protected int | string | array $columnSpan = 1;
     protected ?string $heading = 'Tenant Growth (Last 30 Days)';

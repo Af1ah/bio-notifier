@@ -101,7 +101,7 @@ class DeviceCommandResource extends Resource
                     ->label('Retries')
                     ->visibleFrom('md'),
             ])
-            ->poll('30s')
+            ->poll(fn () => \App\Models\DeviceCommand::whereIn('status', ['pending', 'sent'])->exists() ? '10s' : null)
             ->defaultSort('created_at', 'desc')
             ->filters([
                 Tables\Filters\SelectFilter::make('device')

@@ -10,6 +10,8 @@ use Illuminate\Database\Eloquent\Model;
 
 class RecentOrganisations extends TableWidget
 {
+    protected ?string $pollingInterval = "30s";
+
     protected int | string | array $columnSpan = 1;
     protected static ?int $sort = 2;
 
