@@ -29,27 +29,14 @@ class ListDeviceCommands extends ListRecords
                         ->live()
                         ->afterStateUpdated(fn (callable $set) => $set('command', null))
                         ->default(fn () => \App\Models\Device::count() === 1 ? \App\Models\Device::first()->id : null),
-                    \Filament\Forms\Components\Select::make('command')
+                        \Filament\Forms\Components\Select::make('command')
                         ->label('Select Command')
                         ->live()
-                        ->options(function (callable $get) {
-                            $deviceId = $get('device_id');
-                            $options = [
-                                'info' => 'Get Device Info',
-                                'reboot' => 'Reboot Device',
-                                'checkConnection' => 'Check Connection',
-                                'syncTime' => 'Sync Time',
-                                'queryAllUsers' => 'Pull All Users',
-                                'queryAllFingerprints' => 'Pull All Fingerprints',
-                                'queryAttendanceLogs' => 'Pull All Attendance Logs (Recovery)',
-                                'clearAttendanceLogs' => 'CRITICAL: Clear Attendance Logs',
-                                'clearUsers' => 'CRITICAL: Clear All Users',
-                                'clearAllData' => 'CRITICAL: Clear All Data (Hard Reset)',
-                            ];
-
-                            
-                            return $options;
-                        })
+                        ->options([
+                            'reboot' => 'Reboot Device',
+                            'clear_logs' => 'CRITICAL: Clear Attendance Logs',
+                            'force_fetch_logs' => 'Force Fetch Logs (Sync)',
+                        ])
                         ->required(),
                     \Filament\Forms\Components\TextInput::make('confirm')
                         ->label("Type 'CONFIRM' to execute this command")
@@ -61,24 +48,26 @@ class ListDeviceCommands extends ListRecords
                                 }
                             };
                         })
-                        ->hidden(fn ($get) => !in_array($get('command'), ['clearAttendanceLogs', 'clearUsers', 'clearAllData', 'reboot'])),
+                        ->hidden(fn ($get) => !in_array($get('command'), ['clear_logs', 'reboot'])),
                 ])
                 ->action(function (array $data) {
                     $device = \App\Models\Device::find($data['device_id']);
                     if (!$device) return;
 
-                    $builder = app(\App\Services\Attendance\DeviceCommandBuilder::class);
-                    $commandMethod = $data['command'];
+                    $command = \App\Models\DeviceCommand::create([
+                        'device_id' => $device->id,
+                        'command_type' => $data['command'],
+                        'command_content' => "eBioServer SOAP Command: {$data['command']}",
+                        'status' => 'pending',
+                    ]);
+
+                    \App\Jobs\EbioDeviceCommandJob::dispatch(tenant(), $device->serial_number, $data['command'], $command->id);
                     
-                    if (method_exists($builder, $commandMethod)) {
-                        $builder->$commandMethod($device);
-                        
-                        \Filament\Notifications\Notification::make()
-                            ->title('Command Queued')
-                            ->body("The '{$data['command']}' command will be executed on the next device poll.")
-                            ->success()
-                            ->send();
-                    }
+                    \Filament\Notifications\Notification::make()
+                        ->title('Command Queued')
+                        ->body("The '{$data['command']}' command has been queued for sync.")
+                        ->success()
+                        ->send();
                 }),
             Actions\CreateAction::make(),
         ];

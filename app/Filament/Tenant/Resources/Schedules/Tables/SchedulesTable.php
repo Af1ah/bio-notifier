@@ -21,16 +21,20 @@ class SchedulesTable
                     ->formatStateUsing(function ($record) {
                         if (! $record->target_type) return 'Organization (All)';
                         return class_basename($record->target_type) . ': ' . ($record->target ? $record->target->name : 'Unknown');
-                    }),
+                    })
+                    ->visibleFrom('md'),
                 \Filament\Tables\Columns\TextColumn::make('users_count')
                     ->label('Users')
-                    ->state(fn ($record) => $record->users_count),
+                    ->state(fn ($record) => $record->users_count)
+                    ->visibleFrom('md'),
                 \Filament\Tables\Columns\TextColumn::make('valid_from')
                     ->date()
-                    ->sortable(),
+                    ->sortable()
+                    ->visibleFrom('md'),
                 \Filament\Tables\Columns\TextColumn::make('valid_to')
                     ->date()
-                    ->sortable(),
+                    ->sortable()
+                    ->visibleFrom('md'),
                 \Filament\Tables\Columns\IconColumn::make('status')
                     ->boolean(),
             ])

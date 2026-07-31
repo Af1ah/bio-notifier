@@ -23,7 +23,7 @@ class UserResource extends Resource
 
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-users';
 
-    protected static ?int $navigationSort = 3;
+    protected static ?int $navigationSort = 4;
 
     protected static ?string $modelLabel = 'User';
 
@@ -43,7 +43,7 @@ class UserResource extends Resource
 
     public static function getNavigationGroup(): ?string
     {
-        return 'Attendance';
+        return null;
     }
 
     public static function form(Schema $schema): Schema
@@ -168,9 +168,9 @@ class UserResource extends Resource
                             \Filament\Infolists\Components\TextEntry::make('fingerprints')
                                 ->label('Added Fingerprints')
                                 ->badge()
-                                ->formatStateUsing(function ($state, $record) {
+                                ->state(function ($record) {
                                     $rawState = $record->fingerprints;
-                                    if (empty($rawState) || !is_array($rawState)) return 'None';
+                                    if (empty($rawState) || !is_array($rawState)) return ['None'];
                                     $fingers = [
                                         0 => 'Left Pinky', 1 => 'Left Ring', 2 => 'Left Middle', 3 => 'Left Index', 4 => 'Left Thumb',
                                         5 => 'Right Thumb', 6 => 'Right Index', 7 => 'Right Middle', 8 => 'Right Ring', 9 => 'Right Pinky'
@@ -184,10 +184,11 @@ class UserResource extends Resource
                                             $added[] = 'Finger ' . $id;
                                         }
                                     }
-                                    return count($added) > 0 ? implode(', ', $added) : count($rawState) . ' Template(s)';
+                                    return count($added) > 0 ? $added : [count($rawState) . ' Template(s)'];
                                 })
-                                ->color('success'),
-                        ])->columns(3),
+                                ->color('success')
+                                ->columnSpanFull(),
+                        ])->columns(['default' => 2, 'sm' => 2, 'md' => 2]),
 
                     \Filament\Schemas\Components\Section::make('Shift Details')
                         ->schema([
@@ -233,7 +234,8 @@ class UserResource extends Resource
                     ->label('Branch')
                     ->sortable()
                     ->searchable()
-                    ->toggleable(),
+                    ->toggleable()
+                    ->visibleFrom('md'),
                 Tables\Columns\TextColumn::make('department.name')
                     ->label('Department')
                     ->sortable()
@@ -247,9 +249,11 @@ class UserResource extends Resource
                 Tables\Columns\TextColumn::make('privilege')
                     ->badge()
                     ->formatStateUsing(fn ($state) => $state === 14 ? 'Admin' : 'User')
-                    ->color(fn ($state): string => $state === 14 ? 'primary' : 'gray'),
+                    ->color(fn ($state): string => $state === 14 ? 'primary' : 'gray')
+                    ->visibleFrom('md'),
                 Tables\Columns\IconColumn::make('is_enabled')
-                    ->boolean(),
+                    ->boolean()
+                    ->visibleFrom('md'),
             ])
             ->filters([
                 Tables\Filters\SelectFilter::make('privilege')
@@ -272,8 +276,10 @@ class UserResource extends Resource
                     ->default(true),
             ])
             ->recordActions([
-                ViewAction::make(),
-                EditAction::make(),
+                \Filament\Actions\ActionGroup::make([
+                    ViewAction::make(),
+                    EditAction::make(),
+                ]),
             ])
             ->bulkActions([
                 \Filament\Actions\BulkActionGroup::make([

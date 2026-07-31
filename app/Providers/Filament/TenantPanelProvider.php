@@ -41,6 +41,14 @@ class TenantPanelProvider extends PanelProvider
             ->pages([
                 Dashboard::class,
             ])
+            ->navigationGroups([
+                \Filament\Navigation\NavigationGroup::make()
+                     ->label('Organisation Management')
+                     ->collapsed(),
+                \Filament\Navigation\NavigationGroup::make()
+                     ->label('Device Management')
+                     ->collapsed(),
+            ])
             ->spa()
             ->unsavedChangesAlerts()
             ->databaseTransactions()

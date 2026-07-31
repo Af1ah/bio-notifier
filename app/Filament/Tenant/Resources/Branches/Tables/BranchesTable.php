@@ -20,15 +20,18 @@ class BranchesTable
                 TextColumn::make('location')
                     ->searchable(),
                 TextColumn::make('phone_number')
-                    ->searchable(),
+                    ->searchable()
+                    ->visibleFrom('md'),
                 TextColumn::make('users_count')
                     ->counts('users')
                     ->label('Users'),
                 TextColumn::make('devices_count')
                     ->counts('devices')
-                    ->label('Devices'),
+                    ->label('Devices')
+                    ->visibleFrom('md'),
                 TextColumn::make('pin_code')
-                    ->searchable(),
+                    ->searchable()
+                    ->visibleFrom('md'),
                 TextColumn::make('created_at')
                     ->dateTime()
                     ->sortable()
@@ -42,8 +45,10 @@ class BranchesTable
                 //
             ])
             ->recordActions([
-                \Filament\Actions\ViewAction::make(),
-                \Filament\Actions\EditAction::make(),
+                \Filament\Actions\ActionGroup::make([
+                    \Filament\Actions\ViewAction::make(),
+                    \Filament\Actions\EditAction::make(),
+                ]),
             ])
             ->toolbarActions([
                 BulkActionGroup::make([

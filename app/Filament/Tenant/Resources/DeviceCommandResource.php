@@ -80,7 +80,8 @@ class DeviceCommandResource extends Resource
                 Tables\Columns\TextColumn::make('command_type')
                     ->badge(),
                 Tables\Columns\TextColumn::make('command_content')
-                    ->limit(40),
+                    ->limit(40)
+                    ->visibleFrom('md'),
                 Tables\Columns\TextColumn::make('status')
                     ->badge()
                     ->color(fn (string $state): string => match ($state) {
@@ -91,12 +92,16 @@ class DeviceCommandResource extends Resource
                         default => 'gray',
                     }),
                 Tables\Columns\TextColumn::make('sent_at')
-                    ->dateTime(),
+                    ->dateTime()
+                    ->visibleFrom('md'),
                 Tables\Columns\TextColumn::make('acknowledged_at')
-                    ->dateTime(),
+                    ->dateTime()
+                    ->visibleFrom('md'),
                 Tables\Columns\TextColumn::make('retry_count')
-                    ->label('Retries'),
+                    ->label('Retries')
+                    ->visibleFrom('md'),
             ])
+            ->poll('30s')
             ->defaultSort('created_at', 'desc')
             ->filters([
                 Tables\Filters\SelectFilter::make('device')
@@ -118,13 +123,15 @@ class DeviceCommandResource extends Resource
                     ]),
             ])
             ->recordActions([
-                ViewAction::make(),
-                Action::make('retry')
-                    ->icon('heroicon-o-arrow-path')
-                    ->color('warning')
-                    ->visible(fn (DeviceCommand $record) => in_array($record->status, ['failed', 'sent']))
-                    ->action(fn (DeviceCommand $record) => $record->retry()),
-                DeleteAction::make(),
+                \Filament\Actions\ActionGroup::make([
+                    ViewAction::make(),
+                    Action::make('retry')
+                        ->icon('heroicon-o-arrow-path')
+                        ->color('warning')
+                        ->visible(fn (DeviceCommand $record) => in_array($record->status, ['failed', 'sent']))
+                        ->action(fn (DeviceCommand $record) => $record->retry()),
+                    DeleteAction::make(),
+                ])
             ])
             ->toolbarActions([
                 BulkActionGroup::make([

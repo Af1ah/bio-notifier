@@ -24,6 +24,8 @@ class ScheduleResource extends Resource
 
     protected static ?string $pluralModelLabel = 'Shifts and schedules';
 
+    protected static \UnitEnum|string|null $navigationGroup = 'Organisation Management';
+
     protected static ?string $navigationLabel = 'Shifts and schedules';
 
     protected static ?string $recordTitleAttribute = 'name';

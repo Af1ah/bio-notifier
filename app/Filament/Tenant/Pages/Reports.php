@@ -30,6 +30,8 @@ class Reports extends Page implements HasTable, HasForms
 
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-chart-bar';
 
+    protected static ?int $navigationSort = 3;
+
     protected string $view = 'filament.tenant.pages.reports';
 
     public $activeTab = 'daily';

@@ -31,6 +31,24 @@
 @endphp
 
 <div x-data="{ openLogModal: false, selectedDate: '', selectedShift: '', selectedLogs: [] }" class="mt-4 overflow-x-auto w-full relative">
+    <style>
+        .cal-table { width: 100%; border-collapse: separate; table-layout: fixed; }
+        .cal-th { width: 14.28%; text-align: center; font-weight: 600; color: #6b7280; box-sizing: border-box; overflow: hidden; }
+        @media (max-width: 767px) {
+            .cal-desktop-only { display: none !important; }
+            .cal-mobile-only { display: block !important; margin: 0 auto; }
+            .cal-cell { padding: 0.25rem !important; height: 3.5rem !important; }
+            .cal-table { border-spacing: 0.25rem; }
+            .cal-th { padding: 0.1rem; font-size: 0.65rem; }
+        }
+        @media (min-width: 768px) {
+            .cal-mobile-only { display: none !important; }
+            .cal-cell { padding: 0.5rem !important; height: 5rem !important; }
+            .cal-table { border-spacing: 0.5rem; }
+            .cal-th { padding: 0.5rem; font-size: 0.875rem; }
+        }
+    </style>
+    
     <div style="margin-bottom: 1rem; display: flex; align-items: center; justify-content: space-between; font-weight: bold; font-size: 1.125rem;">
         <x-filament::icon-button
             icon="heroicon-m-chevron-left"
@@ -52,11 +70,11 @@
         />
     </div>
     
-    <table style="width: 100%; border-collapse: separate; border-spacing: 0.5rem; table-layout: fixed;">
+    <table class="cal-table">
         <thead>
             <tr>
                 @foreach(['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as $dayName)
-                    <th style="padding: 0.5rem; text-align: center; font-weight: 600; color: #6b7280; font-size: 0.875rem;">{{ $dayName }}</th>
+                    <th class="cal-th">{{ $dayName }}</th>
                 @endforeach
             </tr>
         </thead>
@@ -92,7 +110,7 @@
             <tr wire:key="week-{{ $this->year }}-{{ $this->month }}-{{ $weekIndex }}">
                 @foreach ($week as $dayIndex => $cell)
                     @if ($cell['type'] === 'empty')
-                        <td wire:key="empty-{{ $weekIndex }}-{{ $dayIndex }}-{{ $this->year }}-{{ $this->month }}" style="padding: 0.5rem; border-radius: 0.5rem; border: 1px solid #e5e7eb; background-color: #f9fafb; opacity: 0.5;"></td>
+                        <td wire:key="empty-{{ $weekIndex }}-{{ $dayIndex }}-{{ $this->year }}-{{ $this->month }}" style="border-radius: 0.5rem; border: 1px solid #e5e7eb; background-color: #f9fafb; opacity: 0.5;" class="cal-cell"></td>
                     @else
                         @php
                             $day = $cell['day'];
@@ -204,15 +222,16 @@
                         @endphp
 
                         <td wire:key="day-{{ $day }}-{{ $this->year }}-{{ $this->month }}" @click="if({{ $dayLogs->count() }} > 0 || '{{ $statusText }}' !== '') { selectedDate = '{{ $dateObj->format('M d, Y') }}'; selectedShift = '{{ $shiftLabel }}'; selectedLogs = {{ $logsJs }}; $dispatch('open-modal', { id: 'attendance-log-modal' }); }" 
-                            style="padding: 0.5rem; border-radius: 0.5rem; border: 1px solid {{ $borderColor }}; background-color: {{ $bgColor }}; text-align: center; vertical-align: middle; height: 5rem; cursor: pointer; transition: all 0.2s;"
+                            style="border-radius: 0.5rem; border: 1px solid {{ $borderColor }}; background-color: {{ $bgColor }}; text-align: center; vertical-align: middle; cursor: pointer; transition: all 0.2s;"
+                            class="cal-cell"
                             onmouseover="this.style.filter='brightness(0.95)'"
                             onmouseout="this.style.filter='brightness(1)'">
                             <div style="font-weight: 700; color: {{ $textColor }};">{{ $day }}</div>
                             @if($statusText)
-                                <div style="font-size: 0.75rem; color: {{ $textColor }}; margin-top: 0.25rem; font-weight: 600;">{{ $statusText }}</div>
+                                <div style="font-size: 0.75rem; color: {{ $textColor }}; margin-top: 0.25rem; font-weight: 600;" class="cal-desktop-only">{{ $statusText }}</div>
                             @endif
                             @if($dayLogs->isNotEmpty())
-                                <div style="font-size: 0.65rem; color: #6b7280; margin-top: 0.25rem;" title="Matched Shift: {{ $shiftLabel }}">
+                                <div style="font-size: 0.65rem; color: #6b7280; margin-top: 0.25rem;" title="Matched Shift: {{ $shiftLabel }}" class="cal-desktop-only">
                                     {{ $firstPunch->punched_at->format('h:i A') }}
                                 </div>
                             @endif

@@ -23,7 +23,7 @@ class AttendanceLogResource extends Resource
 
     protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-clipboard-document-list';
 
-    protected static \UnitEnum|string|null $navigationGroup = 'Attendance';
+    protected static \UnitEnum|string|null $navigationGroup = 'Device Management';
 
     protected static ?int $navigationSort = 99;
 

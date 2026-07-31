@@ -65,12 +65,14 @@ class DeviceResource extends Resource
             ->columns([
                 Tables\Columns\TextColumn::make('serial_number')
                     ->searchable()
-                    ->sortable(),
+                    ->sortable()
+                    ->visibleFrom('md'),
                 Tables\Columns\TextColumn::make('name')
                     ->searchable(),
                 Tables\Columns\TextColumn::make('options.location')
                     ->label('Location')
-                    ->searchable(),
+                    ->searchable()
+                    ->toggleable(),
                 Tables\Columns\TextColumn::make('status')
                     ->badge()
                     ->getStateUsing(fn (Device $record): string => $record->isOnline() ? 'online' : 'offline')
@@ -78,15 +80,21 @@ class DeviceResource extends Resource
                         'online' => 'success',
                         'offline' => 'danger',
                         default => 'warning',
-                    }),
+                    })
+                    ->visibleFrom('md'),
                 Tables\Columns\TextColumn::make('last_activity_at')
                     ->label('Last Ping')
-                    ->dateTime()
-                    ->sortable(),
+                    ->date('M j, Y')
+                    ->description(fn (Device $record): ?string => $record->last_activity_at?->format('H:i:s'))
+                    ->sortable()
+                    ->toggleable(),
                 Tables\Columns\TextColumn::make('last_sync_at')
                     ->label('Last Sync')
-                    ->dateTime()
-                    ->sortable(),
+                    ->date('M j, Y')
+                    ->description(fn (Device $record): ?string => $record->last_sync_at?->format('H:i:s'))
+                    ->sortable()
+                    ->toggleable()
+                    ->visibleFrom('md'),
             ])
             ->filters([
                 Tables\Filters\SelectFilter::make('status')
@@ -97,14 +105,20 @@ class DeviceResource extends Resource
                     ]),
             ])
             ->recordActions([
-                ViewAction::make(),
                 \Filament\Actions\ActionGroup::make([
+                    ViewAction::make(),
                     \Filament\Actions\Action::make('reboot')
                         ->label('Reboot Device')
                         ->icon('heroicon-o-power')
                         ->requiresConfirmation()
                         ->action(function (Device $record) {
-                            \App\Jobs\EbioDeviceCommandJob::dispatch(tenancy()->tenant, $record->serial_number, 'reboot');
+                            $command = \App\Models\DeviceCommand::create([
+                                'device_id' => $record->id,
+                                'command_type' => 'reboot',
+                                'command_content' => 'eBioServer SOAP Command: reboot',
+                                'status' => 'pending',
+                            ]);
+                            \App\Jobs\EbioDeviceCommandJob::dispatch(tenancy()->tenant, $record->serial_number, 'reboot', $command->id);
                             \Filament\Notifications\Notification::make()
                                 ->title('Command Queued')
                                 ->body('Reboot command queued.')
@@ -117,7 +131,13 @@ class DeviceResource extends Resource
                         ->requiresConfirmation()
                         ->color('danger')
                         ->action(function (Device $record) {
-                            \App\Jobs\EbioDeviceCommandJob::dispatch(tenancy()->tenant, $record->serial_number, 'clear_logs');
+                            $command = \App\Models\DeviceCommand::create([
+                                'device_id' => $record->id,
+                                'command_type' => 'clear_logs',
+                                'command_content' => 'eBioServer SOAP Command: clear_logs',
+                                'status' => 'pending',
+                            ]);
+                            \App\Jobs\EbioDeviceCommandJob::dispatch(tenancy()->tenant, $record->serial_number, 'clear_logs', $command->id);
                             \Filament\Notifications\Notification::make()
                                 ->title('Command Queued')
                                 ->body('Clear logs command queued.')
@@ -129,7 +149,13 @@ class DeviceResource extends Resource
                         ->icon('heroicon-o-arrow-down-tray')
                         ->requiresConfirmation()
                         ->action(function (Device $record) {
-                            \App\Jobs\EbioDeviceCommandJob::dispatch(tenancy()->tenant, $record->serial_number, 'force_fetch_logs');
+                            $command = \App\Models\DeviceCommand::create([
+                                'device_id' => $record->id,
+                                'command_type' => 'force_fetch_logs',
+                                'command_content' => 'eBioServer SOAP Command: force_fetch_logs',
+                                'status' => 'pending',
+                            ]);
+                            \App\Jobs\EbioDeviceCommandJob::dispatch(tenancy()->tenant, $record->serial_number, 'force_fetch_logs', $command->id);
                             \Filament\Notifications\Notification::make()
                                 ->title('Command Queued')
                                 ->body('Force fetch logs command queued.')
