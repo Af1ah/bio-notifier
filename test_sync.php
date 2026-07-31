@@ -1,0 +1,1 @@
+<?php try { $res = app(\App\Services\EbioSoapService::class)->syncUsers(App\Models\Organisation::first()); print_r($res); echo "\nSUCCESS\n"; } catch (\Exception $e) { echo "FAILED: " . $e->getMessage() . "\n"; }
