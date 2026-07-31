@@ -57,7 +57,10 @@ class EbioWebhookController extends Controller
         }
 
         if (! $logs) {
-            return response('Success');
+            $responseText = 'Success';
+            return response($responseText)
+                ->header('Content-Type', 'text/plain')
+                ->header('Content-Length', (string) strlen($responseText));
         }
 
         // eBioServer might send a single object or an array of objects
