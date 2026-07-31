@@ -69,7 +69,11 @@ class EbioWebhookController extends Controller
             \App\Jobs\ProcessEbioWebhookJob::dispatch($organisation, $logs);
         }
 
-        // Return exact string "Success" as required by the eBioServer manual
-        return response('Success')->header('Content-Type', 'text/plain');
+        // Return exact string "Success" with explicit Content-Length to avoid chunked transfer encoding,
+        // which eBioServer's older HTTP client might fail to parse, causing infinite retries.
+        $responseText = 'Success';
+        return response($responseText)
+            ->header('Content-Type', 'text/plain')
+            ->header('Content-Length', (string) strlen($responseText));
     }
 }

@@ -73,7 +73,7 @@ class ManageOrganisationAdmins extends Page implements HasTable, HasForms
     public function table(Table $table): Table
     {
         return $table
-            ->query(User::query())
+            ->query(User::on('tenant'))
             ->columns([
                 Tables\Columns\TextColumn::make('name')
                     ->searchable(),
@@ -100,7 +100,7 @@ class ManageOrganisationAdmins extends Page implements HasTable, HasForms
                             ->email()
                             ->required()
                             ->maxLength(255)
-                            ->unique(User::class, 'email'),
+                            ->unique(User::class, 'email', modifyRuleUsing: fn ($rule) => $rule->usingConnection('tenant')),
                         Forms\Components\TextInput::make('password')
                             ->password()
                             ->required()
@@ -117,7 +117,13 @@ class ManageOrganisationAdmins extends Page implements HasTable, HasForms
                             ->default(14),
                         Forms\Components\Hidden::make('pin')
                             ->default(fn () => (string) rand(10000, 99999)),
-                    ]),
+                    ])
+                    ->using(function (array $data, string $model): \Illuminate\Database\Eloquent\Model {
+                        $user = new $model($data);
+                        $user->setConnection('tenant');
+                        $user->save();
+                        return $user;
+                    }),
             ])
             ->actions([
                 \Filament\Actions\EditAction::make()
@@ -129,7 +135,7 @@ class ManageOrganisationAdmins extends Page implements HasTable, HasForms
                             ->email()
                             ->required()
                             ->maxLength(255)
-                            ->unique(User::class, 'email', ignoreRecord: true),
+                            ->unique(User::class, 'email', ignoreRecord: true, modifyRuleUsing: fn ($rule) => $rule->usingConnection('tenant')),
                         Forms\Components\TextInput::make('password')
                             ->password()
                             ->maxLength(255)
@@ -145,7 +151,12 @@ class ManageOrganisationAdmins extends Page implements HasTable, HasForms
                             ->default(14),
                         Forms\Components\Hidden::make('pin')
                             ->default(fn () => (string) rand(10000, 99999)),
-                    ]),
+                    ])
+                    ->using(function (\Illuminate\Database\Eloquent\Model $record, array $data): \Illuminate\Database\Eloquent\Model {
+                        $record->setConnection('tenant');
+                        $record->update($data);
+                        return $record;
+                    }),
                 \Filament\Actions\DeleteAction::make(),
             ])
             ->bulkActions([

@@ -358,6 +358,7 @@ class EbioSoapService
         }
 
         return false;
+    }
     /**
      * Reboot a device remotely.
      */
@@ -521,3 +522,4 @@ class EbioSoapService
         return strtolower($result) === 'success';
     }
 }
+
