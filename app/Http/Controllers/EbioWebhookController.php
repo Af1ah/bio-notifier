@@ -57,10 +57,10 @@ class EbioWebhookController extends Controller
         }
 
         if (! $logs) {
-            $responseText = '"Success"';
-            return response($responseText)
+            $responsePayload = json_encode(['Message' => 'Success']);
+            return response($responsePayload)
                 ->header('Content-Type', 'application/json')
-                ->header('Content-Length', (string) strlen($responseText));
+                ->header('Content-Length', (string) strlen($responsePayload));
         }
 
         // eBioServer might send a single object or an array of objects
@@ -72,10 +72,10 @@ class EbioWebhookController extends Controller
             \App\Jobs\ProcessEbioWebhookJob::dispatch($organisation, $logs);
         }
 
-        // Try returning it with quotes in case eBioServer uses a JSON parser
-        $responseText = '"Success"'; 
-        return response($responseText)
+        // eBioServer expects a specific JSON format to acknowledge the webhook
+        $responsePayload = json_encode(['Message' => 'Success']);
+        return response($responsePayload)
             ->header('Content-Type', 'application/json')
-            ->header('Content-Length', (string) strlen($responseText));
+            ->header('Content-Length', (string) strlen($responsePayload));
     }
 }
