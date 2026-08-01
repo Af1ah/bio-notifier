@@ -51,9 +51,9 @@ class BranchesTable
                 ]),
             ])
             ->bulkActions([
-                \Filament\Tables\Actions\BulkActionGroup::make([
-                    \Filament\Tables\Actions\DeleteBulkAction::make(),
-                    \Filament\Tables\Actions\BulkAction::make('unblockBranchUsers')
+                \Filament\Actions\BulkActionGroup::make([
+                    \Filament\Actions\DeleteBulkAction::make(),
+                    \Filament\Actions\BulkAction::make('unblockBranchUsers')
                         ->label('Unblock users from door')
                         ->icon('heroicon-o-check-circle')
                         ->color('success')
@@ -87,7 +87,7 @@ class BranchesTable
                                 ->send();
                         })
                         ->deselectRecordsAfterCompletion(),
-                    \Filament\Tables\Actions\BulkAction::make('blockBranchUsers')
+                    \Filament\Actions\BulkAction::make('blockBranchUsers')
                         ->label('Block users from door')
                         ->icon('heroicon-o-x-circle')
                         ->color('warning')

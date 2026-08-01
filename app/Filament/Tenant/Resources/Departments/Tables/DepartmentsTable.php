@@ -40,9 +40,9 @@ class DepartmentsTable
                 \Filament\Actions\EditAction::make(),
             ])
             ->bulkActions([
-                \Filament\Tables\Actions\BulkActionGroup::make([
-                    \Filament\Tables\Actions\DeleteBulkAction::make(),
-                    \Filament\Tables\Actions\BulkAction::make('unblockDepartmentUsers')
+                \Filament\Actions\BulkActionGroup::make([
+                    \Filament\Actions\DeleteBulkAction::make(),
+                    \Filament\Actions\BulkAction::make('unblockDepartmentUsers')
                         ->label('Unblock users from door')
                         ->icon('heroicon-o-check-circle')
                         ->color('success')
@@ -76,7 +76,7 @@ class DepartmentsTable
                                 ->send();
                         })
                         ->deselectRecordsAfterCompletion(),
-                    \Filament\Tables\Actions\BulkAction::make('blockDepartmentUsers')
+                    \Filament\Actions\BulkAction::make('blockDepartmentUsers')
                         ->label('Block users from door')
                         ->icon('heroicon-o-x-circle')
                         ->color('warning')

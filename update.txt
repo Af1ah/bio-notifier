@@ -1,0 +1,19 @@
+# 1. Pull the latest code (or checkout the tag)
+git pull origin main
+
+npm run dev
+
+# 2. Update dependencies (optional, but good practice)
+composer install --no-dev --optimize-autoloader
+
+# 3. Clear and rebuild the cache (config, routes, views)
+php artisan optimize:clear
+php artisan optimize
+
+# 4. CRITICAL: Run Tenant Migrations 
+# (This adds the 'blocked_devices' column to the users table for the door access feature)
+php artisan tenants:migrate
+
+# 5. CRITICAL: Restart the queue workers 
+# (This forces the background workers to load the new SOAP service logic and EbioDeviceCommandJob)
+php artisan queue:restart

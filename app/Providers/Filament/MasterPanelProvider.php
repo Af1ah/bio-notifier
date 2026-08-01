@@ -60,11 +60,11 @@ class MasterPanelProvider extends PanelProvider
             ->authGuard('admin')
             ->renderHook(
                 PanelsRenderHook::HEAD_START,
-                fn (): HtmlString => new HtmlString('<link rel="manifest" href="/manifest.json?v=4&start_url=' . urlencode('/' . request()->path()) . '"><meta name="theme-color" content="#f59e0b"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><link rel="apple-touch-icon" href="/icon-192-v3.png">')
+                fn (): HtmlString => new HtmlString('<link rel="manifest" href="/manifest.json?v=4&start_url=' . urlencode('/master') . '"><meta name="theme-color" content="#f59e0b"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><link rel="apple-touch-icon" href="/icon-192-v3.png">')
             )
             ->renderHook(
                 PanelsRenderHook::BODY_END,
-                fn (): HtmlString => new HtmlString('<script>if ("serviceWorker" in navigator) { window.addEventListener("load", function() { navigator.serviceWorker.register("/sw.js?v=2"); }); }</script>')
+                fn (): HtmlString => new HtmlString('<script>if ("serviceWorker" in navigator) { window.addEventListener("load", async function() { const regs = await navigator.serviceWorker.getRegistrations(); for (let r of regs) { await r.unregister(); } navigator.serviceWorker.register("/sw.js?v=4"); }); }</script>')
             )
             ->renderHook(
                 PanelsRenderHook::GLOBAL_SEARCH_BEFORE,
@@ -74,7 +74,7 @@ class MasterPanelProvider extends PanelProvider
                         Install App
                     </button>
                     <script>
-                        let deferredPrompt;
+                        var deferredPrompt;
                         window.addEventListener("beforeinstallprompt", (e) => {
                             e.preventDefault();
                             deferredPrompt = e;
