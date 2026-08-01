@@ -62,6 +62,7 @@ class User extends Authenticatable implements FilamentUser
             'fingerprints' => 'array',
             'face_templates' => 'array',
             'requires_password_change' => 'boolean',
+            'blocked_devices' => 'array',
         ];
     }
 

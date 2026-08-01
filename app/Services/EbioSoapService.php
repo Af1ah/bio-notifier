@@ -392,10 +392,16 @@ class EbioSoapService
             return false;
         }
 
-        preg_match('/<DeviceCommand_RebootResult>(.*?)<\/DeviceCommand_RebootResult>/', $response->body(), $matches);
+        $body = $response->body();
+
+        if (str_contains($body, '<DeviceCommand_RebootResult />')) {
+            return true;
+        }
+
+        preg_match('/<DeviceCommand_RebootResult>(.*?)<\/DeviceCommand_RebootResult>/', $body, $matches);
         $result = $matches[1] ?? '';
 
-        return strtolower($result) === 'success';
+        return strtolower($result) === 'success' || empty($result) && $result !== 'error';
     }
 
     /**
@@ -431,16 +437,22 @@ class EbioSoapService
             return false;
         }
 
-        preg_match('/<DeviceCommand_ClearLogsResult>(.*?)<\/DeviceCommand_ClearLogsResult>/', $response->body(), $matches);
+        $body = $response->body();
+
+        if (str_contains($body, '<DeviceCommand_ClearLogsResult />')) {
+            return true;
+        }
+
+        preg_match('/<DeviceCommand_ClearLogsResult>(.*?)<\/DeviceCommand_ClearLogsResult>/', $body, $matches);
         $result = $matches[1] ?? '';
 
-        return strtolower($result) === 'success';
+        return strtolower($result) === 'success' || empty($result) && $result !== 'error';
     }
 
     /**
-     * Force fetch logs from device (Reset transaction stamp)
+     * Reset transaction stamp on the device (force fetch logs)
      */
-    public function forceFetchDeviceLogs(Organisation $organisation, string $serialNumber): bool
+    public function resetTransactionStamp(Organisation $organisation, string $serialNumber): bool
     {
         if (empty($organisation->ebio_url) || empty($organisation->ebio_soap_username)) {
             throw new \Exception("eBioServer SOAP credentials are not configured for this organisation.");
@@ -470,10 +482,276 @@ class EbioSoapService
             return false;
         }
 
-        preg_match('/<DeviceCommand_ResetTransactionStampResult>(.*?)<\/DeviceCommand_ResetTransactionStampResult>/', $response->body(), $matches);
+        $body = $response->body();
+
+        if (str_contains($body, '<DeviceCommand_ResetTransactionStampResult />')) {
+            return true;
+        }
+
+        preg_match('/<DeviceCommand_ResetTransactionStampResult>(.*?)<\/DeviceCommand_ResetTransactionStampResult>/', $body, $matches);
         $result = $matches[1] ?? '';
 
-        return strtolower($result) === 'success';
+        return strtolower($result) === 'success' || empty($result) && $result !== 'error';
+    }
+
+    /**
+     * Reset OP stamp on the device
+     */
+    public function resetOPStamp(Organisation $organisation, string $serialNumber): bool
+    {
+        if (empty($organisation->ebio_url) || empty($organisation->ebio_soap_username)) {
+            throw new \Exception("eBioServer SOAP credentials are not configured for this organisation.");
+        }
+
+        $url = rtrim($organisation->ebio_url, '/') . '/webservice.asmx';
+        
+        $xml = '<?xml version="1.0" encoding="utf-8"?>
+        <soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+          <soap:Body>
+            <DeviceCommand_ResetOPStamp xmlns="http://tempuri.org/">
+              <UserName>'.$organisation->ebio_soap_username.'</UserName>
+              <Password>'.$organisation->ebio_soap_password.'</Password>
+              <DeviceSerialNumber>'.$serialNumber.'</DeviceSerialNumber>
+            </DeviceCommand_ResetOPStamp>
+          </soap:Body>
+        </soap:Envelope>';
+
+        $response = Http::withHeaders([
+            'Content-Type' => 'text/xml; charset=utf-8',
+            'SOAPAction' => '"http://tempuri.org/DeviceCommand_ResetOPStamp"'
+        ])->send('POST', $url, [
+            'body' => $xml
+        ]);
+
+        if (!$response->successful()) {
+            return false;
+        }
+
+        $body = $response->body();
+
+        if (str_contains($body, '<DeviceCommand_ResetOPStampResult />')) {
+            return true;
+        }
+
+        preg_match('/<DeviceCommand_ResetOPStampResult>(.*?)<\/DeviceCommand_ResetOPStampResult>/', $body, $matches);
+        $result = $matches[1] ?? '';
+
+        return strtolower($result) === 'success' || empty($result) && $result !== 'error';
+    }
+
+    /**
+     * Block or unblock a user from a device.
+     */
+    public function blockUserFromDoor(Organisation $organisation, string $serialNumber, string $employeeCode, bool $blockUser): bool
+    {
+        if (empty($organisation->ebio_url) || empty($organisation->ebio_soap_username)) {
+            throw new \Exception("eBioServer SOAP credentials are not configured for this organisation.");
+        }
+
+        $url = rtrim($organisation->ebio_url, '/') . '/webservice.asmx';
+        $blockStr = $blockUser ? 'true' : 'false';
+        
+        $xml = '<?xml version="1.0" encoding="utf-8"?>
+        <soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+          <soap:Body>
+            <DeviceCommand_BlockUnBlockUser xmlns="http://tempuri.org/">
+              <UserName>'.$organisation->ebio_soap_username.'</UserName>
+              <Password>'.$organisation->ebio_soap_password.'</Password>
+              <DeviceSerialNumber>'.$serialNumber.'</DeviceSerialNumber>
+              <EmployeeCode>'.$employeeCode.'</EmployeeCode>
+              <BlockUser>'.$blockStr.'</BlockUser>
+            </DeviceCommand_BlockUnBlockUser>
+          </soap:Body>
+        </soap:Envelope>';
+
+        $response = Http::withHeaders([
+            'Content-Type' => 'text/xml; charset=utf-8',
+            'SOAPAction' => '"http://tempuri.org/DeviceCommand_BlockUnBlockUser"'
+        ])->send('POST', $url, [
+            'body' => $xml
+        ]);
+
+        if (!$response->successful()) {
+            return false;
+        }
+
+        $body = $response->body();
+
+        if (str_contains($body, '<DeviceCommand_BlockUnBlockUserResult />')) {
+            return true;
+        }
+
+        preg_match('/<DeviceCommand_BlockUnBlockUserResult>(.*?)<\/DeviceCommand_BlockUnBlockUserResult>/', $body, $matches);
+        $result = $matches[1] ?? '';
+        
+        $isSuccess = strtolower($result) === 'success' || (empty($result) && $result !== 'error');
+        if (!$isSuccess) {
+            \Illuminate\Support\Facades\Log::error("Block/Unblock user API failed. Response: " . $body);
+        }
+        return $isSuccess;
+    }
+
+    /**
+     * Trigger Fingerprint Enrollment on the device
+     */
+    public function enrollFingerprint(Organisation $organisation, string $serialNumber, string $employeeCode, int $fingerIndex): bool
+    {
+        $payload = '<?xml version="1.0" encoding="utf-8"?>
+        <soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+          <soap:Body>
+            <DeviceCommand_EnrollFP xmlns="http://tempuri.org/">
+              <UserName>'.$organisation->ebio_soap_username.'</UserName>
+              <Password>'.$organisation->ebio_soap_password.'</Password>
+              <DeviceSerialNumber>'.$serialNumber.'</DeviceSerialNumber>
+              <EmployeeCode>'.$employeeCode.'</EmployeeCode>
+              <FPIndex>'.$fingerIndex.'</FPIndex>
+            </DeviceCommand_EnrollFP>
+          </soap:Body>
+        </soap:Envelope>';
+
+        $response = Http::withHeaders([
+            'Content-Type' => 'text/xml; charset=utf-8',
+            'SOAPAction' => '"http://tempuri.org/DeviceCommand_EnrollFP"'
+        ])->send('POST', rtrim($organisation->ebio_url, '/') . '/webservice.asmx', [
+            'body' => $payload
+        ]);
+
+        $body = $response->body();
+
+        if (str_contains($body, '<DeviceCommand_EnrollFPResult />')) {
+            return true;
+        }
+
+        preg_match('/<DeviceCommand_EnrollFPResult>(.*?)<\/DeviceCommand_EnrollFPResult>/', $body, $matches);
+        $result = $matches[1] ?? '';
+
+        $isSuccess = strtolower($result) === 'success' || (empty($result) && $result !== 'error');
+        if (!$isSuccess) {
+            \Illuminate\Support\Facades\Log::error("EnrollFP API failed. Response: " . $body);
+        }
+        return $isSuccess;
+    }
+
+    /**
+     * Trigger Face Enrollment on the device (with fallback to EnrollFaceEx)
+     */
+    public function enrollFace(Organisation $organisation, string $serialNumber, string $employeeCode): bool
+    {
+        $payload = '<?xml version="1.0" encoding="utf-8"?>
+        <soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+          <soap:Body>
+            <DeviceCommand_EnrollFace xmlns="http://tempuri.org/">
+              <UserName>'.$organisation->ebio_soap_username.'</UserName>
+              <Password>'.$organisation->ebio_soap_password.'</Password>
+              <DeviceSerialNumber>'.$serialNumber.'</DeviceSerialNumber>
+              <EmployeeCode>'.$employeeCode.'</EmployeeCode>
+            </DeviceCommand_EnrollFace>
+          </soap:Body>
+        </soap:Envelope>';
+
+        $response = Http::withHeaders([
+            'Content-Type' => 'text/xml; charset=utf-8',
+            'SOAPAction' => '"http://tempuri.org/DeviceCommand_EnrollFace"'
+        ])->send('POST', rtrim($organisation->ebio_url, '/') . '/webservice.asmx', [
+            'body' => $payload
+        ]);
+
+        $body = $response->body();
+
+        $isSuccess = false;
+        if (str_contains($body, '<DeviceCommand_EnrollFaceResult />')) {
+            $isSuccess = true;
+        } else {
+            preg_match('/<DeviceCommand_EnrollFaceResult>(.*?)<\/DeviceCommand_EnrollFaceResult>/', $body, $matches);
+            $result = $matches[1] ?? '';
+            $isSuccess = strtolower($result) === 'success' || (empty($result) && $result !== 'error');
+        }
+
+        if ($isSuccess) {
+            return true;
+        }
+        
+        \Illuminate\Support\Facades\Log::info("EnrollFace failed, attempting EnrollFaceEx for Employee: " . $employeeCode);
+
+        // Fallback to EnrollFaceEx
+        $payloadEx = '<?xml version="1.0" encoding="utf-8"?>
+        <soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+          <soap:Body>
+            <DeviceCommand_EnrollFaceEx xmlns="http://tempuri.org/">
+              <UserName>'.$organisation->ebio_soap_username.'</UserName>
+              <Password>'.$organisation->ebio_soap_password.'</Password>
+              <DeviceSerialNumber>'.$serialNumber.'</DeviceSerialNumber>
+              <EmployeeCode>'.$employeeCode.'</EmployeeCode>
+            </DeviceCommand_EnrollFaceEx>
+          </soap:Body>
+        </soap:Envelope>';
+
+        $responseEx = Http::withHeaders([
+            'Content-Type' => 'text/xml; charset=utf-8',
+            'SOAPAction' => '"http://tempuri.org/DeviceCommand_EnrollFaceEx"'
+        ])->send('POST', rtrim($organisation->ebio_url, '/') . '/webservice.asmx', [
+            'body' => $payloadEx
+        ]);
+
+        $bodyEx = $responseEx->body();
+
+        if (str_contains($bodyEx, '<DeviceCommand_EnrollFaceExResult />')) {
+            return true;
+        }
+
+        preg_match('/<DeviceCommand_EnrollFaceExResult>(.*?)<\/DeviceCommand_EnrollFaceExResult>/', $bodyEx, $matches);
+        $resultEx = $matches[1] ?? '';
+
+        $isSuccessEx = strtolower($resultEx) === 'success' || (empty($resultEx) && $resultEx !== 'error');
+        if (!$isSuccessEx) {
+            \Illuminate\Support\Facades\Log::error("EnrollFaceEx API failed. Response: " . $bodyEx);
+        }
+        return $isSuccessEx;
+    }
+
+    /**
+     * Helper to fetch users from external service.
+     */
+    public function unlockDoor(Organisation $organisation, string $serialNumber): bool
+    {
+        if (empty($organisation->ebio_url) || empty($organisation->ebio_soap_username)) {
+            throw new \Exception("eBioServer SOAP credentials are not configured for this organisation.");
+        }
+
+        $url = rtrim($organisation->ebio_url, '/') . '/webservice.asmx';
+        
+        $xml = '<?xml version="1.0" encoding="utf-8"?>
+        <soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+          <soap:Body>
+            <DeviceCommand_UnlockDoor xmlns="http://tempuri.org/">
+              <UserName>'.$organisation->ebio_soap_username.'</UserName>
+              <Password>'.$organisation->ebio_soap_password.'</Password>
+              <DeviceSerialNumber>'.$serialNumber.'</DeviceSerialNumber>
+            </DeviceCommand_UnlockDoor>
+          </soap:Body>
+        </soap:Envelope>';
+
+        $response = Http::withHeaders([
+            'Content-Type' => 'text/xml; charset=utf-8',
+            'SOAPAction' => '"http://tempuri.org/DeviceCommand_UnlockDoor"'
+        ])->send('POST', $url, [
+            'body' => $xml
+        ]);
+
+        if (!$response->successful()) {
+            return false;
+        }
+
+        $body = $response->body();
+
+        if (str_contains($body, '<DeviceCommand_UnlockDoorResult />')) {
+            return true;
+        }
+
+        preg_match('/<DeviceCommand_UnlockDoorResult>(.*?)<\/DeviceCommand_UnlockDoorResult>/', $body, $matches);
+        $result = $matches[1] ?? '';
+
+        return strtolower($result) === 'success' || empty($result) && $result !== 'error';
     }
 
     /**

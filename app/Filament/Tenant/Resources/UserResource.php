@@ -277,6 +277,57 @@ class UserResource extends Resource
             ])
             ->recordActions([
                 \Filament\Actions\ActionGroup::make([
+                    \Filament\Actions\Action::make('addBiometric')
+                        ->label('Add Biometric')
+                        ->icon('heroicon-o-finger-print')
+                        ->form([
+                            \Filament\Forms\Components\Select::make('device_id')
+                                ->label('Select Device')
+                                ->options(function () {
+                                    return \App\Models\Device::all()->mapWithKeys(function ($d) {
+                                        return [$d->id => $d->name ?: $d->serial_number];
+                                    })->toArray();
+                                })
+                                ->required()
+                                ->searchable(),
+                            \Filament\Forms\Components\Select::make('type')
+                                ->label('Biometric Type')
+                                ->options([
+                                    'finger' => 'Fingerprint',
+                                    'face' => 'Face',
+                                ])
+                                ->required()
+                                ->live(),
+                            \Filament\Forms\Components\Select::make('finger_index')
+                                ->label('Select Finger')
+                                ->options([
+                                    0 => '0 - Left Pinky',
+                                    1 => '1 - Left Ring',
+                                    2 => '2 - Left Middle',
+                                    3 => '3 - Left Index',
+                                    4 => '4 - Left Thumb',
+                                    5 => '5 - Right Thumb',
+                                    6 => '6 - Right Index',
+                                    7 => '7 - Right Middle',
+                                    8 => '8 - Right Ring',
+                                    9 => '9 - Right Pinky',
+                                ])
+                                ->visible(fn ($get) => $get('type') === 'finger')
+                                ->required(fn ($get) => $get('type') === 'finger'),
+                        ])
+                        ->action(function (\App\Models\User $record, array $data) {
+                            \App\Jobs\EnrollEbioBiometricJob::dispatch(
+                                tenancy()->tenant,
+                                $record->id,
+                                $data['device_id'],
+                                $data['type'],
+                                $data['finger_index'] ?? null
+                            );
+                            \Filament\Notifications\Notification::make()
+                                ->title('Enrollment command queued')
+                                ->success()
+                                ->send();
+                        }),
                     ViewAction::make(),
                     EditAction::make(),
                 ]),
@@ -285,7 +336,7 @@ class UserResource extends Resource
                 \Filament\Actions\BulkActionGroup::make([
                     \Filament\Actions\DeleteBulkAction::make(),
                     \Filament\Actions\BulkAction::make('enableUsers')
-                        ->label('Enable on Devices')
+                        ->label('Unblock user from door')
                         ->icon('heroicon-o-check-circle')
                         ->color('success')
                         ->form([
@@ -306,19 +357,18 @@ class UserResource extends Resource
                             $organisation = tenancy()->tenant;
                             $count = 0;
                             foreach ($records as $record) {
-                                $record->update(['is_enabled' => true]);
-                                \App\Jobs\PushEbioUserJob::dispatch($organisation, $record->id, $location);
+                                \App\Jobs\BlockUnblockEbioUserJob::dispatch($organisation, $record->id, $location, false); // false = Unblock
                                 $count++;
                             }
                             \Filament\Notifications\Notification::make()
-                                ->title('Enabled and Queued')
-                                ->body("{$count} user(s) enabled and queued for sync.")
+                                ->title('Unblocked and Queued')
+                                ->body("{$count} user(s) unblocked and queued for sync.")
                                 ->success()
                                 ->send();
                         })
                         ->deselectRecordsAfterCompletion(),
                     \Filament\Actions\BulkAction::make('disableUsers')
-                        ->label('Disable on Devices')
+                        ->label('Block user from door')
                         ->icon('heroicon-o-x-circle')
                         ->color('warning')
                         ->form([
@@ -339,13 +389,12 @@ class UserResource extends Resource
                             $organisation = tenancy()->tenant;
                             $count = 0;
                             foreach ($records as $record) {
-                                $record->update(['is_enabled' => false]);
-                                \App\Jobs\PushEbioUserJob::dispatch($organisation, $record->id, $location);
+                                \App\Jobs\BlockUnblockEbioUserJob::dispatch($organisation, $record->id, $location, true); // true = Block
                                 $count++;
                             }
                             \Filament\Notifications\Notification::make()
-                                ->title('Disabled and Queued')
-                                ->body("{$count} user(s) disabled and queued for sync.")
+                                ->title('Blocked and Queued')
+                                ->body("{$count} user(s) blocked and queued for sync.")
                                 ->success()
                                 ->send();
                         })

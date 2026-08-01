@@ -35,7 +35,9 @@ class ListDeviceCommands extends ListRecords
                         ->options([
                             'reboot' => 'Reboot Device',
                             'clear_logs' => 'CRITICAL: Clear Attendance Logs',
-                            'force_fetch_logs' => 'Force Fetch Logs (Sync)',
+                            'reset_transaction_stamp' => 'Reset Transaction Stamp',
+                            'reset_op_stamp' => 'Reset OP Stamp',
+                            'unlock_door' => 'Unlock Door',
                         ])
                         ->required(),
                     \Filament\Forms\Components\TextInput::make('confirm')

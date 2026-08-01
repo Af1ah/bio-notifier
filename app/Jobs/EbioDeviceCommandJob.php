@@ -46,8 +46,14 @@ class EbioDeviceCommandJob implements ShouldQueue
                 case 'clear_logs':
                     $success = $service->clearDeviceLogs($this->organisation, $this->serialNumber);
                     break;
-                case 'force_fetch_logs':
-                    $success = $service->forceFetchDeviceLogs($this->organisation, $this->serialNumber);
+                case 'reset_transaction_stamp':
+                    $success = $service->resetTransactionStamp($this->organisation, $this->serialNumber);
+                    break;
+                case 'reset_op_stamp':
+                    $success = $service->resetOPStamp($this->organisation, $this->serialNumber);
+                    break;
+                case 'unlock_door':
+                    $success = $service->unlockDoor($this->organisation, $this->serialNumber);
                     break;
                 default:
                     Log::warning("Unknown device command type: {$this->commandType}");

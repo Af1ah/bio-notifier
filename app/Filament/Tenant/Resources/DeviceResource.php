@@ -144,21 +144,57 @@ class DeviceResource extends Resource
                                 ->success()
                                 ->send();
                         }),
-                    \Filament\Actions\Action::make('forceFetchLogs')
-                        ->label('Force Fetch Logs')
+                    \Filament\Actions\Action::make('resetTransactionStamp')
+                        ->label('Reset Transaction Stamp')
                         ->icon('heroicon-o-arrow-down-tray')
                         ->requiresConfirmation()
                         ->action(function (Device $record) {
                             $command = \App\Models\DeviceCommand::create([
                                 'device_id' => $record->id,
-                                'command_type' => 'force_fetch_logs',
-                                'command_content' => 'eBioServer SOAP Command: force_fetch_logs',
+                                'command_type' => 'reset_transaction_stamp',
+                                'command_content' => 'eBioServer SOAP Command: reset_transaction_stamp',
                                 'status' => 'pending',
                             ]);
-                            \App\Jobs\EbioDeviceCommandJob::dispatch(tenancy()->tenant, $record->serial_number, 'force_fetch_logs', $command->id);
+                            \App\Jobs\EbioDeviceCommandJob::dispatch(tenancy()->tenant, $record->serial_number, 'reset_transaction_stamp', $command->id);
                             \Filament\Notifications\Notification::make()
                                 ->title('Command Queued')
-                                ->body('Force fetch logs command queued.')
+                                ->body('Reset transaction stamp command queued.')
+                                ->success()
+                                ->send();
+                        }),
+                    \Filament\Actions\Action::make('resetOPStamp')
+                        ->label('Reset OP Stamp')
+                        ->icon('heroicon-o-arrow-path')
+                        ->requiresConfirmation()
+                        ->action(function (Device $record) {
+                            $command = \App\Models\DeviceCommand::create([
+                                'device_id' => $record->id,
+                                'command_type' => 'reset_op_stamp',
+                                'command_content' => 'eBioServer SOAP Command: reset_op_stamp',
+                                'status' => 'pending',
+                            ]);
+                            \App\Jobs\EbioDeviceCommandJob::dispatch(tenancy()->tenant, $record->serial_number, 'reset_op_stamp', $command->id);
+                            \Filament\Notifications\Notification::make()
+                                ->title('Command Queued')
+                                ->body('Reset OP stamp command queued.')
+                                ->success()
+                                ->send();
+                        }),
+                    \Filament\Actions\Action::make('unlockDoor')
+                        ->label('Unlock Door')
+                        ->icon('heroicon-o-lock-open')
+                        ->requiresConfirmation()
+                        ->action(function (Device $record) {
+                            $command = \App\Models\DeviceCommand::create([
+                                'device_id' => $record->id,
+                                'command_type' => 'unlock_door',
+                                'command_content' => 'eBioServer SOAP Command: unlock_door',
+                                'status' => 'pending',
+                            ]);
+                            \App\Jobs\EbioDeviceCommandJob::dispatch(tenancy()->tenant, $record->serial_number, 'unlock_door', $command->id);
+                            \Filament\Notifications\Notification::make()
+                                ->title('Command Queued')
+                                ->body('Unlock door command queued.')
                                 ->success()
                                 ->send();
                         }),
