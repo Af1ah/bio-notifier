@@ -74,6 +74,7 @@ class ProcessMatrixCommand implements ShouldQueue
                         'name' => $name,
                         'password' => $this->commandField($content, 'Passwd'),
                         'card' => $this->commandField($content, 'Card'),
+                        'user_active' => $this->commandField($content, 'Active') !== '0',
                     ]);
 
                     if ($result['success']) {

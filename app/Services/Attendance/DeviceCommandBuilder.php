@@ -45,6 +45,10 @@ class DeviceCommandBuilder
             'Grp='.($userData['group'] ?? 1),
         ];
 
+        if ($device->vendor === 'matrix') {
+            $fields[] = 'Active=' . (($userData['is_enabled'] ?? true) ? '1' : '0');
+        }
+
         $content = 'DATA USER '.implode("\t", $fields);
 
         return $this->createCommand($device, 'DATA', $content);

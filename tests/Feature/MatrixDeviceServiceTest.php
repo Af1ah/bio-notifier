@@ -38,11 +38,12 @@ XML),
 
         $this->assertTrue($result['success']);
         $this->assertSame('100011', $result['user']['reference_id']);
+        $this->assertTrue($result['user']['user_active']);
         $this->assertSame('15192047291401264', $result['user']['card1']);
         $this->assertSame('386548900517', $result['user']['card2']);
     }
 
-    public function test_it_sends_both_card_fields_and_can_clear_a_card(): void
+    public function test_it_sends_supported_user_fields_and_omits_restrict_access(): void
     {
         Http::fake(['*' => Http::response('<COSEC_API><Response-Code>0</Response-Code></COSEC_API>')]);
 
@@ -60,6 +61,7 @@ XML),
             'name' => 'Test User',
             'user_active' => false,
             'vip' => true,
+            'restrict_access' => true,
             'card1' => '',
             'card2' => '386548900517',
         ]);
@@ -74,6 +76,7 @@ XML),
                 && $query['ref-user-id'] === '100011'
                 && $query['user-active'] === '0'
                 && $query['vip'] === '1'
+                && ! array_key_exists('restrict-access', $query)
                 && $query['card1'] === '0'
                 && $query['card2'] === '386548900517';
         });

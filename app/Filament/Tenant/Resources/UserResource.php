@@ -101,6 +101,7 @@ class UserResource extends Resource
                         ->revealable()
                         ->autocomplete('new-password'),
                     Toggle::make('is_enabled')
+                        ->label('Enabled')
                         ->default(true),
                 ])
                 ->columns(2)
@@ -264,6 +265,7 @@ class UserResource extends Resource
                     ->formatStateUsing(fn ($state) => $state === 14 ? 'Admin' : 'User')
                     ->color(fn ($state): string => $state === 14 ? 'primary' : 'gray'),
                 Tables\Columns\IconColumn::make('is_enabled')
+                    ->label('Enabled')
                     ->boolean(),
             ])
             ->filters([
@@ -408,7 +410,7 @@ class UserResource extends Resource
                             CheckboxList::make('sync_properties')
                                 ->label('What to sync?')
                                 ->options([
-                                    'profile' => 'Basic Profile (Name, Card, Password)',
+                                    'profile' => 'Basic Profile (Name, Card, Password, Access)',
                                     'biometrics' => 'Biometrics (Fingerprints)',
                                 ])
                                 ->default(['profile', 'biometrics'])
@@ -440,6 +442,7 @@ class UserResource extends Resource
                                     'password' => $record->device_password,
                                     'group' => $record->group ?? 1,
                                     'user_id' => $record->id,
+                                    'is_enabled' => $record->is_enabled,
                                 ]);
                             }
 
@@ -496,7 +499,7 @@ class UserResource extends Resource
                             CheckboxList::make('sync_properties')
                                 ->label('What to sync?')
                                 ->options([
-                                    'profile' => 'Basic Profile (Name, Card, Privilege, Password)',
+                                    'profile' => 'Basic Profile (Name, Card, Privilege, Password, Access)',
                                     'biometrics' => 'Biometrics (Fingerprints)',
                                 ])
                                 ->default(['profile', 'biometrics'])
@@ -535,6 +538,7 @@ class UserResource extends Resource
                                             'password' => $user->device_password,
                                             'group' => $user->group ?? 1,
                                             'user_id' => $user->id,
+                                            'is_enabled' => $user->is_enabled,
                                         ]);
 
                                         if (in_array($device->vendor, ['matrix', 'hikvision'])) {

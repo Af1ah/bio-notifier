@@ -59,6 +59,7 @@ class User extends Authenticatable implements FilamentUser
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'is_enabled' => 'boolean',
+            'restrict_access' => 'boolean',
             'fingerprints' => 'array',
             'face_templates' => 'array',
             'requires_password_change' => 'boolean',

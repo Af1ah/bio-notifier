@@ -136,7 +136,7 @@ class ViewDevice extends ViewRecord
                                 ->maxLength(15)
                                 ->helperText('Matrix accepts letters, numbers, and spaces only.'),
                             \Filament\Forms\Components\Toggle::make('user_active')
-                                ->label('Active')
+                                ->label('Enabled')
                                 ->default(true),
                             \Filament\Forms\Components\Toggle::make('vip')
                                 ->label('VIP')

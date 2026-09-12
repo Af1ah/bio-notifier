@@ -132,7 +132,7 @@ class ViewUser extends ViewRecord
                     \Filament\Forms\Components\CheckboxList::make('sync_properties')
                         ->label('What to sync?')
                         ->options([
-                            'profile' => 'Basic Profile (Name, Card, Password)',
+                            'profile' => 'Basic Profile (Name, Card, Password, Access)',
                             'biometrics' => 'Biometrics (Fingerprints)',
                         ])
                         ->default(['profile', 'biometrics'])
@@ -165,6 +165,7 @@ class ViewUser extends ViewRecord
                             'password' => $record->device_password,
                             'group' => $record->group ?? 1,
                             'user_id' => $record->id,
+                            'is_enabled' => $record->is_enabled,
                         ]);
                     }
 

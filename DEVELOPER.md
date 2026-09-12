@@ -240,6 +240,7 @@ GET /device.cgi/users?action=set&user-id=45&ref-user-id=45&name=John+Doe&user-ac
 * **`ref-user-id`**: **Strictly numeric** user reference ID (1 to 8 digits, `1` to `99999999`). Alphanumeric characters trigger `Request Failed: Invalid Command`.
 * **`user-active`**: `1` = Active, `0` = Inactive.
 * **Important Firmware Constraint:** Do **NOT** pass `user-group` to modern Matrix controllers (e.g. ARGO FACE); it causes `Request Failed: Invalid Command "user-group=1"`.
+* **ARGO FACE Restrict Access:** The setting is visible in the device web UI but is not part of the documented `/device.cgi/users` parameters. ARGO FACE rejects `restrict-access` with `Request Failed: Invalid Command`; do not send it through this API.
 
 ---
 
@@ -294,7 +295,7 @@ biomatrix/
    * **`setReaderConfig()`**: Dispatches external reader activation commands (`reader3`, `reader-access-mode`, `reader-entry-exit-mode`).
    * **`getEventLogs()`**: Fetches raw hardware event sequences and parses event IDs into human-readable logs.
    * **`enableDeviceEnrollment()`**: Enables on-device enrollment mode (`enroll-options?action=set&enroll-on-device=1`).
-   * **`setUser()`**: Sanitizes user names, guarantees purely numeric `ref-user-id`, and omits unsupported fields (`user-group`).
+   * **`setUser()`**: Sanitizes user names, guarantees purely numeric `ref-user-id`, maps software `is_enabled` to device `user-active`, and omits unsupported fields (`user-group`, `restrict-access`).
    * **Error Code Mapping**: Maps all Matrix response codes (`0` to `22`) from Table 129 of the official manual into descriptive error notifications.
 
 2. **[`DeviceResource.php`](file:///home/aflah/projects/biomatrix/app/Filament/Tenant/Resources/DeviceResource.php)**:
