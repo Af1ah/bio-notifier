@@ -488,79 +488,58 @@ class UserResource extends Resource
                                 ->send();
                         })
                         ->deselectRecordsAfterCompletion(),
-                    \Filament\Actions\BulkAction::make('assignCategory')
-                        ->label('Assign Category')
+                    \Filament\Actions\BulkAction::make('assignOrganisation')
+                        ->label('Assign Branch, Department, or Task Group')
                         ->icon('heroicon-o-tag')
                         ->form([
-                            \Filament\Forms\Components\Select::make('branch_id')
-                                ->label('Branch')
-                                ->options(\App\Models\Branch::all()->pluck('display_name', 'id'))
-                                ->default(fn () => \App\Models\Branch::count() === 1 ? \App\Models\Branch::first()->id : null)
+                            \Filament\Forms\Components\Select::make('assignment_type')
+                                ->label('Assign to')
+                                ->options([
+                                    'branch' => 'Branch',
+                                    'department' => 'Department',
+                                    'task_group' => 'Task Group',
+                                ])
+                                ->required()
                                 ->live()
-                                ->nullable(),
-                            \Filament\Forms\Components\Select::make('department_id')
-                                ->label('Department')
-                                ->options(function ($get) {
-                                    $branchId = $get('branch_id');
-                                    if (!$branchId) {
-                                        return \App\Models\Department::pluck('name', 'id');
-                                    }
-                                    return \App\Models\Department::whereHas('branches', fn ($q) => $q->where('branches.id', $branchId))->pluck('name', 'id');
+                                ->afterStateUpdated(fn (callable $set) => $set('assignment_id', null)),
+                            \Filament\Forms\Components\Select::make('assignment_id')
+                                ->label(fn (callable $get): string => match ($get('assignment_type')) {
+                                    'branch' => 'Branch',
+                                    'department' => 'Department',
+                                    'task_group' => 'Task Group',
+                                    default => 'Select an assignment type first',
                                 })
-                                ->default(fn () => \App\Models\Department::count() === 1 ? \App\Models\Department::first()->id : null)
-                                ->nullable(),
-                            \Filament\Forms\Components\Select::make('group')
-                                ->label('Designation / Group')
-                                ->options(\App\Models\User::whereNotNull('group')->where('group', '!=', '')->distinct()->pluck('group', 'group'))
-                                ->searchable()
-                                ->createOptionForm([
-                                    \Filament\Forms\Components\TextInput::make('name')->required()->label('Name'),
-                                ])
-                                ->createOptionUsing(fn (array $data) => $data['name'])
-                                ->nullable(),
-                            \Filament\Forms\Components\Select::make('taskGroups')
-                                ->label('Task Groups')
-                                ->multiple()
-                                ->options(\App\Models\TaskGroup::pluck('name', 'id'))
-                                ->searchable()
-                                ->default(fn () => \App\Models\TaskGroup::count() === 1 ? [\App\Models\TaskGroup::first()->id] : [])
-                                ->createOptionForm([
-                                    \Filament\Forms\Components\TextInput::make('name')->required(),
-                                    \Filament\Forms\Components\Textarea::make('description'),
-                                ])
-                                ->createOptionUsing(function (array $data) {
-                                    $taskGroup = \App\Models\TaskGroup::create($data);
-                                    return $taskGroup->id;
+                                ->options(fn (callable $get): array => match ($get('assignment_type')) {
+                                    'branch' => \App\Models\Branch::query()
+                                        ->get()
+                                        ->mapWithKeys(fn (\App\Models\Branch $branch) => [$branch->id => $branch->display_name])
+                                        ->all(),
+                                    'department' => \App\Models\Department::query()->pluck('name', 'id')->all(),
+                                    'task_group' => \App\Models\TaskGroup::query()->pluck('name', 'id')->all(),
+                                    default => [],
                                 })
-                                ->nullable(),
+                                ->required()
+                                ->searchable()
+                                ->disabled(fn (callable $get): bool => blank($get('assignment_type'))),
                         ])
                         ->action(function (\Illuminate\Database\Eloquent\Collection $records, array $data) {
-                            $updateData = [];
-                            if (array_key_exists('branch_id', $data) && $data['branch_id'] !== null) {
-                                $updateData['branch_id'] = $data['branch_id'];
-                            }
-                            if (array_key_exists('department_id', $data) && $data['department_id'] !== null) {
-                                $updateData['department_id'] = $data['department_id'];
-                            }
-                            if (array_key_exists('group', $data) && $data['group'] !== null) {
-                                $updateData['group'] = $data['group'];
-                            }
-                            
-                            if (!empty($updateData)) {
-                                foreach ($records as $record) {
-                                    $record->update($updateData);
-                                }
+                            foreach ($records as $record) {
+                                match ($data['assignment_type']) {
+                                    'branch' => $record->update(['branch_id' => $data['assignment_id']]),
+                                    'department' => $record->update(['department_id' => $data['assignment_id']]),
+                                    'task_group' => $record->taskGroups()->syncWithoutDetaching([$data['assignment_id']]),
+                                };
                             }
 
-                            if (!empty($data['taskGroups'])) {
-                                foreach ($records as $record) {
-                                    $record->taskGroups()->syncWithoutDetaching($data['taskGroups']);
-                                }
-                            }
-                            
+                            $label = match ($data['assignment_type']) {
+                                'branch' => 'branch',
+                                'department' => 'department',
+                                'task_group' => 'task group',
+                            };
+
                             \Filament\Notifications\Notification::make()
-                                ->title('Success')
-                                ->body('Categories assigned to selected users.')
+                                ->title('Assignment saved')
+                                ->body("Selected users were assigned to the {$label}.")
                                 ->success()
                                 ->send();
                         })

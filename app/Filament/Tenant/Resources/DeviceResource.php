@@ -2,12 +2,9 @@
 
 namespace App\Filament\Tenant\Resources;
 
-use Filament\Actions\Action;
 use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteBulkAction;
-use Filament\Actions\EditAction;
 use Filament\Actions\ViewAction;
-use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Resources\Resource;
 use Filament\Schemas\Components\Section;
@@ -38,12 +35,33 @@ class DeviceResource extends Resource
 
     public static function canEdit(\Illuminate\Database\Eloquent\Model $record): bool
     {
-        return false;
+        return true;
     }
 
     public static function canDelete(\Illuminate\Database\Eloquent\Model $record): bool
     {
         return false;
+    }
+
+    public static function form(Schema $schema): Schema
+    {
+        return $schema->components([
+            Section::make('Device details')
+                ->description('Update the local name and location used by Bio-Notifier.')
+                ->schema([
+                    TextInput::make('serial_number')
+                        ->label('Serial number')
+                        ->disabled()
+                        ->dehydrated(false),
+                    TextInput::make('name')
+                        ->label('Device name')
+                        ->required()
+                        ->maxLength(255),
+                    TextInput::make('options.location')
+                        ->label('Location')
+                        ->maxLength(255),
+                ]),
+        ]);
     }
 
     public static function infolist(Schema $schema): Schema
@@ -215,6 +233,7 @@ class DeviceResource extends Resource
         return [
             'index' => Pages\ListDevices::route('/'),
             'view' => Pages\ViewDevice::route('/{record}'),
+            'edit' => Pages\EditDevice::route('/{record}/edit'),
         ];
     }
 }
