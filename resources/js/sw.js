@@ -1,6 +1,6 @@
 import { precacheAndRoute, cleanupOutdatedCaches } from 'workbox-precaching';
 import { registerRoute, NavigationRoute } from 'workbox-routing';
-import { CacheFirst, NetworkFirst, StaleWhileRevalidate } from 'workbox-strategies';
+import { CacheFirst, NetworkOnly, StaleWhileRevalidate } from 'workbox-strategies';
 import { ExpirationPlugin } from 'workbox-expiration';
 import { CacheableResponsePlugin } from 'workbox-cacheable-response';
 import { setCatchHandler } from 'workbox-routing';
@@ -38,7 +38,7 @@ registerRoute(
   })
 );
 
-// HTML / Navigation requests (Network First, fallback to offline)
+// Signed-in HTML contains session and CSRF state and must always come from the server.
 // We match standard navigations, text/html requests, explicit Livewire headers, and any GET to our origin without a file extension (to catch Livewire prefetchHtml)
 registerRoute(
   ({ request, url }) => {
@@ -50,14 +50,7 @@ registerRoute(
     }
     return false;
   },
-  new NetworkFirst({
-    cacheName: 'pages',
-    plugins: [
-      new CacheableResponsePlugin({
-        statuses: [200],
-      }),
-    ],
-  })
+  new NetworkOnly()
 );
 
 // Fallback handler when both network and cache fail
@@ -116,5 +109,8 @@ self.addEventListener('install', (event) => {
 });
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil((async () => {
+    await caches.delete('pages');
+    await self.clients.claim();
+  })());
 });

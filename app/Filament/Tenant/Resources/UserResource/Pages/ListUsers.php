@@ -22,15 +22,26 @@ class ListUsers extends ListRecords
                 ->modalHeading('Sync Users from eBioServer')
                 ->modalDescription('This will connect to your eBioServer over the local network and pull all registered users. This may take a few moments depending on the number of users.')
                 ->action(function () {
+                    $command = null;
+
                     try {
-                        \App\Jobs\SyncEbioUsersJob::dispatch(tenancy()->tenant);
+                        $command = \App\Models\DeviceCommand::create([
+                            'device_id' => null,
+                            'command_type' => 'sync_users',
+                            'command_content' => 'eBioServer SOAP Command: sync users',
+                            'status' => 'pending',
+                        ]);
+
+                        \App\Jobs\SyncEbioUsersJob::dispatch(tenancy()->tenant, $command->id);
                         
                         \Filament\Notifications\Notification::make()
                             ->title('Sync Queued')
-                            ->body("User synchronization has been queued and will run in the background.")
+                            ->body('User synchronization is tracked on the Device Commands page.')
                             ->success()
                             ->send();
                     } catch (\Exception $e) {
+                        $command?->markAsFailed($e->getMessage());
+
                         \Filament\Notifications\Notification::make()
                             ->title('Sync Failed')
                             ->body($e->getMessage())

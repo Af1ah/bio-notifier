@@ -44,7 +44,9 @@
                         </th>
                     @endforeach
                     <th>Total Hrs</th>
+                    <th>Approved OT</th>
                     <th>Present</th>
+                    <th>Half Day</th>
                     <th>Absent</th>
                 </tr>
             </thead>
@@ -61,9 +63,9 @@
                             $dayData = $row['daily'][$d] ?? null;
                         @endphp
                         <td class="center">
-                            @if($dayData && $dayData['status'] === 'P')
-                                <x-filament::badge color="success" size="sm">
-                                    {{ $dayData['display'] }}
+                            @if($dayData)
+                                <x-filament::badge :color="match($dayData['status']) { 'P' => 'success', 'H' => 'warning', 'A' => 'danger', 'O', 'HD', 'N' => 'gray', default => 'info' }" size="sm">
+                                    {{ $dayData['status'] }} · {{ $dayData['display'] }}{{ $dayData['exception'] ?? false ? ' ⚠' : '' }}
                                 </x-filament::badge>
                             @else
                                 <x-filament::badge color="danger" size="sm">
@@ -73,7 +75,9 @@
                         </td>
                     @endforeach
                     <td class="font-bold text-gray-950 dark:text-white">{{ $row['total_display'] }}</td>
+                    <td class="font-bold text-info-600">{{ $row['overtime_display'] }}</td>
                     <td class="font-bold text-success-600">{{ $row['present'] }}</td>
+                    <td class="font-bold text-warning-600">{{ $row['half_day'] }}</td>
                     <td class="font-bold text-danger-600">{{ $row['absent'] }}</td>
                 </tr>
                 @endforeach

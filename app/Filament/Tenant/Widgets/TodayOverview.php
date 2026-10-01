@@ -22,8 +22,9 @@ class TodayOverview extends StatsOverviewWidget
     {
         $today = now()->toDateString();
         
-        $totalUsers = \App\Models\User::count();
+        $totalUsers = \App\Models\User::employees()->count();
         $presentUsers = \App\Models\AttendanceLog::whereDate('punched_at', $today)
+            ->whereIn('pin', \App\Models\User::employees()->select('pin'))
             ->distinct('pin')
             ->count('pin');
             

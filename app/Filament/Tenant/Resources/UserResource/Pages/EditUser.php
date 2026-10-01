@@ -2,10 +2,14 @@
 
 namespace App\Filament\Tenant\Resources\UserResource\Pages;
 
+use App\Filament\Tenant\Actions\AssignShiftAction;
+use App\Filament\Tenant\Actions\EndShiftAssignmentAction;
+use App\Filament\Tenant\Resources\UserResource;
+use App\Services\WhatsAppService;
 use Filament\Actions;
 use Filament\Resources\Pages\EditRecord;
 use Illuminate\Support\Facades\Hash;
-use App\Filament\Tenant\Resources\UserResource;
+use Illuminate\Support\Facades\Log;
 
 class EditUser extends EditRecord
 {
@@ -14,6 +18,8 @@ class EditUser extends EditRecord
     protected function getHeaderActions(): array
     {
         return [
+            AssignShiftAction::make('user'),
+            EndShiftAssignmentAction::make('user'),
             Actions\ViewAction::make(),
             Actions\Action::make('reset_password')
                 ->label('Reset Password')
@@ -32,12 +38,12 @@ class EditUser extends EditRecord
 
     protected function afterSave(): void
     {
-        if (!empty($this->record->whatsapp_number) && $this->record->wasChanged()) {
+        if (! empty($this->record->whatsapp_number) && $this->record->wasChanged()) {
             $message = "Hello {$this->record->name}, your profile has been updated in the attendance system.";
             try {
-                app(\App\Services\WhatsAppService::class)->sendMessage($this->record->whatsapp_number, $message);
+                app(WhatsAppService::class)->sendMessage($this->record->whatsapp_number, $message);
             } catch (\Exception $e) {
-                \Illuminate\Support\Facades\Log::error('WhatsApp notification failed: ' . $e->getMessage());
+                Log::error('WhatsApp notification failed: '.$e->getMessage());
             }
         }
     }

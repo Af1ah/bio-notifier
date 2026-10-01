@@ -1,296 +1,119 @@
 @php
-    $currentMonth = \Carbon\Carbon::create($this->year, $this->month, 1);
-    
-    $logs = $record->attendanceLogs()
-        ->whereMonth('punched_at', $this->month)
-        ->whereYear('punched_at', $this->year)
+    $month = \Carbon\Carbon::create($this->year, $this->month, 1);
+    $results = \App\Models\AttendanceDay::with('occurrences.schedule')
+        ->where('user_id', $record->id)
+        ->whereBetween('work_date', [$month->copy()->startOfMonth(), $month->copy()->endOfMonth()])
         ->get()
-        ->groupBy(fn($log) => $log->punched_at->format('Y-m-d'));
+        ->keyBy(fn ($day) => $day->work_date->format('Y-m-d'));
+    $logs = $record->attendanceLogs()
+        ->whereBetween('punched_at', [$month->copy()->startOfMonth(), $month->copy()->endOfMonth()])
+        ->get()
+        ->groupBy(fn ($log) => $log->punched_at->format('Y-m-d'));
 
-    // Fetch all applicable schedules
-    $allSchedules = \App\Models\Schedule::where('status', true)
-        ->where(function ($query) use ($record) {
-            $query->where(function ($q) use ($record) {
-                $q->where('target_type', \App\Models\TaskGroup::class)
-                  ->whereIn('target_id', clone $record->taskGroups->pluck('id'));
-            })
-            ->orWhere(function ($q) use ($record) {
-                $q->where('target_type', \App\Models\Department::class)
-                  ->where('target_id', $record->department_id);
-            })
-            ->orWhere(function ($q) use ($record) {
-                $q->where('target_type', \App\Models\Branch::class)
-                  ->where('target_id', $record->branch_id);
-            })
-            ->orWhereNull('target_type');
-        })
-        ->get();
+    $weeks = [];
+    $week = array_fill(0, $month->dayOfWeek, null);
 
-    $daysInMonth = $currentMonth->daysInMonth;
-    $firstDayOfMonth = $currentMonth->copy()->startOfMonth()->dayOfWeek; // 0 (Sun) to 6 (Sat)
+    for ($day = 1; $day <= $month->daysInMonth; $day++) {
+        $week[] = $day;
+
+        if (count($week) === 7) {
+            $weeks[] = $week;
+            $week = [];
+        }
+    }
+
+    if ($week) {
+        while (count($week) < 7) {
+            $week[] = null;
+        }
+
+        $weeks[] = $week;
+    }
 @endphp
 
-<div x-data="{ openLogModal: false, selectedDate: '', selectedShift: '', selectedLogs: [] }" class="mt-4 overflow-x-auto w-full relative">
-    <style>
-        .cal-table { width: 100%; border-collapse: separate; table-layout: fixed; }
-        .cal-th { width: 14.28%; text-align: center; font-weight: 600; color: #6b7280; box-sizing: border-box; overflow: hidden; }
-        @media (max-width: 767px) {
-            .cal-desktop-only { display: none !important; }
-            .cal-mobile-only { display: block !important; margin: 0 auto; }
-            .cal-cell { padding: 0.25rem !important; height: 3.5rem !important; }
-            .cal-table { border-spacing: 0.25rem; }
-            .cal-th { padding: 0.1rem; font-size: 0.65rem; }
-        }
-        @media (min-width: 768px) {
-            .cal-mobile-only { display: none !important; }
-            .cal-cell { padding: 0.5rem !important; height: 5rem !important; }
-            .cal-table { border-spacing: 0.5rem; }
-            .cal-th { padding: 0.5rem; font-size: 0.875rem; }
-        }
-    </style>
-    
-    <div style="margin-bottom: 1rem; display: flex; align-items: center; justify-content: space-between; font-weight: bold; font-size: 1.125rem;">
-        <x-filament::icon-button
-            icon="heroicon-m-chevron-left"
-            wire:click="previousMonth"
-            wire:loading.attr="disabled"
-            wire:target="previousMonth, nextMonth"
-            color="gray"
-        />
-        <span class="flex items-center gap-2">
-            {{ $currentMonth->format('F Y') }}
-            <x-filament::loading-indicator wire:loading wire:target="previousMonth, nextMonth" class="h-4 w-4 text-gray-500" />
-        </span>
-        <x-filament::icon-button
-            icon="heroicon-m-chevron-right"
-            wire:click="nextMonth"
-            wire:loading.attr="disabled"
-            wire:target="previousMonth, nextMonth"
-            color="gray"
-        />
-    </div>
-    
-    <table class="cal-table">
-        <thead>
-            <tr>
-                @foreach(['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as $dayName)
-                    <th class="cal-th">{{ $dayName }}</th>
-                @endforeach
-            </tr>
-        </thead>
-        <tbody>
-            @php
-                $weeks = [];
-                $currentWeek = [];
-                
-                // pad start
-                for ($i = 0; $i < $firstDayOfMonth; $i++) {
-                    $currentWeek[] = ['type' => 'empty'];
-                }
-                
-                // add days
-                for ($day = 1; $day <= $daysInMonth; $day++) {
-                    $currentWeek[] = ['type' => 'day', 'day' => $day];
-                    if (count($currentWeek) === 7) {
-                        $weeks[] = $currentWeek;
-                        $currentWeek = [];
-                    }
-                }
-                
-                // pad end
-                if (count($currentWeek) > 0) {
-                    while (count($currentWeek) < 7) {
-                        $currentWeek[] = ['type' => 'empty'];
-                    }
-                    $weeks[] = $currentWeek;
-                }
-            @endphp
+<div x-data="{ details: null }" class="user-attendance-calendar">
+<style>
+    .user-attendance-calendar { margin-top: 1rem; }
+    .user-attendance-calendar__scroll { overflow-x: auto; padding: .25rem; }
+    .user-attendance-calendar__toolbar { display: grid; grid-template-columns: 2.5rem minmax(0, 1fr) 2.5rem; align-items: center; gap: .75rem; margin-bottom: 1rem; }
+    .user-attendance-calendar__title { margin: 0; color: inherit; font-size: 1.125rem; font-weight: 700; text-align: center; }
+    .user-attendance-calendar__table { width: 100%; min-width: 42rem; table-layout: fixed; border-collapse: separate; border-spacing: .5rem; }
+    .user-attendance-calendar__table th { padding: 0 0 .25rem; color: rgb(156 163 175); font-size: .75rem; font-weight: 700; text-align: center; }
+    .user-attendance-calendar__table td { width: 14.285%; height: 5.5rem; padding: .5rem; vertical-align: top; }
+    .user-attendance-calendar__empty-day { border-radius: .5rem; background: rgb(255 255 255 / .05); }
+    .user-attendance-calendar__day { border: 1px solid rgb(0 0 0 / .08); border-radius: .5rem; color: rgb(17 24 39); cursor: pointer; text-align: center; transition: filter .15s ease, transform .15s ease; }
+    .user-attendance-calendar__day:hover { filter: brightness(.96); transform: translateY(-1px); }
+    .user-attendance-calendar__date { font-weight: 700; line-height: 1.1; }
+    .user-attendance-calendar__status { margin-top: .25rem; font-size: .75rem; line-height: 1.1; }
+    .user-attendance-calendar__worked { margin-top: .2rem; color: rgb(55 65 81); font-size: .6875rem; line-height: 1.1; }
+</style>
 
-            @foreach ($weeks as $weekIndex => $week)
-            <tr wire:key="week-{{ $this->year }}-{{ $this->month }}-{{ $weekIndex }}">
-                @foreach ($week as $dayIndex => $cell)
-                    @if ($cell['type'] === 'empty')
-                        <td wire:key="empty-{{ $weekIndex }}-{{ $dayIndex }}-{{ $this->year }}-{{ $this->month }}" style="border-radius: 0.5rem; border: 1px solid #e5e7eb; background-color: #f9fafb; opacity: 0.5;" class="cal-cell"></td>
-                    @else
-                        @php
-                            $day = $cell['day'];
-                            $dateString = $currentMonth->format('Y-m-') . str_pad($day, 2, '0', STR_PAD_LEFT);
-                            $dateObj = \Carbon\Carbon::parse($dateString);
-                            $dayOfWeek = $dateObj->dayOfWeek;
-                            
-                            $dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-                            $dayNameStr = $dayNames[$dayOfWeek];
-                            
-                            $dayLogs = $logs->get($dateString, collect());
-                            $firstPunch = $dayLogs->sortBy('punched_at')->first();
-                            
-                            // Match best schedule
-                            $matchedSchedule = null;
-                            if ($firstPunch && $allSchedules->count() > 0) {
-                                $minDiff = INF;
-                                foreach ($allSchedules as $sched) {
-                                    // Check valid dates
-                                    if ($sched->valid_from && $dateObj->lt(\Carbon\Carbon::parse($sched->valid_from))) continue;
-                                    if ($sched->valid_to && $dateObj->gt(\Carbon\Carbon::parse($sched->valid_to))) continue;
-                                    
-                                    $rules = $sched->rules;
-                                    
-                                    if (isset($rules['weekly']['days'][$dayNameStr])) {
-                                        $dayConfig = $rules['weekly']['days'][$dayNameStr];
-                                        if ($dayConfig['is_working'] ?? false) {
-                                            $schedStart = \Carbon\Carbon::parse($dateString . ' ' . ($dayConfig['start'] ?? '09:00'));
-                                            $diff = abs($firstPunch->punched_at->diffInMinutes($schedStart));
-                                            if ($diff < $minDiff) {
-                                                $minDiff = $diff;
-                                                $matchedSchedule = $sched;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            if (!$matchedSchedule) {
-                                $matchedSchedule = $allSchedules->first(); // fallback
-                            }
-
-                            $rules = $matchedSchedule ? $matchedSchedule->rules : null;
-                            $isWorkingDay = false;
-                            $expectedStartTime = null;
-
-                            if ($rules && isset($rules['weekly']['days'][$dayNameStr])) {
-                                $dayConfig = $rules['weekly']['days'][$dayNameStr];
-                                $isWorkingDay = $dayConfig['is_working'] ?? false;
-                                if ($isWorkingDay) {
-                                    $expectedStartTime = $dayConfig['start'] ?? null;
-                                }
-                            }
-
-                            $bgColor = '#f3f4f6';
-                            $borderColor = '#e5e7eb';
-                            $textColor = '#6b7280';
-                            $statusText = '';
-
-                            if ($dateObj->isFuture()) {
-                                // Keep default
-                            } elseif (!$isWorkingDay) {
-                                $bgColor = '#e5e7eb';
-                                $textColor = '#9ca3af';
-                                $statusText = 'Off';
-                            } else {
-                                if ($dayLogs->isEmpty()) {
-                                    $bgColor = '#fee2e2';
-                                    $borderColor = '#fca5a5';
-                                    $textColor = '#b91c1c';
-                                    $statusText = 'Absent';
-                                } else {
-                                    $isLate = false;
-                                    if ($expectedStartTime) {
-                                        // Default grace period of 15 minutes if not specified
-                                        $gracePeriod = $rules['grace_period'] ?? 15;
-                                        $expectedCarbon = \Carbon\Carbon::parse($dateString . ' ' . $expectedStartTime);
-                                        if ($firstPunch->punched_at->gt($expectedCarbon->addMinutes($gracePeriod))) {
-                                            $isLate = true;
-                                        }
-                                    }
-
-                                    if ($isLate) {
-                                        $bgColor = '#fef3c7';
-                                        $borderColor = '#fcd34d';
-                                        $textColor = '#b45309';
-                                        $statusText = 'Late/Half';
-                                    } else {
-                                        $bgColor = '#dcfce7';
-                                        $borderColor = '#86efac';
-                                        $textColor = '#15803d';
-                                        $statusText = 'Present';
-                                    }
-                                }
-                            }
-                            
-                            $shiftLabel = $matchedSchedule ? $matchedSchedule->name : 'No Shift';
-                            if ($matchedSchedule && $expectedStartTime) {
-                                $endTime = $rules['weekly']['days'][$dayNameStr]['end'] ?? '';
-                                $shiftLabel .= ' (' . $expectedStartTime . ' - ' . $endTime . ')';
-                            }
-                            
-                            $logsJs = $dayLogs->sortBy('punched_at')->map(function($l) {
-                                return [
-                                    'time' => $l->punched_at->format('h:i A'),
-                                    'status' => $l->status_label,
-                                    'verify' => $l->verify_type_label,
-                                ];
-                            })->values()->toJson();
-                        @endphp
-
-                        <td wire:key="day-{{ $day }}-{{ $this->year }}-{{ $this->month }}" @click="if({{ $dayLogs->count() }} > 0 || '{{ $statusText }}' !== '') { selectedDate = '{{ $dateObj->format('M d, Y') }}'; selectedShift = '{{ $shiftLabel }}'; selectedLogs = {{ $logsJs }}; $dispatch('open-modal', { id: 'attendance-log-modal' }); }" 
-                            style="border-radius: 0.5rem; border: 1px solid {{ $borderColor }}; background-color: {{ $bgColor }}; text-align: center; vertical-align: middle; cursor: pointer; transition: all 0.2s;"
-                            class="cal-cell"
-                            onmouseover="this.style.filter='brightness(0.95)'"
-                            onmouseout="this.style.filter='brightness(1)'">
-                            <div style="font-weight: 700; color: {{ $textColor }};">{{ $day }}</div>
-                            @if($statusText)
-                                <div style="font-size: 0.75rem; color: {{ $textColor }}; margin-top: 0.25rem; font-weight: 600;" class="cal-desktop-only">{{ $statusText }}</div>
-                            @endif
-                            @if($dayLogs->isNotEmpty())
-                                <div style="font-size: 0.65rem; color: #6b7280; margin-top: 0.25rem;" title="Matched Shift: {{ $shiftLabel }}" class="cal-desktop-only">
-                                    {{ $firstPunch->punched_at->format('h:i A') }}
-                                </div>
-                            @endif
-                        </td>
-                    @endif
-                @endforeach
-            </tr>
-            @endforeach
-        </tbody>
-    </table>
-
-    <div style="margin-top: 1.5rem; display: flex; gap: 1.5rem; justify-content: center; font-size: 0.875rem; color: #4b5563;">
-        <div style="display: flex; align-items: center; gap: 0.5rem;"><span style="width: 0.75rem; height: 0.75rem; border-radius: 9999px; background-color: #22c55e;"></span> Present</div>
-        <div style="display: flex; align-items: center; gap: 0.5rem;"><span style="width: 0.75rem; height: 0.75rem; border-radius: 9999px; background-color: #eab308;"></span> Late / Half Day</div>
-        <div style="display: flex; align-items: center; gap: 0.5rem;"><span style="width: 0.75rem; height: 0.75rem; border-radius: 9999px; background-color: #ef4444;"></span> Absent</div>
-        <div style="display: flex; align-items: center; gap: 0.5rem;"><span style="width: 0.75rem; height: 0.75rem; border-radius: 9999px; background-color: #d1d5db;"></span> Off / Holiday</div>
-    </div>
-
-    <!-- Filament Modal for Punch Details -->
-    <x-filament::modal id="attendance-log-modal" width="xl" alignment="center">
-        <x-slot name="heading">
-            Logs for <span x-text="selectedDate"></span>
-        </x-slot>
-        <x-slot name="description">
-            <span x-text="selectedShift"></span>
-        </x-slot>
-
-        <div style="margin-top: 1rem; overflow-x: auto; border: 1px solid var(--fi-color-gray-200); border-radius: 0.5rem;" class="dark:border-white/10">
-            <table style="min-width: 100%; border-collapse: collapse; text-align: left;">
-                <thead style="background-color: var(--fi-color-gray-50);" class="dark:bg-white/5">
-                    <tr>
-                        <th style="padding: 0.75rem 1rem; font-size: 0.75rem; font-weight: 600; color: var(--fi-color-gray-500); text-transform: uppercase; border-bottom: 1px solid var(--fi-color-gray-200);" class="dark:text-gray-400 dark:border-white/10">Time</th>
-                        <th style="padding: 0.75rem 1rem; font-size: 0.75rem; font-weight: 600; color: var(--fi-color-gray-500); text-transform: uppercase; border-bottom: 1px solid var(--fi-color-gray-200);" class="dark:text-gray-400 dark:border-white/10">Status</th>
-                        <th style="padding: 0.75rem 1rem; font-size: 0.75rem; font-weight: 600; color: var(--fi-color-gray-500); text-transform: uppercase; border-bottom: 1px solid var(--fi-color-gray-200);" class="dark:text-gray-400 dark:border-white/10">Verified By</th>
-                    </tr>
-                </thead>
-                <tbody style="background-color: var(--fi-color-white);" class="dark:bg-gray-900">
-                    <template x-if="selectedLogs.length === 0">
-                        <tr>
-                            <td colspan="3" style="padding: 1rem; text-align: center; font-size: 0.875rem; color: var(--fi-color-gray-500); border-bottom: 1px solid var(--fi-color-gray-200);" class="dark:text-gray-400 dark:border-white/10">No logs found for this day.</td>
-                        </tr>
-                    </template>
-                    <template x-for="log in selectedLogs" :key="log.time">
-                        <tr>
-                            <td style="padding: 1rem; font-size: 0.875rem; font-weight: 500; color: var(--fi-color-gray-900); border-bottom: 1px solid var(--fi-color-gray-200);" class="dark:text-white dark:border-white/10" x-text="log.time"></td>
-                            <td style="padding: 1rem; font-size: 0.875rem; color: var(--fi-color-gray-500); border-bottom: 1px solid var(--fi-color-gray-200);" class="dark:border-white/10">
-                                <span style="padding: 0.125rem 0.5rem; display: inline-flex; font-size: 0.75rem; font-weight: 600; border-radius: 9999px; background-color: rgba(var(--fi-color-primary-500), 0.1); color: var(--fi-color-primary-600);" class="dark:text-primary-400" x-text="log.status"></span>
-                            </td>
-                            <td style="padding: 1rem; font-size: 0.875rem; color: var(--fi-color-gray-500); border-bottom: 1px solid var(--fi-color-gray-200);" class="dark:text-gray-400 dark:border-white/10" x-text="log.verify"></td>
-                        </tr>
-                    </template>
-                </tbody>
-            </table>
+    <div class="user-attendance-calendar__scroll">
+        <div class="user-attendance-calendar__toolbar">
+            <x-filament::icon-button icon="heroicon-m-chevron-left" wire:click="previousMonth" />
+            <h3 class="user-attendance-calendar__title">{{ $month->format('F Y') }}</h3>
+            <x-filament::icon-button icon="heroicon-m-chevron-right" wire:click="nextMonth" />
         </div>
 
-        <x-slot name="footerActions">
-            <x-filament::button color="gray" x-on:click="close()">
-                Close
-            </x-filament::button>
-        </x-slot>
+        <table class="user-attendance-calendar__table">
+            <thead><tr>
+                @foreach (['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as $name)
+                    <th scope="col">{{ $name }}</th>
+                @endforeach
+            </tr></thead>
+            <tbody>
+                @foreach ($weeks as $week)
+                    <tr>
+                        @foreach ($week as $number)
+                            @if (! $number)
+                                <td class="user-attendance-calendar__empty-day"></td>
+                            @else
+                                @php
+                                    $key = $month->format('Y-m-').str_pad($number, 2, '0', STR_PAD_LEFT);
+                                    $result = $results->get($key);
+                                    $dayLogs = $logs->get($key, collect());
+                                    $status = $result?->status ?? 'not_calculated';
+                                    $colors = match ($status) {
+                                        'present' => '#dcfce7', 'half_day' => '#fef3c7', 'absent' => '#fee2e2',
+                                        'off', 'holiday', 'no_shift' => '#e5e7eb', default => '#f3f4f6',
+                                    };
+                                    $label = match ($status) {
+                                        'present' => 'Present', 'half_day' => 'Half day', 'absent' => 'Absent',
+                                        'off', 'holiday' => 'Off', 'no_shift' => 'No shift', default => 'Not calculated',
+                                    };
+                                    $workedMinutes = $result?->approved_worked_minutes ?: $result?->candidate_worked_minutes;
+                                    $payload = [
+                                        'date' => \Carbon\Carbon::parse($key)->format('M d, Y'), 'status' => $label,
+                                        'worked' => $result ? sprintf('%dh %dm', intdiv($workedMinutes, 60), $workedMinutes % 60) : '—',
+                                        'ot' => $result?->approved_overtime_minutes ?? 0,
+                                        'shifts' => $result?->occurrences->map(fn ($occurrence) => [
+                                            'name' => $occurrence->schedule?->name, 'in' => $occurrence->first_in_at?->format('h:i A'),
+                                            'out' => ($occurrence->last_out_at ?? $occurrence->assumed_out_at)?->format('h:i A'), 'status' => $occurrence->status,
+                                        ])->values()->all() ?? [],
+                                        'logs' => $dayLogs->map(fn ($log) => ['time' => $log->punched_at->format('h:i A'), 'status' => $log->status_label])->values()->all(),
+                                    ];
+                                @endphp
+                                <td class="user-attendance-calendar__day" style="background-color: {{ $colors }}" @click='details = @json($payload); $dispatch("open-modal", { id: "attendance-day-detail" })'>
+                                    <div class="user-attendance-calendar__date">{{ $number }}</div>
+                                    <div class="user-attendance-calendar__status">{{ $label }}</div>
+                                    @if ($result)<div class="user-attendance-calendar__worked">{{ $payload['worked'] }}</div>@endif
+                                </td>
+                            @endif
+                        @endforeach
+                    </tr>
+                @endforeach
+            </tbody>
+        </table>
+    </div>
+
+    <x-filament::modal id="attendance-day-detail" width="lg">
+        <x-slot name="heading"><span x-text="details?.date"></span></x-slot>
+        <div x-show="details">
+            <p class="font-semibold" x-text="details?.status+' · '+details?.worked"></p>
+            <p class="text-sm text-gray-500">Approved OT: <span x-text="details?.ot"></span> minutes</p>
+            <template x-for="shift in details?.shifts || []"><div class="mt-3 rounded border p-3 text-sm"><b x-text="shift.name"></b><div><span x-text="shift.in || 'Missing IN'"></span> — <span x-text="shift.out || 'Missing OUT'"></span></div><span x-text="shift.status"></span></div></template>
+            <h4 class="mt-4 font-semibold">Raw punches</h4>
+            <template x-for="log in details?.logs || []"><div class="text-sm"><span x-text="log.time"></span> · <span x-text="log.status"></span></div></template>
+        </div>
     </x-filament::modal>
 </div>

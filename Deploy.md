@@ -113,9 +113,11 @@ php artisan storage:link
 sudo chown -R www-data:www-data storage bootstrap/cache
 ```
 
-### 7. Configure Supervisor for Queue Worker
+### 7. Configure Supervisor for Queue Workers
 
-To ensure the queue worker (like WhatsApp notifications) runs continuously in the background, use Supervisor:
+Bio-Notifier uses the connection's default queue for webhook, application, and attendance recalculation jobs. Run `php artisan queue:work` from the application directory in development; no attendance-specific worker is needed. Restart any existing worker after deploying this change.
+
+Jobs already queued on the old `attendance` queue retain their queue name. During an upgrade, drain those jobs once with `php artisan queue:work --queue=default,attendance --stop-when-empty`, then use the normal worker below. Invalid reversed-date calculations are rejected, not executed. The scheduler still requires its separate cron entry.
 
 1. Create a new configuration file:
 ```bash
@@ -126,7 +128,7 @@ sudo nano /etc/supervisor/conf.d/bio-notifier-worker.conf
 ```ini
 [program:bio-notifier-worker]
 process_name=%(program_name)s_%(process_num)02d
-command=php /var/www/html/artisan queue:work --sleep=3 --tries=3 --max-time=3600
+command=php /var/www/html/artisan queue:work --sleep=3 --tries=3 --timeout=60 --max-time=3600
 autostart=true
 autorestart=true
 stopasgroup=true
@@ -145,7 +147,73 @@ sudo supervisorctl update
 sudo supervisorctl start bio-notifier-worker:*
 ```
 
-### 8. Web Server Configuration (Nginx & Multi-Tenancy)
+After each deployment, restart long-running workers so they load the new application code:
+
+```bash
+php artisan queue:restart
+sudo supervisorctl status bio-notifier-worker:*
+```
+
+When deploying authentication changes, run `php artisan optimize:clear` and
+`npm ci && npm run build`, and reload PHP-FPM (or restart `php artisan serve`
+in development). Deploy the generated `public/sw.js` with the PHP changes.
+Tenant session and remember cookies are now scoped to each organisation;
+existing tenant logins require one fresh login after this update. The master
+panel keeps its own session. Authenticated HTML is fetched from the server,
+never restored from the service-worker page cache; the new worker removes the
+old `pages` cache on activation. Do not disable CSRF protection or extend the
+session lifetime to work around expired-page errors.
+
+The worker log is written to `storage/logs/worker.log`. Investigate failed jobs before retrying them:
+
+```bash
+php artisan queue:failed
+php artisan queue:retry <job-uuid>
+```
+
+### 8. Configure the Laravel Scheduler
+
+Attendance for the previous workday is queued automatically every day at midnight in the configured attendance timezone. The application schedule does not run by itself; production needs one system cron entry.
+
+Open the web-server user's crontab:
+
+```bash
+sudo crontab -u www-data -e
+```
+
+Add this line, replacing `/var/www/html` with the deployed project path:
+
+```cron
+* * * * * cd /var/www/html && php artisan schedule:run >> /dev/null 2>&1
+```
+
+Confirm that Laravel sees the nightly task:
+
+```bash
+php artisan schedule:list
+```
+
+The output should contain `attendance:recalculate-nightly` at `00:00` in the configured attendance timezone. The command calculates yesterday, not the newly started day, so employees have had time to complete their final punch.
+
+To verify dispatch safely for one tenant and date:
+
+```bash
+php artisan attendance:recalculate-nightly --tenant=TENANT_SHORTNAME --date=2026-09-30
+php artisan queue:work --stop-when-empty
+```
+
+Monitor the result under **Organisation Management → Recalculation runs**. A successful run must reach `completed = total` with `failed = 0`.
+
+Manual historical backfills remain intentionally bounded to 31 days per command. Split longer periods into non-overlapping ranges:
+
+```bash
+php artisan attendance:recalculate TENANT_SHORTNAME 2026-08-01 2026-08-31
+php artisan attendance:recalculate TENANT_SHORTNAME 2026-09-01 2026-09-30
+```
+
+Before a historical backfill, confirm that the applicable shift rule and assignment were effective throughout the requested dates. Otherwise, those days will correctly calculate as `No shift`.
+
+### 9. Web Server Configuration (Nginx & Multi-Tenancy)
 
 Bio-Notifier uses an isolated domain-based routing system for tenants. To allow clients to have their own domains (like `client1.noti.ariise.cloud`) without breaking other apps on your server, you need to set up a wildcard properly in Nginx.
 
@@ -207,15 +275,42 @@ sudo nginx -t
 sudo systemctl restart nginx
 ```
 
-### 9. Environment Variables (.env)
+### 10. Environment Variables (.env)
 
 Make sure your `.env` contains the correct routing information so the system knows how to build tenant URLs correctly.
 
 ```env
 APP_URL=https://noti.ariise.cloud
 CENTRAL_DOMAIN=noti.ariise.cloud
+ATTENDANCE_TIMEZONE=Asia/Kolkata
+ATTENDANCE_NIGHTLY_TIME=00:00
 ```
 *Note: Setting `CENTRAL_DOMAIN` guarantees that when you create a tenant named "client1", their URL becomes `client1.noti.ariise.cloud` perfectly without stacking extra domains.*
+
+`ATTENDANCE_TIMEZONE` controls which local midnight starts the nightly calculation. `ATTENDANCE_NIGHTLY_TIME` uses 24-hour `HH:MM` format. After changing either value, refresh cached configuration and restart workers:
+
+```bash
+php artisan optimize
+php artisan queue:restart
+```
+
+### Attendance Deployment Verification
+
+Run these checks after deploying attendance changes:
+
+```bash
+php artisan schedule:list
+sudo supervisorctl status bio-notifier-worker:*
+php artisan queue:failed
+```
+
+Then confirm in the tenant panel:
+
+1. New raw punches appear under **Attendance Logs**.
+2. The following morning's **Recalculation run** is completed without failures.
+3. Completed IN/OUT days appear in **Reports** without manual approval.
+4. Only genuine missing-checkout, correction, or qualifying overtime exceptions appear under **Attendance approvals**.
+5. Payroll generation remains blocked if attendance is stale or approvals are pending.
 
 ## Configuring the Attendance Devices
 

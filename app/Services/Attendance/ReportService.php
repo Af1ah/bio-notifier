@@ -2,7 +2,7 @@
 
 namespace App\Services\Attendance;
 
-use App\Models\AttendanceLog;
+use App\Models\AttendanceDay;
 use App\Models\User;
 use Carbon\Carbon;
 use Carbon\CarbonPeriod;
@@ -11,97 +11,42 @@ class ReportService
 {
     public function generateReport(array $userIds, string $fromDate, string $toDate): array
     {
-        $startDate = Carbon::parse($fromDate)->startOfDay();
-        $endDate = Carbon::parse($toDate)->endOfDay();
-        
-        $period = CarbonPeriod::create($startDate, $endDate);
-        
+        $start = Carbon::parse($fromDate)->startOfDay();
+        $end = Carbon::parse($toDate)->endOfDay();
+        $period = CarbonPeriod::create($start, $end);
         $users = User::whereIn('id', $userIds)->get();
-        $logs = AttendanceLog::whereIn('pin', $users->pluck('pin'))
-            ->whereBetween('punched_at', [$startDate, $endDate])
-            ->orderBy('punched_at', 'asc')
-            ->get();
-            
-        $reportData = [];
-        
+        $results = AttendanceDay::with('occurrences.schedule')->whereIn('user_id', $userIds)->whereDate('work_date', '>=', $start->toDateString())->whereDate('work_date', '<=', $end->toDateString())->get()->groupBy('user_id');
+        $rows = [];
         foreach ($users as $user) {
-            $userLogs = $logs->where('pin', $user->pin);
-            $dailyData = [];
-            $totalMinutes = 0;
-            $presentCount = 0;
-            $absentCount = 0;
-            
+            $daily = [];
+            $total = 0;
+            $ot = 0;
+            $present = 0;
+            $half = 0;
+            $absent = 0;
             foreach ($period as $date) {
-                $dateString = $date->format('Y-m-d');
-                $dayLogs = $userLogs->filter(function($log) use ($dateString) {
-                    return Carbon::parse($log->punched_at)->format('Y-m-d') === $dateString;
-                });
-                
-                if ($dayLogs->isEmpty()) {
-                    $dailyData[$dateString] = [
-                        'status' => 'A',
-                        'hours' => 0,
-                        'display' => 'Absent'
-                    ];
-                    if ($date->isWeekday()) {
-                        $absentCount++;
-                    }
+                $key = $date->toDateString();
+                $day = $results->get($user->id, collect())->first(fn ($r) => $r->work_date->toDateString() === $key);
+                if (! $day) {
+                    $daily[$key] = ['status' => 'N', 'display' => 'Not calculated', 'minutes' => 0, 'ot_minutes' => 0];
+
                     continue;
                 }
-                
-                $checkIns = $dayLogs->where('status', 0);
-                $checkOuts = $dayLogs->where('status', 1);
-                
-                $firstIn = $checkIns->first() ? Carbon::parse($checkIns->first()->punched_at) : null;
-                $lastOut = $checkOuts->last() ? Carbon::parse($checkOuts->last()->punched_at) : null;
-                
-                // If auto-punching (status mixed), fallback to first and last punch
-                if (!$firstIn || !$lastOut) {
-                    $firstIn = Carbon::parse($dayLogs->first()->punched_at);
-                    $lastOut = Carbon::parse($dayLogs->last()->punched_at);
-                }
-                
-                $minutes = 0;
-                if ($firstIn && $lastOut && $firstIn->lt($lastOut)) {
-                    $minutes = $firstIn->diffInMinutes($lastOut);
-                }
-                
-                $totalMinutes += $minutes;
-                $presentCount++;
-                
-                $hours = floor($minutes / 60);
-                $mins = $minutes % 60;
-                
-                $dailyData[$dateString] = [
-                    'status' => 'P',
-                    'minutes' => $minutes,
-                    'display' => sprintf('%dh %dm', $hours, $mins)
-                ];
+                $code = match ($day->status) {
+                    'present' => 'P','half_day' => 'H','absent' => 'A','off' => 'O','holiday' => 'O','pending' => '?','no_shift' => 'N',default => '!'
+                };
+                $minutes = $day->approved_worked_minutes ?: $day->candidate_worked_minutes;
+                $approvedOt = $day->approved_overtime_minutes;
+                $total += $minutes;
+                $ot += $approvedOt;
+                $present += (int) ($day->status === 'present');
+                $half += (int) ($day->status === 'half_day');
+                $absent += (int) ($day->status === 'absent');
+                $daily[$key] = ['status' => $code, 'display' => sprintf('%dh %dm', intdiv($minutes, 60), $minutes % 60), 'minutes' => $minutes, 'ot_minutes' => $approvedOt, 'late_minutes' => $day->occurrences->sum('late_minutes'), 'early_minutes' => $day->occurrences->sum('early_minutes'), 'exception' => $day->occurrences->contains(fn ($o) => ! empty($o->exception_flags))];
             }
-            
-            $reportData[] = [
-                'user_name' => $user->name,
-                'user_pin' => $user->pin,
-                'daily' => $dailyData,
-                'total_minutes' => $totalMinutes,
-                'total_display' => sprintf('%dh %dm', floor($totalMinutes / 60), $totalMinutes % 60),
-                'present' => $presentCount,
-                'absent' => $absentCount
-            ];
+            $rows[] = ['user_name' => $user->name, 'user_pin' => $user->pin, 'daily' => $daily, 'total_minutes' => $total, 'total_display' => sprintf('%dh %dm', intdiv($total, 60), $total % 60), 'overtime_minutes' => $ot, 'overtime_display' => sprintf('%dh %dm', intdiv($ot, 60), $ot % 60), 'present' => $present, 'half_day' => $half, 'absent' => $absent];
         }
-        
-        $periodArray = [];
-        foreach ($period as $date) {
-            $periodArray[] = [
-                'date' => $date->format('Y-m-d'),
-                'day' => $date->format('D'),
-                'month_day' => $date->format('M d'),
-            ];
-        }
-        
-        return [
-            'period' => $periodArray,
-            'data' => $reportData
-        ];
+
+        return ['period' => collect($period)->map(fn ($d) => ['date' => $d->toDateString(), 'day' => $d->format('D'), 'month_day' => $d->format('M d')])->all(), 'data' => $rows];
     }
 }

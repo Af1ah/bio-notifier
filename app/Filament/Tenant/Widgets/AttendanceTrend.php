@@ -27,7 +27,7 @@ class AttendanceTrend extends ChartWidget
         $labels = [];
         $presentData = [];
         $absentData = [];
-        $totalUsers = \App\Models\User::count();
+        $totalUsers = \App\Models\User::employees()->count();
 
         $days = (int) $this->filter;
 
@@ -37,6 +37,7 @@ class AttendanceTrend extends ChartWidget
             $labels[] = $date->format('M d');
 
             $present = \App\Models\AttendanceLog::whereDate('punched_at', $dateString)
+                ->whereIn('pin', \App\Models\User::employees()->select('pin'))
                 ->distinct('pin')
                 ->count('pin');
 

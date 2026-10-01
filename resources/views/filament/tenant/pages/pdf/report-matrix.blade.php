@@ -112,6 +112,7 @@
                     </th>
                 @endforeach
                 <th style="width: 30px;">Total<br>Hrs</th>
+                <th style="width: 30px;">OT</th>
                 <th style="width: 25px;">Prs</th>
                 <th style="width: 25px;">Abs</th>
             </tr>
@@ -147,6 +148,7 @@
                     <td class="{{ $class }}">{{ $letter }}</td>
                 @endforeach
                 <td style="font-weight: bold;">{{ $row['total_display'] }}</td>
+                <td style="font-weight: bold;">{{ $row['overtime_display'] }}</td>
                 <td style="font-weight: bold;" class="text-present">{{ $row['present'] }}</td>
                 <td style="font-weight: bold;" class="text-absent">{{ $row['absent'] }}</td>
             </tr>

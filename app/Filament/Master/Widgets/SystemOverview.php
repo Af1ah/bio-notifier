@@ -19,7 +19,7 @@ class SystemOverview extends StatsOverviewWidget
         foreach (\App\Models\Organisation::all() as $tenant) {
             $tenant->run(function () use (&$totalDevices, &$totalUsers) {
                 $totalDevices += \App\Models\Device::count();
-                $totalUsers += \App\Models\User::count();
+                $totalUsers += \App\Models\User::employees()->count();
             });
         }
 
