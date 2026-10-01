@@ -8,6 +8,8 @@ use App\Models\Organisation;
 
 class InitializeTenancyForLivewire
 {
+    use \App\Http\Middleware\Concerns\ScopesTenantSession;
+
     public function handle(Request $request, Closure $next)
     {
         if ($request->is('livewire/*')) {
@@ -40,6 +42,7 @@ class InitializeTenancyForLivewire
             
             if ($tenant) {
                 tenancy()->initialize($tenant);
+                $this->scopeTenantSession();
                 \Illuminate\Support\Facades\URL::defaults(['tenant' => $tenant->shortname ?? $tenant->id]);
                 
                 // Ensure essential storage directories exist for this tenant

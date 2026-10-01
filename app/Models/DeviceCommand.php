@@ -68,6 +68,23 @@ class DeviceCommand extends Model
         $this->update([
             'status' => 'pending',
             'retry_count' => $this->retry_count + 1,
+            'response' => null,
+            'sent_at' => null,
+            'acknowledged_at' => null,
         ]);
+
+        if ($this->command_type === 'sync_users') {
+            \App\Jobs\SyncEbioUsersJob::dispatch(tenancy()->tenant, $this->id);
+
+            return;
+        }
+
+        if ($this->device && in_array($this->command_type, ['reboot', 'clear_logs', 'reset_transaction_stamp', 'reset_op_stamp', 'unlock_door'], true)) {
+            \App\Jobs\EbioDeviceCommandJob::dispatch(tenancy()->tenant, $this->device->serial_number, $this->command_type, $this->id);
+
+            return;
+        }
+
+        $this->markAsFailed('This command type cannot be retried automatically.');
     }
 }

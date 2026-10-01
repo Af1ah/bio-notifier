@@ -8,6 +8,8 @@ use Symfony\Component\HttpFoundation\Response;
 
 class InitializeTenancyByShortname
 {
+    use \App\Http\Middleware\Concerns\ScopesTenantSession;
+
     /**
      * Handle an incoming request.
      *
@@ -22,6 +24,7 @@ class InitializeTenancyByShortname
             
             if ($tenant) {
                 tenancy()->initialize($tenant);
+                $this->scopeTenantSession();
                 \Illuminate\Support\Facades\URL::defaults(['tenant' => $tenant->shortname ?? $tenant->id]);
                 // Remove the parameter so controller doesn't need to accept it
                 $route->forgetParameter('tenant');

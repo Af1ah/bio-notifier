@@ -84,15 +84,26 @@ class DeviceCommandResource extends Resource
         return $table
             ->columns([
                 Tables\Columns\TextColumn::make('device.name')
+                    ->label('Target')
+                    ->placeholder('eBioServer')
                     ->sortable()
                     ->searchable(),
                 Tables\Columns\TextColumn::make('command_type')
+                    ->formatStateUsing(fn (string $state): string => match ($state) {
+                        'sync_users' => 'Sync users',
+                        default => str($state)->replace('_', ' ')->title()->toString(),
+                    })
                     ->badge(),
                 Tables\Columns\TextColumn::make('command_content')
                     ->limit(40)
                     ->visibleFrom('md'),
                 Tables\Columns\TextColumn::make('status')
                     ->badge()
+                    ->formatStateUsing(fn (string $state): string => match ($state) {
+                        'sent' => 'Running / sent',
+                        'acknowledged' => 'Completed',
+                        default => str($state)->title()->toString(),
+                    })
                     ->color(fn (string $state): string => match ($state) {
                         'pending' => 'warning',
                         'sent' => 'info',
@@ -109,6 +120,12 @@ class DeviceCommandResource extends Resource
                 Tables\Columns\TextColumn::make('retry_count')
                     ->label('Retries')
                     ->visibleFrom('md'),
+                Tables\Columns\TextColumn::make('response')
+                    ->label('Result')
+                    ->limit(70)
+                    ->tooltip(fn (DeviceCommand $record): ?string => $record->response)
+                    ->wrap()
+                    ->toggleable(),
             ])
             ->poll(fn () => \App\Models\DeviceCommand::whereIn('status', ['pending', 'sent'])->exists() ? '10s' : null)
             ->defaultSort('created_at', 'desc')
@@ -136,6 +153,7 @@ class DeviceCommandResource extends Resource
                         'unblock_user' => 'Unblock User',
                         'enroll_finger' => 'Enroll Finger',
                         'enroll_face' => 'Enroll Face',
+                        'sync_users' => 'Sync Users',
                         'DATA' => 'Send Data',
                         'CHECK' => 'Check Connection',
                     ]),
@@ -146,7 +164,8 @@ class DeviceCommandResource extends Resource
                     Action::make('retry')
                         ->icon('heroicon-o-arrow-path')
                         ->color('warning')
-                        ->visible(fn (DeviceCommand $record) => in_array($record->status, ['failed', 'sent']))
+                        ->requiresConfirmation()
+                        ->visible(fn (DeviceCommand $record) => $record->status === 'failed')
                         ->action(fn (DeviceCommand $record) => $record->retry()),
                     DeleteAction::make(),
                 ])

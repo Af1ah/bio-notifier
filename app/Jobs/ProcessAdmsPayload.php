@@ -2,14 +2,16 @@
 
 namespace App\Jobs;
 
+use App\Events\AttendanceReceived;
+use App\Events\UserSynced;
 use App\Models\AdmsPayload;
 use App\Models\AttendanceLog;
 use App\Models\Device;
 use App\Models\Organisation;
 use App\Models\User;
 use App\Services\Attendance\AdmsRequestParser;
-use App\Events\AttendanceReceived;
-use App\Events\UserSynced;
+use App\Services\Attendance\DeviceCommandBuilder;
+use Carbon\Carbon;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Foundation\Queue\Queueable;
@@ -21,9 +23,7 @@ class ProcessAdmsPayload implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public function __construct(public AdmsPayload $payload)
-    {
-    }
+    public function __construct(public AdmsPayload $payload) {}
 
     public function handle(AdmsRequestParser $parser): void
     {
@@ -61,10 +61,10 @@ class ProcessAdmsPayload implements ShouldQueue
             $this->payload->delete();
 
         } catch (\Exception $e) {
-            Log::error("Failed to process ADMS Payload: " . $e->getMessage());
+            Log::error('Failed to process ADMS Payload: '.$e->getMessage());
             $this->payload->update([
                 'status' => 'failed',
-                'error_message' => $e->getMessage() . "\n" . $e->getTraceAsString(),
+                'error_message' => $e->getMessage()."\n".$e->getTraceAsString(),
             ]);
         } finally {
             if (function_exists('tenancy') && tenancy()->initialized) {
@@ -87,10 +87,10 @@ class ProcessAdmsPayload implements ShouldQueue
                 $status = 1; // Check Out
             } elseif ($device->punch_behavior === 'auto') {
                 $lastLog = $modelClass::where('pin', $log['pin'])
-                    ->whereDate('punched_at', \Carbon\Carbon::parse($log['punched_at'])->toDateString())
+                    ->whereDate('punched_at', Carbon::parse($log['punched_at'])->toDateString())
                     ->orderBy('punched_at', 'desc')
                     ->first();
-                
+
                 $status = ($lastLog && $lastLog->status === 0) ? 1 : 0;
             }
 
@@ -130,11 +130,21 @@ class ProcessAdmsPayload implements ShouldQueue
         foreach ($operations as $op) {
             if ($op['type'] === 'user' && isset($op['pin'])) {
                 $updateData = [];
-                if (array_key_exists('name', $op)) $updateData['name'] = $op['name'];
-                if (array_key_exists('card', $op)) $updateData['card_number'] = $op['card'];
-                if (array_key_exists('privilege', $op) || array_key_exists('pri', $op)) $updateData['privilege'] = (int) ($op['privilege'] ?? $op['pri'] ?? 0);
-                if (array_key_exists('password', $op) || array_key_exists('passwd', $op)) $updateData['device_password'] = $op['password'] ?? $op['passwd'];
-                if (array_key_exists('group', $op) || array_key_exists('grp', $op)) $updateData['group'] = $op['group'] ?? $op['grp'];
+                if (array_key_exists('name', $op)) {
+                    $updateData['name'] = $op['name'];
+                }
+                if (array_key_exists('card', $op)) {
+                    $updateData['card_number'] = $op['card'];
+                }
+                if (array_key_exists('privilege', $op) || array_key_exists('pri', $op)) {
+                    $updateData['device_privilege'] = (int) ($op['privilege'] ?? $op['pri'] ?? 0);
+                }
+                if (array_key_exists('password', $op) || array_key_exists('passwd', $op)) {
+                    $updateData['device_password'] = $op['password'] ?? $op['passwd'];
+                }
+                if (array_key_exists('group', $op) || array_key_exists('grp', $op)) {
+                    $updateData['group'] = $op['group'] ?? $op['grp'];
+                }
 
                 $user = $userModel::updateOrCreate(
                     ['pin' => $op['pin']],
@@ -147,7 +157,7 @@ class ProcessAdmsPayload implements ShouldQueue
             }
 
             if ($op['type'] === 'user_update_needed' && isset($op['pin'])) {
-                app(\App\Services\Attendance\DeviceCommandBuilder::class)->queryUser($device, $op['pin']);
+                app(DeviceCommandBuilder::class)->queryUser($device, $op['pin']);
             }
 
             if ($op['type'] === 'fingerprint' && isset($op['pin'])) {
@@ -174,7 +184,10 @@ class ProcessAdmsPayload implements ShouldQueue
                         'valid' => $op['valid'] ?? null,
                         'tmp' => $op['tmp'] ?? null,
                     ];
-                    $user->update(['face_templates' => $faceTemplates]);
+                    $user->update([
+                        'face_templates' => $faceTemplates,
+                        'face_enrolled' => true,
+                    ]);
                 }
             }
         }

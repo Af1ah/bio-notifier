@@ -5,17 +5,23 @@ namespace Tests\Feature;
 use App\Jobs\ProcessEbioWebhookJob;
 use App\Models\Device;
 use App\Models\Organisation;
-use App\Models\AttendanceLog;
-use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Artisan;
 use Tests\TestCase;
 
 class ProcessEbioWebhookJobTest extends TestCase
 {
-    public function tearDown(): void
+    private array $organisations = [];
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        Artisan::call('migrate:fresh', ['--force' => true]);
+    }
+
+    protected function tearDown(): void
     {
         tenancy()->end();
-        // Clean up physically created databases
-        foreach (Organisation::all() as $org) {
+        foreach ($this->organisations as $org) {
             $org->delete();
         }
         parent::tearDown();
@@ -27,6 +33,7 @@ class ProcessEbioWebhookJobTest extends TestCase
             'name' => 'Test Org',
             'db_name' => 'test_org_job_1',
         ]);
+        $this->organisations[] = $organisation;
 
         $logsPayload = [
             [
@@ -35,15 +42,15 @@ class ProcessEbioWebhookJobTest extends TestCase
                 'SerialNumber' => 'DEV123',
                 'DeviceName' => 'Front Door',
                 'Direction' => 'IN',
-                'VerificationType' => 'Face'
+                'VerificationType' => 'Face',
             ],
             [
                 'EmployeeCode' => '1002',
                 'LogDate' => '2023-10-10 10:05:00',
                 'SerialNumber' => 'DEV123',
                 'Direction' => 'OUT',
-                'VerificationType' => 'Fingerprint'
-            ]
+                'VerificationType' => 'Fingerprint',
+            ],
         ];
 
         $job = new ProcessEbioWebhookJob($organisation, $logsPayload);
@@ -81,6 +88,7 @@ class ProcessEbioWebhookJobTest extends TestCase
             'name' => 'Test Org 2',
             'db_name' => 'test_org_job_2',
         ]);
+        $this->organisations[] = $organisation;
 
         $logsPayload = [
             [
@@ -97,7 +105,7 @@ class ProcessEbioWebhookJobTest extends TestCase
                 'EmployeeCode' => '1003',
                 'LogDate' => '2023-10-10 10:10:00', // Valid punch after duplicate
                 'SerialNumber' => 'DEV123',
-            ]
+            ],
         ];
 
         $job = new ProcessEbioWebhookJob($organisation, $logsPayload);
@@ -106,11 +114,11 @@ class ProcessEbioWebhookJobTest extends TestCase
         tenancy()->initialize($organisation);
 
         $this->assertDatabaseCount('attendance_logs', 2);
-        
+
         $this->assertDatabaseHas('attendance_logs', [
             'pin' => '1001',
         ]);
-        
+
         $this->assertDatabaseHas('attendance_logs', [
             'pin' => '1003',
         ]);

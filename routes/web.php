@@ -59,7 +59,7 @@ Route::get('/{tenant}/impersonate', function () {
     if (! $user) {
         $user = \App\Models\User::create([
             'name' => 'Admin',
-            'email' => 'admin@zkteco.local',
+            'email' => \App\Models\User::DEFAULT_LOGIN_EMAIL,
             'password' => \Illuminate\Support\Facades\Hash::make(\Illuminate\Support\Str::random(16)),
             'role' => 'admin',
             'privilege' => 14,
@@ -67,7 +67,11 @@ Route::get('/{tenant}/impersonate', function () {
         ]);
     }
     
-    \Illuminate\Support\Facades\Auth::guard('web')->login($user);
+    $guard = \Illuminate\Support\Facades\Auth::guard('web');
+    $guard->logoutCurrentDevice();
+    request()->session()->forget('password_hash_web');
+    $guard->login($user);
+    request()->session()->regenerate();
     return redirect('/' . $tenant->shortname . '/admin');
 })->name('tenant.impersonate')->middleware(['web', \App\Http\Middleware\InitializeTenancyByShortname::class, 'signed']);
 
@@ -91,7 +95,7 @@ Route::get('/magic-login', function () {
     if (! $user) {
         $user = \App\Models\User::create([
             'name' => 'Admin',
-            'email' => 'admin@zkteco.local',
+            'email' => \App\Models\User::DEFAULT_LOGIN_EMAIL,
             'password' => \Illuminate\Support\Facades\Hash::make(\Illuminate\Support\Str::random(16)),
             'role' => 'admin',
             'privilege' => 14,
@@ -99,7 +103,11 @@ Route::get('/magic-login', function () {
         ]);
     }
     
-    \Illuminate\Support\Facades\Auth::guard('web')->login($user);
+    $guard = \Illuminate\Support\Facades\Auth::guard('web');
+    $guard->logoutCurrentDevice();
+    request()->session()->forget('password_hash_web');
+    $guard->login($user);
+    request()->session()->regenerate();
     return redirect('/admin');
 })->middleware(['web', \Stancl\Tenancy\Middleware\InitializeTenancyByDomain::class]);
 
