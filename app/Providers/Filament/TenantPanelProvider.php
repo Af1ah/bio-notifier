@@ -49,6 +49,9 @@ class TenantPanelProvider extends PanelProvider
                      ->label('Organisation Management')
                      ->collapsed(),
                 \Filament\Navigation\NavigationGroup::make()
+                     ->label('Payroll')
+                     ->collapsed(),
+                \Filament\Navigation\NavigationGroup::make()
                      ->label('Device Management')
                      ->collapsed(),
             ])
