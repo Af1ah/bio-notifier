@@ -23,7 +23,7 @@ class BranchesTable
                     ->searchable()
                     ->visibleFrom('md'),
                 TextColumn::make('users_count')
-                    ->counts('users')
+                    ->counts(['users' => fn ($query) => $query->employees()])
                     ->label('Users'),
                 TextColumn::make('devices_count')
                     ->counts('devices')

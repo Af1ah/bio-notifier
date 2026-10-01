@@ -21,7 +21,7 @@ class DepartmentsTable
                     ->label('Branches')
                     ->badge(),
                 TextColumn::make('users_count')
-                    ->counts('users')
+                    ->counts(['users' => fn ($query) => $query->employees()])
                     ->label('Users'),
                 TextColumn::make('created_at')
                     ->dateTime()

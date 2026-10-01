@@ -2,6 +2,8 @@
 
 namespace App\Filament\Tenant\Resources\Branches\Pages;
 
+use App\Filament\Tenant\Actions\AssignShiftAction;
+use App\Filament\Tenant\Actions\EndShiftAssignmentAction;
 use App\Filament\Tenant\Resources\Branches\BranchResource;
 use Filament\Actions\DeleteAction;
 use Filament\Resources\Pages\EditRecord;
@@ -13,6 +15,8 @@ class EditBranch extends EditRecord
     protected function getHeaderActions(): array
     {
         return [
+            AssignShiftAction::make('branch'),
+            EndShiftAssignmentAction::make('branch'),
             DeleteAction::make(),
         ];
     }

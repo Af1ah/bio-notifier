@@ -2,6 +2,8 @@
 
 namespace App\Filament\Tenant\Resources\TaskGroups\Pages;
 
+use App\Filament\Tenant\Actions\AssignShiftAction;
+use App\Filament\Tenant\Actions\EndShiftAssignmentAction;
 use App\Filament\Tenant\Resources\TaskGroups\TaskGroupResource;
 use Filament\Actions\DeleteAction;
 use Filament\Resources\Pages\EditRecord;
@@ -13,6 +15,8 @@ class EditTaskGroup extends EditRecord
     protected function getHeaderActions(): array
     {
         return [
+            AssignShiftAction::make('task_group'),
+            EndShiftAssignmentAction::make('task_group'),
             DeleteAction::make(),
         ];
     }

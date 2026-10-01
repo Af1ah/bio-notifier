@@ -2,9 +2,12 @@
 
 namespace App\Filament\Tenant\Resources\Departments\Pages;
 
+use App\Filament\Tenant\Actions\AssignShiftAction;
+use App\Filament\Tenant\Actions\EndShiftAssignmentAction;
 use App\Filament\Tenant\Resources\Departments\DepartmentResource;
 use Filament\Actions\EditAction;
 use Filament\Resources\Pages\ViewRecord;
+use Illuminate\Contracts\Support\Htmlable;
 
 class ViewDepartment extends ViewRecord
 {
@@ -13,11 +16,13 @@ class ViewDepartment extends ViewRecord
     protected function getHeaderActions(): array
     {
         return [
+            AssignShiftAction::make('department'),
+            EndShiftAssignmentAction::make('department'),
             EditAction::make(),
         ];
     }
 
-    public function getTitle(): string | \Illuminate\Contracts\Support\Htmlable
+    public function getTitle(): string|Htmlable
     {
         return $this->record->name ?? 'View Department';
     }

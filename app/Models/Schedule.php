@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Model;
 
 class Schedule extends Model
@@ -37,14 +38,33 @@ class Schedule extends Model
         return $this->morphTo();
     }
 
+    public function ruleRevisions()
+    {
+        return $this->hasMany(ShiftRuleRevision::class);
+    }
+
+    public function latestRule()
+    {
+        return $this->hasOne(ShiftRuleRevision::class)->latestOfMany('revision');
+    }
+
+    public function activeRuleRevision(CarbonInterface $date): ?ShiftRuleRevision
+    {
+        return $this->ruleRevisions()
+            ->where('effective_from', '<=', $date->copy()->endOfDay())
+            ->where(fn ($query) => $query->whereNull('effective_to')->orWhereDate('effective_to', '>=', $date->toDateString()))
+            ->orderByDesc('revision')
+            ->first();
+    }
+
     public function getUsersCountAttribute()
     {
         if (! $this->target_type) {
-            return User::count();
+            return User::employees()->count();
         }
 
         if ($this->target) {
-            return $this->target->users()->count();
+            return $this->target->users()->employees()->count();
         }
 
         return 0;

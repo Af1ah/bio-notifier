@@ -3,15 +3,28 @@
 namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
+use App\Services\Attendance\ShiftAssignmentResolver;
+use Carbon\Carbon;
 use Database\Factories\UserFactory;
+use Filament\Models\Contracts\FilamentUser;
+use Filament\Panel;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
-use Filament\Models\Contracts\FilamentUser;
-use Filament\Panel;
+use Illuminate\Support\Facades\Schema;
 
 class User extends Authenticatable implements FilamentUser
 {
+    public const DEFAULT_LOGIN_EMAIL = 'admin@zkteco.local';
+
+    public function scopeEmployees(\Illuminate\Database\Eloquent\Builder $query): \Illuminate\Database\Eloquent\Builder
+    {
+        return $query->where(function ($query) {
+            $email = $query->getModel()->qualifyColumn('email');
+            $query->whereNull($email)->orWhere($email, '!=', self::DEFAULT_LOGIN_EMAIL);
+        });
+    }
+
     /** @use HasFactory<UserFactory> */
     use HasFactory, Notifiable;
 
@@ -58,9 +71,12 @@ class User extends Authenticatable implements FilamentUser
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
+            'privilege' => 'integer',
+            'device_privilege' => 'integer',
             'is_enabled' => 'boolean',
             'fingerprints' => 'array',
             'face_templates' => 'array',
+            'face_enrolled' => 'boolean',
             'requires_password_change' => 'boolean',
             'blocked_devices' => 'array',
         ];
@@ -91,6 +107,21 @@ class User extends Authenticatable implements FilamentUser
         return $this->belongsToMany(TaskGroup::class);
     }
 
+    public function payrollProfile()
+    {
+        return $this->hasOne(EmployeePayrollProfile::class);
+    }
+
+    public function leaves()
+    {
+        return $this->hasMany(EmployeeLeave::class);
+    }
+
+    public function salarySlips()
+    {
+        return $this->hasMany(SalarySlip::class);
+    }
+
     public function getPrivilegeLabelAttribute(): string
     {
         return match ((int) $this->privilege) {
@@ -107,9 +138,16 @@ class User extends Authenticatable implements FilamentUser
             && filled($this->password);
     }
 
-    public function getActiveSchedule(?\Carbon\Carbon $date = null)
+    public function getActiveSchedule(?Carbon $date = null)
     {
         $date = $date ?? now();
+
+        if (Schema::hasTable('shift_assignment_sets')) {
+            $assignment = app(ShiftAssignmentResolver::class)->resolve($this, $date);
+            if ($assignment) {
+                return $assignment->slots->first()?->schedule;
+            }
+        }
 
         $groupSchedule = Schedule::where('status', true)
             ->where('target_type', TaskGroup::class)
@@ -122,7 +160,9 @@ class User extends Authenticatable implements FilamentUser
             })
             ->first();
 
-        if ($groupSchedule) return $groupSchedule;
+        if ($groupSchedule) {
+            return $groupSchedule;
+        }
 
         if ($this->department_id) {
             $deptSchedule = Schedule::where('status', true)
@@ -135,8 +175,10 @@ class User extends Authenticatable implements FilamentUser
                     $query->whereNull('valid_to')->orWhere('valid_to', '>=', $date);
                 })
                 ->first();
-            
-            if ($deptSchedule) return $deptSchedule;
+
+            if ($deptSchedule) {
+                return $deptSchedule;
+            }
         }
 
         if ($this->branch_id) {
@@ -150,8 +192,10 @@ class User extends Authenticatable implements FilamentUser
                     $query->whereNull('valid_to')->orWhere('valid_to', '>=', $date);
                 })
                 ->first();
-            
-            if ($branchSchedule) return $branchSchedule;
+
+            if ($branchSchedule) {
+                return $branchSchedule;
+            }
         }
 
         return Schedule::where('status', true)

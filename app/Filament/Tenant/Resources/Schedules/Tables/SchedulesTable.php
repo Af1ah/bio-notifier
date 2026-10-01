@@ -2,9 +2,15 @@
 
 namespace App\Filament\Tenant\Resources\Schedules\Tables;
 
+use App\Services\Attendance\ShiftAssignmentService;
+use Filament\Actions\Action;
 use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteBulkAction;
 use Filament\Actions\EditAction;
+use Filament\Forms\Components\DatePicker;
+use Filament\Notifications\Notification;
+use Filament\Tables\Columns\IconColumn;
+use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 
 class SchedulesTable
@@ -13,35 +19,33 @@ class SchedulesTable
     {
         return $table
             ->columns([
-                \Filament\Tables\Columns\TextColumn::make('name')
+                TextColumn::make('name')
                     ->searchable()
                     ->sortable(),
-                \Filament\Tables\Columns\TextColumn::make('target_type')
-                    ->label('Target')
-                    ->formatStateUsing(function ($record) {
-                        if (! $record->target_type) return 'Organization (All)';
-                        return class_basename($record->target_type) . ': ' . ($record->target ? $record->target->name : 'Unknown');
-                    })
-                    ->visibleFrom('md'),
-                \Filament\Tables\Columns\TextColumn::make('users_count')
-                    ->label('Users')
-                    ->state(fn ($record) => $record->users_count)
-                    ->visibleFrom('md'),
-                \Filament\Tables\Columns\TextColumn::make('valid_from')
+                TextColumn::make('latestRule.start_time')->label('Starts')->time('H:i'),
+                TextColumn::make('latestRule.end_time')->label('Ends')->time('H:i'),
+                TextColumn::make('valid_from')
                     ->date()
                     ->sortable()
                     ->visibleFrom('md'),
-                \Filament\Tables\Columns\TextColumn::make('valid_to')
+                TextColumn::make('valid_to')
                     ->date()
                     ->sortable()
                     ->visibleFrom('md'),
-                \Filament\Tables\Columns\IconColumn::make('status')
+                IconColumn::make('status')
                     ->boolean(),
             ])
             ->filters([
                 //
             ])
             ->recordActions([
+                Action::make('makeDefault')->label('Make default')->icon('heroicon-o-star')->schema([
+                    DatePicker::make('effective_from')->required()->default(today()),
+                    DatePicker::make('effective_to')->rule('after_or_equal:effective_from'),
+                ])->action(function ($record, array $data) {
+                    app(ShiftAssignmentService::class)->setDefault($record, $data['effective_from'], $data['effective_to'] ?? null);
+                    Notification::make()->title('Default shift updated')->success()->send();
+                }),
                 EditAction::make(),
             ])
             ->toolbarActions([
