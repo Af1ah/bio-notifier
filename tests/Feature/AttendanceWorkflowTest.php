@@ -70,6 +70,36 @@ class AttendanceWorkflowTest extends TestCase
         $this->assertSame(15, $s->ruleRevisions()->oldest('revision')->first()->arrival_grace_minutes);
     }
 
+    public function test_backdated_shift_can_be_assigned_to_history_and_uses_effective_rules(): void
+    {
+        Carbon::setTestNow('2026-10-01 23:00:00');
+        try {
+            $shift = $this->shift();
+            $assignments = app(ShiftAssignmentService::class);
+            $assignments->setDefault($shift, '2026-10-01');
+            $oldRevision = $shift->ruleRevisions()->first();
+            $shift->update(['valid_from' => '2026-05-01', 'rules' => array_merge($shift->rules, ['full_day_minutes' => 600])]);
+            $newRevision = app(ShiftRuleService::class)->sync($shift);
+            $this->assertNull($oldRevision->fresh()->effective_to);
+            $assignments->setDefault($shift, '2026-08-01', '2026-09-30');
+            // Repeating the repair must not create a backwards assignment range.
+            $assignments->setDefault($shift, '2026-08-01', '2026-09-30');
+            $this->assertSame(0, DB::table('default_shift_assignments')->whereColumn('effective_to', '<', 'effective_from')->count());
+            $user = User::create(['name' => 'Historical', 'pin' => 'history']);
+            $device = Device::create(['serial_number' => 'HISTORY']);
+            foreach (['2026-08-04', '2026-10-01'] as $date) {
+                AttendanceLog::create(['device_id' => $device->id, 'pin' => $user->pin, 'punched_at' => $date.' 09:30:00', 'status' => 0]);
+                AttendanceLog::create(['device_id' => $device->id, 'pin' => $user->pin, 'punched_at' => $date.' 18:30:00', 'status' => 1]);
+                $day = app(AttendanceCalculationService::class)->calculate($user, Carbon::parse($date));
+                $this->assertSame('half_day', $day->status);
+                $this->assertSame(540, $day->candidate_worked_minutes);
+                $this->assertDatabaseHas('attendance_occurrences', ['attendance_day_id' => $day->id, 'shift_rule_revision_id' => $newRevision->id]);
+            }
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
     public function test_legacy_weekly_schedule_is_backfilled_to_rule_revision(): void
     {
         $schedule = Schedule::create(['name' => 'Regular Shift', 'type' => 'regular', 'status' => true, 'rules' => ['weekly' => ['breaks' => [], 'days' => ['monday' => ['is_working' => true, 'start' => '09:00', 'end' => '18:00', 'breaks' => []]]]]]);

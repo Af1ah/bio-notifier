@@ -43,7 +43,7 @@ class AttendanceCalculationService
             $intervals = [];
             $occurrences = [];
             foreach ($slots as $index => $slot) {
-                $rule = $slot->ruleRevision ?? $slot->schedule?->activeRuleRevision($workDate);
+                $rule = $slot->schedule?->activeRuleRevision($workDate);
                 if (! $rule || ! $rule->weekdays()->where('weekday', $workDate->dayOfWeek)->exists()) {
                     continue;
                 }
@@ -53,7 +53,7 @@ class AttendanceCalculationService
                 $cutoff = $end->copy()->addMinutes($rule->checkout_cutoff_minutes);
                 $next = $slots->get($index + 1);
                 if ($next) {
-                    $nextRule = $next->ruleRevision ?? $next->schedule?->activeRuleRevision($workDate);
+                    $nextRule = $next->schedule?->activeRuleRevision($workDate);
                     if ($nextRule) {
                         $nextOpen = Carbon::parse($workDate->toDateString().' '.$nextRule->start_time)->addDays((int) ($nextRule->start_time < $rule->start_time))->subMinutes($nextRule->earliest_arrival_minutes);
                         if ($nextOpen->lt($cutoff)) {
@@ -95,7 +95,7 @@ class AttendanceCalculationService
 
                 return $day;
             }
-            $policy = $set->dailyPolicyRuleRevision ?? $occurrences[0][1];
+            $policy = $set->dailyPolicyRuleRevision?->schedule?->activeRuleRevision($workDate) ?? $occurrences[0][1];
             $total = $this->unionMinutes($intervals);
             $full = (int) $policy->full_day_minutes;
             $half = (int) $policy->half_day_minutes;

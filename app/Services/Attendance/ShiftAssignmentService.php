@@ -14,13 +14,17 @@ class ShiftAssignmentService
 {
     public function setDefault(Schedule $schedule, string $effectiveFrom, ?string $effectiveTo = null): ShiftAssignmentSet
     {
+        if ($effectiveTo && Carbon::parse($effectiveTo)->lt(Carbon::parse($effectiveFrom))) {
+            throw ValidationException::withMessages(['effective_to' => 'The assignment end date must be on or after its start date.']);
+        }
         return DB::transaction(function () use ($schedule, $effectiveFrom, $effectiveTo) {
             $rule = $schedule->activeRuleRevision(Carbon::parse($effectiveFrom));
             if (! $rule) {
                 throw ValidationException::withMessages(['effective_from' => 'The shift has no rule revision for this date.']);
             }
             $previousDay = Carbon::parse($effectiveFrom)->subDay()->toDateString();
-            DB::table('default_shift_assignments')->where('active', true)->where('effective_from', '<=', $effectiveFrom)->where(fn ($q) => $q->whereNull('effective_to')->orWhere('effective_to', '>=', $effectiveFrom))->update(['effective_to' => $previousDay, 'updated_at' => now()]);
+            DB::table('default_shift_assignments')->where('active', true)->where('effective_from', '=', $effectiveFrom)->where(fn ($q) => $q->whereNull('effective_to')->orWhere('effective_to', '>=', $effectiveFrom))->update(['active' => false, 'updated_at' => now()]);
+            DB::table('default_shift_assignments')->where('active', true)->where('effective_from', '<', $effectiveFrom)->where(fn ($q) => $q->whereNull('effective_to')->orWhere('effective_to', '>=', $effectiveFrom))->update(['effective_to' => $previousDay, 'updated_at' => now()]);
             $futureConflict = DB::table('default_shift_assignments')->where('active', true)->where('effective_from', '>', $effectiveFrom)->where('effective_from', '<=', $effectiveTo ?? '9999-12-31')->exists();
             if ($futureConflict) {
                 throw ValidationException::withMessages(['effective_to' => 'A future default shift already overlaps this range.']);

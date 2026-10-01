@@ -12,6 +12,9 @@ class ShiftRuleService
 {
     public function sync(Schedule $schedule): ShiftRuleRevision
     {
+        if (! $schedule->valid_from || ($schedule->valid_to && $schedule->valid_to->lt($schedule->valid_from))) {
+            throw ValidationException::withMessages(['valid_to' => 'The shift end date must be on or after its start date.']);
+        }
         $rules = $schedule->rules ?? [];
         $half = (int) ($rules['half_day_minutes'] ?? 120);
         $full = (int) ($rules['full_day_minutes'] ?? 480);
@@ -43,12 +46,14 @@ class ShiftRuleService
         }
         $snapshot = Arr::sortRecursive($rules);
         $latest = $schedule->ruleRevisions()->latest('revision')->first();
-        if ($latest && $latest->snapshot === $snapshot && $latest->effective_from?->toDateString() === $schedule->valid_from?->toDateString()) {
+        if ($latest && $latest->snapshot === $snapshot && $latest->effective_from?->toDateString() === $schedule->valid_from?->toDateString() && $latest->effective_to?->toDateString() === $schedule->valid_to?->toDateString()) {
             return $latest;
         }
 
         return DB::transaction(function () use ($schedule, $rules, $snapshot, $latest) {
-            if ($latest && $latest->effective_to === null) {
+            // A backdated revision supersedes the old rules by revision number.
+            // Never close an old revision before its own start date.
+            if ($latest && $latest->effective_to === null && $schedule->valid_from->gt($latest->effective_from)) {
                 $latest->update(['effective_to' => $schedule->valid_from->copy()->subDay()]);
             }
             $revision = $schedule->ruleRevisions()->create([
