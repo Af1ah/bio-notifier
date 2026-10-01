@@ -67,6 +67,16 @@ class TenantAuthenticationTest extends TestCase
         $this->assertFalse(isset($page->record));
     }
 
+    public function test_tenant_login_response_redirects_to_resolved_dashboard(): void
+    {
+        tenancy()->initialize(Organisation::findOrFail('organisation-a'));
+        \Filament\Facades\Filament::setCurrentPanel(\Filament\Facades\Filament::getPanel('tenant'));
+        $this->assertSame(url('/alpha/admin'), \Filament\Facades\Filament::getUrl());
+        $response = app(\Filament\Auth\Http\Responses\Contracts\LoginResponse::class)->toResponse(request());
+        $this->assertSame(url('/alpha/admin'), $response->getTargetUrl());
+        tenancy()->end();
+    }
+
     public function test_tenants_have_different_login_and_remember_cookie_names(): void
     {
         tenancy()->initialize(Organisation::find('organisation-a'));

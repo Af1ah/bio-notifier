@@ -28,7 +28,7 @@ class TenantPanelProvider extends PanelProvider
         // Uncomment the domain line and path('admin') for subdomain routing
         // $centralDomain = parse_url(env('APP_URL', 'http://localhost'), PHP_URL_HOST);
 
-        return $panel
+        return \App\Filament\Tenant\TenantPanel::make()
             ->id('tenant')
             // ->domain('{tenant}.' . $centralDomain)
             // ->path('admin')
