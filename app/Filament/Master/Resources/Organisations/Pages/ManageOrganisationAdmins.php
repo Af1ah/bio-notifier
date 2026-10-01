@@ -13,6 +13,7 @@ use Filament\Tables\Table;
 use Filament\Tables;
 use Filament\Forms;
 use App\Models\User;
+use App\Models\Organisation;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Database\Eloquent\Builder;
 
@@ -32,35 +33,18 @@ class ManageOrganisationAdmins extends Page implements HasTable, HasForms
 
     public function boot(): void
     {
+        // On updates Livewire restores this locked model after verifying the
+        // snapshot, before boot hooks (including the table's boot hook) run.
+        if (isset($this->record) && $this->record instanceof Organisation) {
+            tenancy()->initialize($this->record);
+
+            return;
+        }
+
+        // Initial GET: table boot precedes mount, so use the routed record.
         $id = request()->route('record');
-        
-        // Handle Livewire 3 snapshot requests where route parameter is missing
-        if (!$id && request()->has('components.0.snapshot')) {
-            $snapshot = json_decode(request()->input('components.0.snapshot'), true);
-            if (isset($snapshot['data']['record'])) {
-                $recordData = $snapshot['data']['record'];
-                // Livewire 3 synthesizer dehydrates models into arrays, e.g. [null, "UUID"] or ["App\Models\...", "UUID"]
-                if (is_array($recordData)) {
-                    // Usually the ID is the second element, or we find the first string/int
-                    $id = $recordData[1] ?? (is_string($recordData[0]) ? $recordData[0] : null);
-                    if (is_array($id)) {
-                        $id = $id[0] ?? null; // Just in case it's deeply nested
-                    }
-                } else {
-                    $id = $recordData;
-                }
-            }
-        }
-
-        if (is_array($id)) {
-            $id = null; // Failsafe
-        }
-
-        if ($id) {
-            $tenant = \App\Models\Organisation::find($id);
-            if ($tenant) {
-                tenancy()->initialize($tenant);
-            }
+        if (is_string($id) || is_int($id)) {
+            tenancy()->initialize($this->resolveRecord($id));
         }
     }
 
@@ -79,7 +63,13 @@ class ManageOrganisationAdmins extends Page implements HasTable, HasForms
                     ->searchable(),
                 Tables\Columns\TextColumn::make('email')
                     ->searchable(),
-                Tables\Columns\TextColumn::make('role')
+                Tables\Columns\TextColumn::make('privilege')
+                    ->label('Application Access')
+                    ->formatStateUsing(fn ($state) => match ((int) $state) {
+                        14 => 'Admin',
+                        0 => 'User',
+                        default => 'Unknown',
+                    })
                     ->badge(),
                 Tables\Columns\TextColumn::make('created_at')
                     ->dateTime()
@@ -100,21 +90,20 @@ class ManageOrganisationAdmins extends Page implements HasTable, HasForms
                             ->email()
                             ->required()
                             ->maxLength(255)
-                            ->unique(User::class, 'email', modifyRuleUsing: fn ($rule) => $rule->usingConnection('tenant')),
+                            ->unique('tenant.users', 'email', ignoreRecord: false),
                         Forms\Components\TextInput::make('password')
                             ->password()
                             ->required()
                             ->maxLength(255),
-                        Forms\Components\Select::make('role')
+                        Forms\Components\Select::make('privilege')
+                            ->label('Application Access')
                             ->options([
-                                'admin' => 'Admin',
-                                'manager' => 'Manager',
-                                'user' => 'User',
+                                14 => 'Admin',
+                                0 => 'User',
                             ])
-                            ->default('admin')
+                            ->default(14)
+                            ->helperText('Admin access requires an email address and password.')
                             ->required(),
-                        Forms\Components\Hidden::make('privilege')
-                            ->default(14),
                         Forms\Components\Hidden::make('pin')
                             ->default(fn () => (string) rand(10000, 99999)),
                     ])
@@ -135,20 +124,21 @@ class ManageOrganisationAdmins extends Page implements HasTable, HasForms
                             ->email()
                             ->required()
                             ->maxLength(255)
-                            ->unique(User::class, 'email', ignoreRecord: true, modifyRuleUsing: fn ($rule) => $rule->usingConnection('tenant')),
+                            ->unique('tenant.users', 'email', ignoreRecord: true),
                         Forms\Components\TextInput::make('password')
                             ->password()
                             ->maxLength(255)
+                            ->afterStateHydrated(fn (Forms\Components\TextInput $component) => $component->state(null))
+                            ->helperText('Leave blank to keep the current password.')
                             ->dehydrated(fn ($state) => filled($state)),
-                        Forms\Components\Select::make('role')
+                        Forms\Components\Select::make('privilege')
+                            ->label('Application Access')
                             ->options([
-                                'admin' => 'Admin',
-                                'manager' => 'Manager',
-                                'user' => 'User',
+                                14 => 'Admin',
+                                0 => 'User',
                             ])
+                            ->helperText('Admin access requires an email address and password.')
                             ->required(),
-                        Forms\Components\Hidden::make('privilege')
-                            ->default(14),
                         Forms\Components\Hidden::make('pin')
                             ->default(fn () => (string) rand(10000, 99999)),
                     ])

@@ -45,6 +45,28 @@ class TenantAuthenticationTest extends TestCase
         ]))->middleware('web');
     }
 
+    public function test_master_admin_page_initializes_tenancy_from_restored_record(): void
+    {
+        $organisation = Organisation::findOrFail('organisation-a');
+        $this->mock(\Stancl\Tenancy\Tenancy::class, function ($mock) use ($organisation) {
+            $mock->shouldReceive('initialize')->once()->with($organisation);
+        });
+        $page = new \App\Filament\Master\Resources\Organisations\Pages\ManageOrganisationAdmins;
+        $page->record = $organisation;
+        // Livewire updates have no routed record or raw snapshot here.
+        $page->boot();
+    }
+
+    public function test_master_admin_page_boot_handles_record_before_mount(): void
+    {
+        $this->mock(\Stancl\Tenancy\Tenancy::class, function ($mock) {
+            $mock->shouldNotReceive('initialize');
+        });
+        $page = new \App\Filament\Master\Resources\Organisations\Pages\ManageOrganisationAdmins;
+        $page->boot();
+        $this->assertFalse(isset($page->record));
+    }
+
     public function test_tenants_have_different_login_and_remember_cookie_names(): void
     {
         tenancy()->initialize(Organisation::find('organisation-a'));
