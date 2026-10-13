@@ -4,14 +4,16 @@ namespace App\Services\Attendance;
 
 use App\Models\AttendanceApproval;
 use App\Models\AttendanceDay;
-use App\Models\AttendanceOccurrence;
-use App\Models\ShiftRuleRevision;
 use App\Models\AttendanceLog;
+use App\Models\AttendanceOccurrence;
 use App\Models\HolidayOccurrence;
+use App\Models\ShiftRuleRevision;
 use App\Models\User;
+use App\Services\Payroll\PayrollFreshnessService;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class AttendanceCalculationService
 {
@@ -20,14 +22,27 @@ class AttendanceCalculationService
     public function calculate(User $user, Carbon $workDate): AttendanceDay
     {
         return DB::transaction(function () use ($user, $workDate) {
+            // Lock an existing parent before creating a day: this also protects
+            // the first calculation, where there is no day row to lock yet.
+            User::whereKey($user->id)->lockForUpdate()->firstOrFail();
             $set = $this->assignments->resolve($user, $workDate);
-            $day = AttendanceDay::where('user_id', $user->id)->whereDate('work_date', $workDate->toDateString())->first()
+            $signature = $this->inputSignature($user, $workDate, $set);
+            $day = AttendanceDay::where('user_id', $user->id)->whereDate('work_date', $workDate->toDateString())->lockForUpdate()->first()
                 ?? new AttendanceDay(['user_id' => $user->id, 'work_date' => $workDate->toDateString()]);
+            if ($day->exists && ($day->explanation['input_signature'] ?? null) === $signature) {
+                $day->update(['stale_at' => null]);
+
+                return $day->fresh('occurrences');
+            }
+            if ($day->exists && empty($day->explanation['input_signature']) && $day->approvals()->where('calculation_revision', $day->calculation_revision)->where('state', 'approved')->exists()) {
+                throw ValidationException::withMessages(['attendance' => 'Legacy approved attendance has no input baseline. Review and migrate its decision before recalculating; the approved result was preserved.']);
+            }
+            app(PayrollFreshnessService::class)->invalidate($user->id, $workDate);
             if ($day->exists) {
                 $day->revisions()->firstOrCreate(['revision' => $day->calculation_revision], ['snapshot' => ['day' => $day->toArray(), 'occurrences' => $day->occurrences()->with(['punches', 'schedule', 'ruleRevision'])->get()->toArray(), 'approvals' => $day->approvals()->get()->toArray()], 'had_approved_attendance' => $day->approvals()->where('type', 'attendance')->where('state', 'approved')->exists(), 'had_approved_overtime' => $day->approvals()->where('type', 'overtime')->where('state', 'approved')->exists(), 'superseded_at' => now()]);
             }
             $revision = ($day->exists ? $day->calculation_revision : 0) + 1;
-            $day->fill(['status' => $set ? 'pending' : 'no_shift', 'candidate_worked_minutes' => 0, 'approved_worked_minutes' => 0, 'candidate_overtime_minutes' => 0, 'approved_overtime_minutes' => 0, 'calculation_revision' => $revision, 'calculated_at' => now(), 'stale_at' => null])->save();
+            $day->fill(['status' => $set ? 'pending' : 'no_shift', 'candidate_worked_minutes' => 0, 'approved_worked_minutes' => 0, 'candidate_overtime_minutes' => 0, 'approved_overtime_minutes' => 0, 'calculation_revision' => $revision, 'calculated_at' => now(), 'stale_at' => null, 'explanation' => ['input_signature' => $signature]])->save();
             $day->approvals()->where('state', 'pending')->update(['state' => 'superseded', 'superseded_at' => now()]);
             $day->occurrences()->delete();
             if ($this->isHoliday($user, $workDate)) {
@@ -87,8 +102,9 @@ class AttendanceCalculationService
                 if ($assumed) {
                     $this->approval($day, $occ, 'attendance', ['reason' => 'missing_checkout', 'assumed_out_at' => $assumed->toIso8601String(), 'minutes' => $minutes]);
                 }
-                $intervals = array_merge($intervals, $workedIntervals);
-                $occurrences[] = [$occ, $rule, $end, $workedIntervals];
+                $netIntervals = $this->withoutBreaks($rule, $workDate, $workedIntervals);
+                $intervals = array_merge($intervals, $netIntervals);
+                $occurrences[] = [$occ, $rule, $end, $netIntervals];
             }
             if (! $occurrences) {
                 $day->update(['status' => 'off']);
@@ -101,13 +117,39 @@ class AttendanceCalculationService
             $half = (int) $policy->half_day_minutes;
             $eligible = $policy->overtime_basis === 'after_shift_end' ? collect($occurrences)->sum(fn ($v) => $this->minutesAfter($v[3], $v[2])) : max(0, $total - $full);
             $ot = $eligible >= (int) $policy->overtime_minimum_minutes ? $eligible : 0;
-            $day->update(['candidate_worked_minutes' => $total, 'approved_worked_minutes' => $day->occurrences()->sum('approved_worked_minutes'), 'candidate_overtime_minutes' => $ot, 'status' => self::dailyStatus($total, $half, $full), 'explanation' => ['assignment_set_id' => $set->id, 'daily_policy_rule_revision_id' => $policy->id]]);
+            $day->update(['candidate_worked_minutes' => $total, 'approved_worked_minutes' => $day->occurrences()->sum('approved_worked_minutes'), 'candidate_overtime_minutes' => $ot, 'status' => self::dailyStatus($total, $half, $full), 'explanation' => ['input_signature' => $signature, 'assignment_set_id' => $set->id, 'daily_policy_rule_revision_id' => $policy->id]]);
             if ($ot > 0) {
                 $this->approval($day, null, 'overtime', ['reason' => 'qualifying_overtime', 'minutes' => $ot, 'basis' => $policy->overtime_basis]);
             }
 
             return $day->fresh('occurrences');
-        });
+        }, 3);
+    }
+
+    private function inputSignature(User $user, Carbon $date, $set): string
+    {
+        $rules = [];
+        $windows = [];
+        foreach ($set?->slots ?? [] as $slot) {
+            $rule = $slot->schedule?->activeRuleRevision($date);
+            if (! $rule) {
+                continue;
+            }
+            $rule->load(['weekdays', 'breaks']);
+            $cutoff = Carbon::parse($date->toDateString().' '.$rule->end_time)->addDays((int) $rule->end_day_offset)->addMinutes($rule->checkout_cutoff_minutes);
+            if ($rule->weekdays->contains('weekday', $date->dayOfWeek)) {
+                $windows[] = [Carbon::parse($date->toDateString().' '.$rule->start_time)->subMinutes($rule->earliest_arrival_minutes), $cutoff];
+            }
+            $rules[] = [$slot->id, $rule->toArray(), now()->gte($cutoff), DB::table('shift_break_weekdays')->whereIn('shift_break_id', $rule->breaks->pluck('id'))->orderBy('id')->get()->toArray()];
+        }
+        $punches = $windows ? AttendanceLog::where('pin', $user->pin)->where(function ($query) use ($windows) {
+            foreach ($windows as $window) {
+                $query->orWhereBetween('punched_at', $window);
+            }
+        })->orderBy('id')->get(['id', 'punched_at', 'status'])->toArray() : [];
+        $policy = $set?->dailyPolicyRuleRevision?->schedule?->activeRuleRevision($date);
+
+        return hash('sha256', json_encode([$user->pin, $set?->id, $policy?->toArray(), $rules, $punches, $this->isHoliday($user, $date)], JSON_THROW_ON_ERROR));
     }
 
     /** Update derived attendance only; device punches remain immutable. */
@@ -142,7 +184,7 @@ class AttendanceCalculationService
                 } else {
                     [, , $worked] = $this->pair($slot->punches->pluck('attendanceLog')->filter()->sortBy('punched_at')->values(), $slotRule->punch_method);
                 }
-                $eligible += $this->minutesAfter($worked, $slotEnd);
+                $eligible += $this->minutesAfter($this->withoutBreaks($slotRule, $day->work_date, $worked), $slotEnd);
             }
         }
         $day->update([
@@ -204,24 +246,39 @@ class AttendanceCalculationService
         return $s ? $total + $s->diffInMinutes($e) : 0;
     }
 
-    private function breakMinutes($rule, Carbon $date, array $intervals): int
+    private function withoutBreaks($rule, Carbon $date, array $intervals): array
     {
-        $total = 0;
         foreach ($rule->breaks as $break) {
             if (! DB::table('shift_break_weekdays')->where('shift_break_id', $break->id)->where('weekday', $date->dayOfWeek)->exists()) {
                 continue;
-            }$start = Carbon::parse($date->toDateString().' '.$break->start_time)->addDays($break->day_offset);
+            }
+            $start = Carbon::parse($date->toDateString().' '.$break->start_time)->addDays($break->day_offset);
             $end = $start->copy()->addMinutes($break->duration_minutes);
-            foreach ($intervals as [$a,$b]) {
-                $from = Carbon::parse($a)->max($start);
-                $to = Carbon::parse($b)->min($end);
-                if ($to->gt($from)) {
-                    $total += $from->diffInMinutes($to);
+            $remaining = [];
+            foreach ($intervals as [$a, $b]) {
+                $a = Carbon::parse($a);
+                $b = Carbon::parse($b);
+                if ($b->lte($start) || $a->gte($end)) {
+                    $remaining[] = [$a, $b];
+
+                    continue;
+                }
+                if ($a->lt($start)) {
+                    $remaining[] = [$a, $start];
+                }
+                if ($b->gt($end)) {
+                    $remaining[] = [$end, $b];
                 }
             }
+            $intervals = $remaining;
         }
 
-        return $total;
+        return $intervals;
+    }
+
+    private function breakMinutes($rule, Carbon $date, array $intervals): int
+    {
+        return $this->unionMinutes($intervals) - $this->unionMinutes($this->withoutBreaks($rule, $date, $intervals));
     }
 
     private function minutesAfter(array $intervals, Carbon $after): int

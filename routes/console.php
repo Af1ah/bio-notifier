@@ -12,3 +12,9 @@ Schedule::command('attendance:recalculate-nightly')
     ->dailyAt(config('attendance.nightly_time', '00:00'))
     ->timezone(config('attendance.timezone', 'Asia/Kolkata'))
     ->withoutOverlapping();
+
+Schedule::command('ebio:replay-receipts')->everyMinute()->withoutOverlapping();
+
+Schedule::command('users:prune-imports')->hourly()->withoutOverlapping();
+
+Schedule::command('gateway:recover')->everyMinute()->withoutOverlapping();

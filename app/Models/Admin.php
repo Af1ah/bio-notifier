@@ -2,12 +2,15 @@
 
 namespace App\Models;
 
-use Illuminate\Foundation\Auth\User as Authenticatable;
 use Filament\Models\Contracts\FilamentUser;
 use Filament\Panel;
+use Illuminate\Foundation\Auth\User as Authenticatable;
+use Stancl\Tenancy\Database\Concerns\CentralConnection;
 
 class Admin extends Authenticatable implements FilamentUser
 {
+    use CentralConnection;
+
     protected $table = 'users';
 
     protected $fillable = [

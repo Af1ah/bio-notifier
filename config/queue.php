@@ -37,11 +37,22 @@ return [
 
         'database' => [
             'driver' => 'database',
-            'connection' => env('DB_QUEUE_CONNECTION'),
+            // Never inherit the active tenant database when enqueueing work.
+            'connection' => env('DB_QUEUE_CONNECTION') ?: env('DB_CONNECTION', 'sqlite'),
             'table' => env('DB_QUEUE_TABLE', 'jobs'),
             'queue' => env('DB_QUEUE', 'default'),
-            'retry_after' => (int) env('DB_QUEUE_RETRY_AFTER', 90),
+            'retry_after' => (int) env('DB_QUEUE_RETRY_AFTER', 120),
             'after_commit' => false,
+        ],
+
+        'gateway' => [
+            'driver' => 'gateway-database',
+            'connection' => env('DB_QUEUE_CONNECTION') ?: env('DB_CONNECTION', 'sqlite'),
+            'table' => 'jobs',
+            'queue' => 'device-ingest',
+            'retry_after' => 120,
+            'after_commit' => false,
+            'central' => true,
         ],
 
         'beanstalkd' => [

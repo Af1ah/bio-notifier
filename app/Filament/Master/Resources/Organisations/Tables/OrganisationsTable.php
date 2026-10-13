@@ -2,9 +2,17 @@
 
 namespace App\Filament\Master\Resources\Organisations\Tables;
 
+use App\Filament\Master\Resources\Organisations\OrganisationResource;
+use App\Models\Organisation;
+use App\Services\Devices\DeviceIntegration;
+use App\Services\QuickLoginService;
+use Filament\Actions\Action;
 use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteBulkAction;
 use Filament\Actions\EditAction;
+use Filament\Actions\ViewAction;
+use Filament\Tables\Columns\ColorColumn;
+use Filament\Tables\Columns\ImageColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 
@@ -16,6 +24,10 @@ class OrganisationsTable
             ->columns([
                 TextColumn::make('name')
                     ->searchable(),
+                TextColumn::make('device_integration')
+                    ->label('Device integration')
+                    ->formatStateUsing(fn (?string $state): string => DeviceIntegration::options()[$state ?? DeviceIntegration::EBIO] ?? 'Unknown')
+                    ->badge(),
                 TextColumn::make('status')
                     ->badge()
                     ->color(fn (string $state): string => match ($state) {
@@ -28,8 +40,8 @@ class OrganisationsTable
                     ->searchable(),
                 TextColumn::make('phone')
                     ->searchable(),
-                \Filament\Tables\Columns\ImageColumn::make('logo'),
-                \Filament\Tables\Columns\ColorColumn::make('brand_color'),
+                ImageColumn::make('logo'),
+                ColorColumn::make('brand_color'),
                 TextColumn::make('created_at')
                     ->dateTime()
                     ->sortable()
@@ -43,17 +55,17 @@ class OrganisationsTable
                 //
             ])
             ->actions([
-                \Filament\Actions\Action::make('login_as_tenant')
+                Action::make('login_as_tenant')
                     ->label('Login')
                     ->icon('heroicon-o-arrow-right-on-rectangle')
                     ->color('success')
-                    ->url(fn (\App\Models\Organisation $record) => \Illuminate\Support\Facades\URL::signedRoute('tenant.impersonate', ['tenant' => $record->shortname ?? $record->id]))
+                    ->url(fn (Organisation $record) => app(QuickLoginService::class)->issue($record))
                     ->openUrlInNewTab(),
-                \Filament\Actions\Action::make('manage_admins')
+                Action::make('manage_admins')
                     ->label('Manage Admins')
                     ->icon('heroicon-o-users')
-                    ->url(fn (\App\Models\Organisation $record) => \App\Filament\Master\Resources\Organisations\OrganisationResource::getUrl('manage-admins', ['record' => $record])),
-                \Filament\Actions\ViewAction::make(),
+                    ->url(fn (Organisation $record) => OrganisationResource::getUrl('manage-admins', ['record' => $record])),
+                ViewAction::make(),
                 EditAction::make(),
             ])
             ->bulkActions([

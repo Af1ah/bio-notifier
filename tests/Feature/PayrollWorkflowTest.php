@@ -4,10 +4,19 @@ namespace Tests\Feature;
 
 use App\Models\AttendanceApproval;
 use App\Models\AttendanceDay;
+use App\Models\AttendanceLog;
+use App\Models\Branch;
+use App\Models\Device;
 use App\Models\EmployeeLeave;
+use App\Models\Holiday;
 use App\Models\LeaveType;
 use App\Models\SalarySlip;
+use App\Models\Schedule;
 use App\Models\User;
+use App\Services\Attendance\HolidayAttendanceService;
+use App\Services\Attendance\ReportService;
+use App\Services\Attendance\ShiftAssignmentService;
+use App\Services\Attendance\ShiftRuleService;
 use App\Services\Payroll\SalarySlipService;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Artisan;
@@ -17,6 +26,35 @@ use Tests\TestCase;
 
 class PayrollWorkflowTest extends TestCase
 {
+    public function test_partial_scheduled_month_cannot_generate_payroll(): void
+    {
+        $user = User::create(['name' => 'Coverage', 'pin' => 'coverage']);
+        $user->payrollProfile()->create(['payroll_enabled' => true, 'basic_salary_minor' => 800000, 'effective_from' => '2026-08-01']);
+        $shift = Schedule::create(['name' => 'Coverage shift', 'type' => 'regular', 'valid_from' => '2026-08-01', 'status' => true, 'rules' => ['start_time' => '09:00', 'end_time' => '18:00', 'weekdays' => [1, 2, 3, 4, 5]]]);
+        app(ShiftRuleService::class)->sync($shift);
+        app(ShiftAssignmentService::class)->setDefault($shift, '2026-08-01');
+        AttendanceDay::create(['user_id' => $user->id, 'work_date' => '2026-08-03', 'status' => 'present', 'calculation_revision' => 1]);
+        $service = app(SalarySlipService::class);
+        $this->assertStringContainsString('incomplete', implode(' ', $service->readinessIssues($user, Carbon::parse('2026-08-01'))));
+        $this->expectException(ValidationException::class);
+        $service->generate($user, Carbon::parse('2026-08-01'));
+    }
+
+    public function test_late_punch_flags_attendance_and_preserves_reviewed_payroll_amounts(): void
+    {
+        $user = User::create(['name' => 'Late', 'pin' => 'late']);
+        $user->payrollProfile()->create(['payroll_enabled' => true, 'basic_salary_minor' => 800000, 'effective_from' => '2026-08-01']);
+        $day = AttendanceDay::create(['user_id' => $user->id, 'work_date' => '2026-08-03', 'status' => 'present', 'calculation_revision' => 1]);
+        $slip = app(SalarySlipService::class)->generate($user, Carbon::parse('2026-08-01'));
+        $slip->update(['status' => 'reviewed']);
+        $amount = $slip->net_pay_minor;
+        $device = Device::create(['serial_number' => 'LATE']);
+        AttendanceLog::create(['device_id' => $device->id, 'pin' => 'late', 'punched_at' => '2026-08-03 18:00:00', 'status' => 1]);
+        $this->assertNotNull($day->fresh()->stale_at);
+        $this->assertTrue($slip->fresh()->calculation_snapshot['needs_recalculation']);
+        $this->assertSame($amount, $slip->fresh()->net_pay_minor);
+    }
+
     public function test_retroactive_holiday_updates_attendance_reports_and_draft_payroll(): void
     {
         $user = User::create(['name' => 'Holiday Employee', 'pin' => '900']);
@@ -25,15 +63,15 @@ class PayrollWorkflowTest extends TestCase
         $day = AttendanceDay::create(['user_id' => $user->id, 'work_date' => '2026-08-26', 'status' => 'absent', 'calculation_revision' => 1]);
         $slip = app(SalarySlipService::class)->generate($user, Carbon::parse('2026-08-01'));
         $this->assertSame(2_581, $slip->attendance_deduction_minor);
-        $holiday = \App\Models\Holiday::create(['name' => 'Onam', 'starts_on' => '2026-08-26', 'ends_on' => '2026-08-26', 'recurrence' => 'none', 'active' => true]);
+        $holiday = Holiday::create(['name' => 'Onam', 'starts_on' => '2026-08-26', 'ends_on' => '2026-08-26', 'recurrence' => 'none', 'active' => true]);
         $this->assertSame('holiday', $day->fresh()->status);
         $this->assertSame(2, $day->fresh()->calculation_revision);
         $this->assertSame(0, $slip->fresh()->attendance_deduction_minor);
         $this->assertSame(80_000, $slip->fresh()->basic_salary_minor);
-        $report = app(\App\Services\Attendance\ReportService::class)->generateReport([$user->id], '2026-08-26', '2026-08-26');
+        $report = app(ReportService::class)->generateReport([$user->id], '2026-08-26', '2026-08-26');
         $this->assertSame('O', $report['data'][0]['daily']['2026-08-26']['status']);
         $this->assertSame(0, $report['data'][0]['absent']);
-        $this->assertSame(0, app(\App\Services\Attendance\HolidayAttendanceService::class)->reconcile(['2026-08-26']));
+        $this->assertSame(0, app(HolidayAttendanceService::class)->reconcile(['2026-08-26']));
         $holiday->delete();
         $this->assertSame('no_shift', $day->fresh()->status);
     }
@@ -48,7 +86,7 @@ class PayrollWorkflowTest extends TestCase
         EmployeeLeave::create(['user_id' => $user->id, 'leave_type_id' => $type->id, 'leave_date' => '2026-08-26', 'duration' => 'full', 'state' => 'approved']);
         $slip = app(SalarySlipService::class)->generate($user, Carbon::parse('2026-08-01'));
         $slip->update(['status' => 'reviewed']);
-        \App\Models\Holiday::create(['name' => 'Onam', 'starts_on' => '2026-08-26', 'ends_on' => '2026-08-26', 'recurrence' => 'none', 'active' => true]);
+        Holiday::create(['name' => 'Onam', 'starts_on' => '2026-08-26', 'ends_on' => '2026-08-26', 'recurrence' => 'none', 'active' => true]);
         $this->assertSame(40_000, $slip->fresh()->leave_deduction_minor);
         $this->assertTrue($slip->fresh()->calculation_snapshot['needs_recalculation']);
         $slip->update(['status' => 'draft']);
@@ -61,14 +99,14 @@ class PayrollWorkflowTest extends TestCase
 
     public function test_holiday_reconciliation_observes_saved_coverage_and_overlapping_holidays(): void
     {
-        $branch = \App\Models\Branch::create(['name' => 'Covered']);
+        $branch = Branch::create(['name' => 'Covered']);
         $covered = User::create(['name' => 'Covered', 'pin' => '902', 'branch_id' => $branch->id]);
         $other = User::create(['name' => 'Other', 'pin' => '903']);
         foreach ([$covered, $other] as $user) {
             AttendanceDay::create(['user_id' => $user->id, 'work_date' => '2026-08-26', 'status' => 'absent', 'calculation_revision' => 1]);
         }
         $holiday = DB::transaction(function () use ($branch) {
-            $holiday = \App\Models\Holiday::create(['name' => 'Scoped', 'starts_on' => '2026-08-26', 'ends_on' => '2026-08-26', 'recurrence' => 'none', 'active' => true]);
+            $holiday = Holiday::create(['name' => 'Scoped', 'starts_on' => '2026-08-26', 'ends_on' => '2026-08-26', 'recurrence' => 'none', 'active' => true]);
             $holiday->branches()->sync([$branch->id]);
 
             return $holiday;
@@ -76,7 +114,7 @@ class PayrollWorkflowTest extends TestCase
         $this->assertSame('holiday', AttendanceDay::where('user_id', $covered->id)->first()->status);
         $this->assertSame('absent', AttendanceDay::where('user_id', $other->id)->first()->status);
         $this->assertSame(1, AttendanceDay::where('user_id', $other->id)->first()->calculation_revision);
-        $overlap = \App\Models\Holiday::create(['name' => 'Overlap', 'starts_on' => '2026-08-26', 'ends_on' => '2026-08-26', 'recurrence' => 'none', 'active' => true]);
+        $overlap = Holiday::create(['name' => 'Overlap', 'starts_on' => '2026-08-26', 'ends_on' => '2026-08-26', 'recurrence' => 'none', 'active' => true]);
         $holiday->delete();
         $this->assertSame('holiday', AttendanceDay::where('user_id', $covered->id)->first()->status);
         $this->assertSame(2, AttendanceDay::where('user_id', $covered->id)->first()->calculation_revision);

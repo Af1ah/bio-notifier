@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Services\Devices\DeviceIntegration;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Carbon;
@@ -26,6 +27,7 @@ class DeviceCommand extends Model
     protected $casts = [
         'sent_at' => 'datetime',
         'acknowledged_at' => 'datetime',
+        'gateway_result_at' => 'datetime',
     ];
 
     public function getTable(): string
@@ -65,6 +67,8 @@ class DeviceCommand extends Model
 
     public function retry(): void
     {
+        DeviceIntegration::requireEbio(tenant());
+
         $this->update([
             'status' => 'pending',
             'retry_count' => $this->retry_count + 1,

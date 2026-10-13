@@ -111,12 +111,18 @@ class ProcessEbioWebhookJobTest extends TestCase
         $job = new ProcessEbioWebhookJob($organisation, $logsPayload);
         $job->handle(); // Should not throw exception
 
+        $replay = $logsPayload[0];
+        $replay['Direction'] = 'OUT';
+        (new ProcessEbioWebhookJob($organisation, [$replay]))->handle();
+        $this->assertFalse(tenancy()->initialized);
+
         tenancy()->initialize($organisation);
 
         $this->assertDatabaseCount('attendance_logs', 2);
 
         $this->assertDatabaseHas('attendance_logs', [
             'pin' => '1001',
+            'status' => 0, // A replay must not rewrite the original evidence.
         ]);
 
         $this->assertDatabaseHas('attendance_logs', [

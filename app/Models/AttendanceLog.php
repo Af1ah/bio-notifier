@@ -2,6 +2,9 @@
 
 namespace App\Models;
 
+use App\Jobs\RefreshAttendanceDay;
+use App\Jobs\SendPunchNotification;
+use App\Services\Payroll\PayrollFreshnessService;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Carbon;
@@ -30,18 +33,22 @@ class AttendanceLog extends Model
 
         static::created(function ($log) {
             $user = $log->user;
-            if ($user && !empty($user->whatsapp_number)) {
-                $status = $log->status_label;
-                $time = $log->punched_at->format('Y-m-d H:i:s');
-                $message = "Hello {$user->name}, your attendance punch ({$status}) at {$time} has been recorded.";
-                
-                // Dispatch to a background job or handle immediately?
-                // For now, handle it immediately or use a lightweight background task.
-                try {
-                    app(\App\Services\WhatsAppService::class)->sendMessage($user->whatsapp_number, $message);
-                } catch (\Exception $e) {
-                    \Illuminate\Support\Facades\Log::error('WhatsApp notification failed: ' . $e->getMessage());
+            if (! $user) {
+                return;
+            }
+            $days = AttendanceDay::where('user_id', $user->id)->where(function ($query) use ($log) {
+                $query->whereDate('work_date', $log->punched_at->toDateString())
+                    ->orWhereHas('occurrences', fn ($q) => $q->where('window_starts_at', '<=', $log->punched_at)->where('window_ends_at', '>=', $log->punched_at));
+            })->get();
+            foreach ($days as $day) {
+                $day->update(['stale_at' => now()]);
+                app(PayrollFreshnessService::class)->invalidate($user->id, $day->work_date);
+                if (tenancy()->initialized) {
+                    RefreshAttendanceDay::dispatch((string) tenant('id'), $user->id, $day->work_date->toDateString())->afterCommit();
                 }
+            }
+            if (tenancy()->initialized && $user->whatsapp_number) {
+                SendPunchNotification::dispatch((string) tenant('id'), $log->id)->afterCommit();
             }
         });
     }

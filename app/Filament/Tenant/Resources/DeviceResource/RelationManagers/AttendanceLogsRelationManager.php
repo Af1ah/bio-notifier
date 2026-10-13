@@ -15,6 +15,8 @@ class AttendanceLogsRelationManager extends RelationManager
 {
     protected static string $relationship = 'attendanceLogs';
 
+    protected static ?string $title = 'Attendance logs';
+
     public function form(Schema $schema): Schema
     {
         return $schema
@@ -28,12 +30,13 @@ class AttendanceLogsRelationManager extends RelationManager
     public function table(Table $table): Table
     {
         return $table
+            ->poll('30s')
             ->recordTitleAttribute('pin')
             ->columns([
                 TextColumn::make('pin')
                     ->label('User PIN')
                     ->searchable(),
-                TextColumn::make('zktecoUser.name')
+                TextColumn::make('user.name')
                     ->label('User Name')
                     ->placeholder('Unknown'),
                 TextColumn::make('punched_at')
@@ -64,10 +67,6 @@ class AttendanceLogsRelationManager extends RelationManager
             ->recordActions([
                 ViewAction::make(),
             ])
-            ->toolbarActions([
-                BulkActionGroup::make([
-                    DeleteBulkAction::make(),
-                ]),
-            ]);
+            ->toolbarActions([]);
     }
 }

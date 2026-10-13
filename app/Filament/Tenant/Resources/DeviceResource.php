@@ -69,10 +69,13 @@ class DeviceResource extends Resource
         return $schema->components([
             \Filament\Infolists\Components\TextEntry::make('serial_number'),
             \Filament\Infolists\Components\TextEntry::make('name'),
+            \Filament\Infolists\Components\TextEntry::make('status')->label('Connection')->getStateUsing(fn (Device $record) => $record->isOnline() ? 'Connected' : ($record->last_activity_at ? 'Offline' : 'Waiting for connection')),
+            \Filament\Infolists\Components\TextEntry::make('ip_address')->label('Device IP address')->placeholder('Not recorded'),
+            \Filament\Infolists\Components\TextEntry::make('model')->label('Model')->placeholder('Not received yet'),
             \Filament\Infolists\Components\TextEntry::make('options.location')
                 ->label('Location'),
             \Filament\Infolists\Components\TextEntry::make('last_activity_at')
-                ->label('Last Ping')
+                ->label('Last connected')
                 ->dateTime(),
         ]);
     }
@@ -80,6 +83,9 @@ class DeviceResource extends Resource
     public static function table(Table $table): Table
     {
         return $table
+            ->poll('30s')
+            ->emptyStateHeading('Add your first attendance device')
+            ->emptyStateDescription('Connect a device to collect attendance for your employees.')
             ->columns([
                 Tables\Columns\TextColumn::make('serial_number')
                     ->searchable()
@@ -93,7 +99,10 @@ class DeviceResource extends Resource
                     ->toggleable(),
                 Tables\Columns\TextColumn::make('status')
                     ->badge()
-                    ->getStateUsing(fn (Device $record): string => $record->isOnline() ? 'online' : 'offline')
+                    ->getStateUsing(fn (Device $record): string => $record->isOnline() ? 'online' : ($record->last_activity_at ? 'offline' : 'waiting'))
+                    ->formatStateUsing(fn (string $state): string => match ($state) {
+                        'online' => 'Connected', 'offline' => 'Offline', default => 'Waiting for connection',
+                    })
                     ->color(fn (string $state): string => match ($state) {
                         'online' => 'success',
                         'offline' => 'danger',
@@ -101,7 +110,7 @@ class DeviceResource extends Resource
                     })
                     ->visibleFrom('md'),
                 Tables\Columns\TextColumn::make('last_activity_at')
-                    ->label('Last Ping')
+                    ->label('Last connected')
                     ->date('M j, Y')
                     ->description(fn (Device $record): ?string => $record->last_activity_at?->format('H:i:s'))
                     ->sortable()
@@ -125,18 +134,14 @@ class DeviceResource extends Resource
             ->recordActions([
                 \Filament\Actions\ActionGroup::make([
                     ViewAction::make(),
+                    ...self::connectionActions(),
                     \Filament\Actions\Action::make('reboot')
+                        ->authorize(fn (): bool => \App\Services\Devices\DeviceIntegration::usesEbio())
                         ->label('Reboot Device')
                         ->icon('heroicon-o-power')
                         ->requiresConfirmation()
                         ->action(function (Device $record) {
-                            $command = \App\Models\DeviceCommand::create([
-                                'device_id' => $record->id,
-                                'command_type' => 'reboot',
-                                'command_content' => 'eBioServer SOAP Command: reboot',
-                                'status' => 'pending',
-                            ]);
-                            \App\Jobs\EbioDeviceCommandJob::dispatch(tenancy()->tenant, $record->serial_number, 'reboot', $command->id);
+                            app(\App\Services\Devices\DeviceCommandService::class)->request($record, 'reboot');
                             \Filament\Notifications\Notification::make()
                                 ->title('Command Queued')
                                 ->body('Reboot command queued.')
@@ -144,18 +149,13 @@ class DeviceResource extends Resource
                                 ->send();
                         }),
                     \Filament\Actions\Action::make('clearLogs')
+                        ->authorize(fn (): bool => \App\Services\Devices\DeviceIntegration::usesEbio())
                         ->label('Clear Logs')
                         ->icon('heroicon-o-trash')
                         ->requiresConfirmation()
                         ->color('danger')
                         ->action(function (Device $record) {
-                            $command = \App\Models\DeviceCommand::create([
-                                'device_id' => $record->id,
-                                'command_type' => 'clear_logs',
-                                'command_content' => 'eBioServer SOAP Command: clear_logs',
-                                'status' => 'pending',
-                            ]);
-                            \App\Jobs\EbioDeviceCommandJob::dispatch(tenancy()->tenant, $record->serial_number, 'clear_logs', $command->id);
+                            app(\App\Services\Devices\DeviceCommandService::class)->request($record, 'clear_logs');
                             \Filament\Notifications\Notification::make()
                                 ->title('Command Queued')
                                 ->body('Clear logs command queued.')
@@ -163,17 +163,12 @@ class DeviceResource extends Resource
                                 ->send();
                         }),
                     \Filament\Actions\Action::make('resetTransactionStamp')
+                        ->authorize(fn (): bool => \App\Services\Devices\DeviceIntegration::usesEbio())
                         ->label('Reset Transaction Stamp')
                         ->icon('heroicon-o-arrow-down-tray')
                         ->requiresConfirmation()
                         ->action(function (Device $record) {
-                            $command = \App\Models\DeviceCommand::create([
-                                'device_id' => $record->id,
-                                'command_type' => 'reset_transaction_stamp',
-                                'command_content' => 'eBioServer SOAP Command: reset_transaction_stamp',
-                                'status' => 'pending',
-                            ]);
-                            \App\Jobs\EbioDeviceCommandJob::dispatch(tenancy()->tenant, $record->serial_number, 'reset_transaction_stamp', $command->id);
+                            app(\App\Services\Devices\DeviceCommandService::class)->request($record, 'reset_transaction_stamp');
                             \Filament\Notifications\Notification::make()
                                 ->title('Command Queued')
                                 ->body('Reset transaction stamp command queued.')
@@ -181,17 +176,12 @@ class DeviceResource extends Resource
                                 ->send();
                         }),
                     \Filament\Actions\Action::make('resetOPStamp')
+                        ->authorize(fn (): bool => \App\Services\Devices\DeviceIntegration::usesEbio())
                         ->label('Reset OP Stamp')
                         ->icon('heroicon-o-arrow-path')
                         ->requiresConfirmation()
                         ->action(function (Device $record) {
-                            $command = \App\Models\DeviceCommand::create([
-                                'device_id' => $record->id,
-                                'command_type' => 'reset_op_stamp',
-                                'command_content' => 'eBioServer SOAP Command: reset_op_stamp',
-                                'status' => 'pending',
-                            ]);
-                            \App\Jobs\EbioDeviceCommandJob::dispatch(tenancy()->tenant, $record->serial_number, 'reset_op_stamp', $command->id);
+                            app(\App\Services\Devices\DeviceCommandService::class)->request($record, 'reset_op_stamp');
                             \Filament\Notifications\Notification::make()
                                 ->title('Command Queued')
                                 ->body('Reset OP stamp command queued.')
@@ -199,17 +189,12 @@ class DeviceResource extends Resource
                                 ->send();
                         }),
                     \Filament\Actions\Action::make('unlockDoor')
+                        ->authorize(fn (): bool => \App\Services\Devices\DeviceIntegration::usesEbio())
                         ->label('Unlock Door')
                         ->icon('heroicon-o-lock-open')
                         ->requiresConfirmation()
                         ->action(function (Device $record) {
-                            $command = \App\Models\DeviceCommand::create([
-                                'device_id' => $record->id,
-                                'command_type' => 'unlock_door',
-                                'command_content' => 'eBioServer SOAP Command: unlock_door',
-                                'status' => 'pending',
-                            ]);
-                            \App\Jobs\EbioDeviceCommandJob::dispatch(tenancy()->tenant, $record->serial_number, 'unlock_door', $command->id);
+                            app(\App\Services\Devices\DeviceCommandService::class)->request($record, 'unlock_door');
                             \Filament\Notifications\Notification::make()
                                 ->title('Command Queued')
                                 ->body('Unlock door command queued.')
@@ -225,7 +210,28 @@ class DeviceResource extends Resource
     {
         return [
             RelationManagers\AttendanceLogsRelationManager::class,
+            RelationManagers\DeviceCommandsRelationManager::class,
+            RelationManagers\DeviceUsersRelationManager::class,
         ];
+    }
+
+    public static function connectionActions(): array
+    {
+        $actions = [\Filament\Actions\Action::make('connectionSetup')
+            ->label('Connection setup')->icon('heroicon-o-wifi')
+            ->authorize(fn (): bool => tenant()?->device_integration === \App\Services\Devices\DeviceIntegration::GATEWAY && auth('web')->user()?->has_login)
+            ->modalHeading('Connect your device')->modalSubmitAction(false)->modalCancelActionLabel('Done')
+            ->modalContent(fn (Device $record) => view('filament.tenant.devices.connection-setup', app(\App\Services\Devices\TenantDeviceRegistration::class)->setup($record)))];
+        foreach (['check' => ['Check connection', 'heroicon-o-signal'], 'info' => ['Refresh device details', 'heroicon-o-information-circle'], 'query_users' => ['Read device users', 'heroicon-o-users']] as $operation => [$label, $icon]) {
+            $actions[] = \Filament\Actions\Action::make($operation)->label($label)->icon($icon)
+                ->authorize(fn (Device $record): bool => app(\App\Services\Devices\DeviceCommandService::class)->available($record, $operation))
+                ->action(function (Device $record) use ($operation) {
+                    app(\App\Services\Devices\DeviceCommandService::class)->request($record, $operation);
+                    \Filament\Notifications\Notification::make()->title('Request sent')->body('Track its progress in Device actions. Offline devices respond when they reconnect.')->success()->send();
+                });
+        }
+
+        return $actions;
     }
 
     public static function getPages(): array

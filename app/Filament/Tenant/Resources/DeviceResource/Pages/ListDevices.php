@@ -12,12 +12,35 @@ class ListDevices extends ListRecords
 
     protected function getHeaderActions(): array  {
         return [
+            Actions\Action::make('addConnectedDevice')
+                // Registration coordinates central and tenant storage; a panel
+                // transaction cannot span the tenant connection switches.
+                ->databaseTransaction(false)
+                ->label('Add device')
+                ->icon('heroicon-o-plus')
+                ->authorize(fn (): bool => tenant()?->device_integration === \App\Services\Devices\DeviceIntegration::GATEWAY && auth('web')->user()?->has_login)
+                ->modalHeading('Add attendance device')
+                ->modalDescription('Enter the details from your device. After saving, open connection setup to finish connecting it.')
+                ->schema([
+                    \Filament\Forms\Components\TextInput::make('name')->label('Device name')->required()->maxLength(255),
+                    \Filament\Forms\Components\TextInput::make('serial_number')->label('Serial number')->required()->regex('/^[A-Za-z0-9_-]{1,64}$/')->helperText('Find this in the device’s information menu.'),
+                    \Filament\Forms\Components\TextInput::make('device_ip')->label('Device IP address')->required()->ip()->helperText('Use the address from the device’s network settings.'),
+                    \Filament\Forms\Components\TextInput::make('location')->label('Location')->maxLength(255),
+                    \Filament\Forms\Components\Select::make('timezone')->label('Time zone')->options(array_combine(timezone_identifiers_list(), timezone_identifiers_list()))->searchable()->default('Asia/Kolkata')->required(),
+                ])
+                ->modalSubmitActionLabel('Add device')
+                ->action(function (array $data) {
+                    $device = app(\App\Services\Devices\TenantDeviceRegistration::class)->register($data);
+                    \Filament\Notifications\Notification::make()->title('Device added')->body('Open connection setup to finish connecting your device.')->success()->send();
+                    $this->redirect(DeviceResource::getUrl('view', ['record' => $device]));
+                }),
             Actions\Action::make('syncEbioDevices')
-                ->label('Sync from eBioServer')
+                ->authorize(fn (): bool => \App\Services\Devices\DeviceIntegration::usesEbio())
+                ->label('Sync devices')
                 ->icon('heroicon-o-arrow-path')
                 ->color('warning')
                 ->requiresConfirmation()
-                ->modalHeading('Sync Devices from eBioServer')
+                ->modalHeading('Sync devices')
                 ->action(function () {
                     try {
                         $service = new \App\Services\EbioSoapService();
@@ -31,12 +54,13 @@ class ListDevices extends ListRecords
                     } catch (\Exception $e) {
                         \Filament\Notifications\Notification::make()
                             ->title('Sync Failed')
-                            ->body($e->getMessage())
+                            ->body('The device action could not be completed. Contact your administrator.')
                             ->danger()
                             ->send();
                     }
                 }),
             Actions\Action::make('runCommand')
+                ->authorize(fn (): bool => \App\Services\Devices\DeviceIntegration::usesEbio())
                 ->label('Run Command')
                 ->icon('heroicon-o-command-line')
                 ->color('primary')
@@ -102,9 +126,10 @@ class ListDevices extends ListRecords
                         ->send();
                 }),
             Actions\CreateAction::make()
+                ->authorize(fn (): bool => \App\Services\Devices\DeviceIntegration::usesEbio())
                 ->label('Add Device')
                 ->icon('heroicon-o-plus')
-                ->modalHeading('Add New Device to eBioServer')
+                ->modalHeading('Add device')
                 ->form([
                     \Filament\Schemas\Components\Grid::make(2)->schema([
                         \Filament\Forms\Components\TextInput::make('serial_number')
@@ -150,12 +175,12 @@ class ListDevices extends ListRecords
                     } catch (\Exception $e) {
                         \Filament\Notifications\Notification::make()
                             ->title('Add Device Failed')
-                            ->body($e->getMessage())
+                            ->body('The device action could not be completed. Contact your administrator.')
                             ->danger()
                             ->send();
                         
                         throw \Illuminate\Validation\ValidationException::withMessages([
-                            'serial_number' => $e->getMessage()
+                            'serial_number' => 'The device could not be added. Contact your administrator.'
                         ]);
                     }
 

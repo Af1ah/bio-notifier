@@ -40,4 +40,6 @@ return [
         'api_key' => env('WHATSAPP_API_KEY'),
     ],
 
+    'ebio' => ['allow_device_discovery' => env('EBIO_ALLOW_DEVICE_DISCOVERY', true)],
+
 ];

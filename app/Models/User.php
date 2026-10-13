@@ -8,6 +8,7 @@ use Carbon\Carbon;
 use Database\Factories\UserFactory;
 use Filament\Models\Contracts\FilamentUser;
 use Filament\Panel;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
@@ -17,12 +18,19 @@ class User extends Authenticatable implements FilamentUser
 {
     public const DEFAULT_LOGIN_EMAIL = 'admin@zkteco.local';
 
-    public function scopeEmployees(\Illuminate\Database\Eloquent\Builder $query): \Illuminate\Database\Eloquent\Builder
+    public function scopeEmployees(Builder $query): Builder
     {
-        return $query->where(function ($query) {
+        return $query->where($query->getModel()->qualifyColumn('is_system_account'), false)->where(function ($query) {
             $email = $query->getModel()->qualifyColumn('email');
             $query->whereNull($email)->orWhere($email, '!=', self::DEFAULT_LOGIN_EMAIL);
         });
+    }
+
+    public function scopeLoginAccounts(Builder $query): Builder
+    {
+        return $query->where('privilege', 14)
+            ->whereNotNull('email')->where('email', '!=', '')
+            ->whereNotNull('password')->where('password', '!=', '');
     }
 
     /** @use HasFactory<UserFactory> */
@@ -36,6 +44,12 @@ class User extends Authenticatable implements FilamentUser
     protected static function boot()
     {
         parent::boot();
+
+        static::saving(function ($user) {
+            if ($user->email === self::DEFAULT_LOGIN_EMAIL) {
+                $user->is_system_account = true;
+            }
+        });
 
         static::updating(function ($user) {
             if ($user->isDirty('password')) {
@@ -74,6 +88,7 @@ class User extends Authenticatable implements FilamentUser
             'privilege' => 'integer',
             'device_privilege' => 'integer',
             'is_enabled' => 'boolean',
+            'is_system_account' => 'boolean',
             'fingerprints' => 'array',
             'face_templates' => 'array',
             'face_enrolled' => 'boolean',

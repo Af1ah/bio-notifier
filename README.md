@@ -1,5 +1,7 @@
 # Bio-Notifier
 
+Outstanding beta release fixes and verification checks are tracked in [Beta feature tasks](docs/beta-feature-tasks.md). Remove tasks only after their acceptance checks pass.
+
 Bio-Notifier is a powerful, modern, multi-tenant middleware designed to seamlessly bridge the gap between physical biometric attendance hardware (eSSL / eBio Server) and real-time communication platforms. 
 
 Built on Laravel and the Filament admin panel, it acts as a centralized notification engine that intercepts attendance punches and instantly alerts employees via WhatsApp. Furthermore, it aggregates this data to compile comprehensive attendance reports.
@@ -16,13 +18,13 @@ Built on Laravel and the Filament admin panel, it acts as a centralized notifica
 - **Automated Compilations:** Generates attendance reports including working hours, present/absent statistics, and late marks.
 - **Filament Integration:** Data visualizations and tables built natively into the beautiful Filament admin dashboard.
 
-### 🏢 Multi-Tenancy Architecture (Subdomain Routing)
-- Robust multi-tenant environment powered by `stancl/tenancy` ensuring complete PostgreSQL database isolation.
-- **Automated Subdomain Provisioning:** Instantly spins up a new isolated domain (e.g., `company.bionotifier.com/admin`) upon company creation.
-- **Zero Cross-Data Bleed:** Central Master Admin panel and Tenant Admin panels operate on completely decoupled routing networks.
+### 🏢 Multi-Tenancy Architecture
+- `stancl/tenancy` provisions separate tenant databases.
+- Tenant admin routes use organisation paths (for example, `/company/admin`), alongside a central master panel.
+- Production PostgreSQL isolation and recovery verification remain release checks; see the beta task list.
 
 ### 🔌 Hardware Integration & Full SOAP Device Sync
-- **eBio Server Webhooks (Fire & Forget):** Asynchronous queue-based architecture capable of handling thousands of simultaneous device pings in <10ms to prevent device lockups.
+- **eBio Server Webhooks:** Authenticated payloads are validated and dispatched to queue jobs. Production throughput has not been load-tested.
 - **Biometric Pushing & Pulling:** Push employee details to devices natively.
 - **Advanced Device Commands:** Supports deleting users from specific devices, setting employee expiration dates, and triggering remote device fetches/reboots via SOAP API integration.
 - **Biometric Face & Fingerprint Uploads:** Support for extracting and syncing Base64 biometric templates (Face ID & Fingerprints) across mixed hardware.
@@ -32,7 +34,7 @@ Built on Laravel and the Filament admin panel, it acts as a centralized notifica
 - **Framework:** [Laravel](https://laravel.com/) (PHP 8.2+)
 - **Admin Interface:** [Filament v3/v4](https://filamentphp.com/)
 - **Multi-Tenancy:** [Stancl/Tenancy](https://tenancyforlaravel.com/)
-- **Database:** PostgreSQL (with schema isolation) / MySQL
+- **Database:** Separate tenant databases; PostgreSQL in deployment and isolated SQLite in the automated test suite.
 - **WhatsApp API:** WAHA (WhatsApp HTTP API)
 
 ## ⚙️ Setup & Installation

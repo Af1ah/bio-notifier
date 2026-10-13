@@ -2,6 +2,8 @@
 
 namespace App\Filament\Master\Resources\Organisations\Schemas;
 
+use App\Models\Organisation;
+use App\Services\Devices\DeviceIntegration;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Infolists\Components\ImageEntry;
 use Filament\Infolists\Components\ColorEntry;
@@ -29,6 +31,10 @@ class OrganisationInfolist
                         TextEntry::make('shortname')
                             ->label('Slug')
                             ->placeholder('-'),
+                        TextEntry::make('device_integration')
+                            ->label('Device integration')
+                            ->formatStateUsing(fn (?string $state): string => DeviceIntegration::options()[$state ?? DeviceIntegration::EBIO] ?? 'Unknown')
+                            ->badge(),
                         TextEntry::make('email')
                             ->label('Email address')
                             ->placeholder('-'),
@@ -50,11 +56,21 @@ class OrganisationInfolist
                     ->extraAttributes(['class' => 'flex justify-center w-full'])
                     ->tabs([
                         \Filament\Schemas\Components\Tabs\Tab::make('eBioServer')
+                            ->visible(fn (Organisation $record): bool => DeviceIntegration::usesEbio($record))
                             ->icon('heroicon-o-server')
                             ->schema([
                                 \Filament\Infolists\Components\ViewEntry::make('ebioserver_credentials')
                                     ->label('')
                                     ->view('infolists.components.ebioserver-table')
+                            ]),
+
+                        \Filament\Schemas\Components\Tabs\Tab::make('ADMS gateway')
+                            ->visible(fn (Organisation $record): bool => ! DeviceIntegration::usesEbio($record))
+                            ->icon('heroicon-o-server')
+                            ->schema([
+                                TextEntry::make('gateway_connection')
+                                    ->label('Shared gateway')
+                                    ->state('Connection and provisioning are managed centrally. Remote actions require a connected gateway integration.'),
                             ]),
                         
                         \Filament\Schemas\Components\Tabs\Tab::make('Devices')

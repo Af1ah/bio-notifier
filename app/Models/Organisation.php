@@ -2,10 +2,11 @@
 
 namespace App\Models;
 
-use Stancl\Tenancy\Database\Models\Tenant as BaseTenant;
+use App\Services\Devices\DeviceIntegration;
 use Stancl\Tenancy\Contracts\TenantWithDatabase;
 use Stancl\Tenancy\Database\Concerns\HasDatabase;
 use Stancl\Tenancy\Database\Concerns\HasDomains;
+use Stancl\Tenancy\Database\Models\Tenant as BaseTenant;
 
 class Organisation extends BaseTenant implements TenantWithDatabase
 {
@@ -22,6 +23,7 @@ class Organisation extends BaseTenant implements TenantWithDatabase
         'logo',
         'brand_color',
         'status',
+        'device_integration',
         'ebio_url',
         'ebio_webhook_token',
         'ebio_aes_password',
@@ -47,6 +49,7 @@ class Organisation extends BaseTenant implements TenantWithDatabase
             'logo',
             'brand_color',
             'status',
+            'device_integration',
             'ebio_url',
             'ebio_webhook_token',
             'ebio_aes_password',
@@ -72,21 +75,25 @@ class Organisation extends BaseTenant implements TenantWithDatabase
 
     protected static function booted()
     {
+        static::creating(function ($tenant) {
+            $tenant->device_integration ??= DeviceIntegration::GATEWAY;
+            $tenant->ebio_webhook_token = bin2hex(random_bytes(32));
+        });
         static::created(function ($tenant) {
             // Extract central domain from CENTRAL_DOMAIN env, fallback to APP_URL host
             $centralDomain = env('CENTRAL_DOMAIN');
             if (empty($centralDomain)) {
                 $centralDomain = parse_url(env('APP_URL', 'http://localhost'), PHP_URL_HOST);
             }
-            
+
             $tenant->domains()->create([
-                'domain' => $tenant->shortname . '.' . ltrim($centralDomain, '.')
+                'domain' => $tenant->shortname.'.'.ltrim($centralDomain, '.'),
             ]);
 
             // Also create a localhost domain for easy local testing
             if ($centralDomain !== 'localhost') {
                 $tenant->domains()->create([
-                    'domain' => $tenant->shortname . '.localhost'
+                    'domain' => $tenant->shortname.'.localhost',
                 ]);
             }
         });

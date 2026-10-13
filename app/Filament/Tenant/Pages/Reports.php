@@ -105,7 +105,7 @@ class Reports extends Page implements HasForms, HasTable
         $userIds = $this->getTableFilterState('user_ids')['values'] ?? [];
         $dateRange = $this->getTableFilterState('date_range') ?? [];
 
-        $query = User::query();
+        $query = User::employees();
         if (! empty($branchIds)) {
             $query->whereIn('branch_id', $branchIds);
         }
@@ -215,7 +215,7 @@ class Reports extends Page implements HasForms, HasTable
         }
 
         return $table
-            ->query(User::query())
+            ->query(User::employees())
             ->filters([
                 SelectFilter::make('branch_id')
                     ->label('Branch')
@@ -229,7 +229,7 @@ class Reports extends Page implements HasForms, HasTable
                     ->attribute('id')
                     ->label('Employees')
                     ->multiple()
-                    ->options(User::pluck('name', 'id')),
+                    ->options(User::employees()->pluck('name', 'id')),
                 Filter::make('date_range')
                     ->form([
                         DatePicker::make('from_date')->label('From Date'),
