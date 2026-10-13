@@ -1,3 +1,7 @@
+## Matrix ESP32 bridge
+
+Start with [the project handoff and pin configuration](docs/matrix-project-handoff.md) for the Matrix firmware, gateway, deployment, decisions and remaining work.
+
 # Biomatrix
 
 Biomatrix is a multi-tenant Laravel application for direct biometric-device attendance management. It is the Matrix companion tool and supports ZKTeco ADMS polling, Matrix COSEC HTTP devices, and Hikvision ISAPI devices.

@@ -61,6 +61,17 @@ class DeviceResource extends Resource
                         ->unique(ignoreRecord: true)
                         ->maxLength(100)
                         ->helperText(fn ($get) => $get('vendor') === 'matrix' ? 'Optional for Matrix COSEC (used as local identifier).' : null),
+                    Select::make('connection_mode')
+                        ->label('Connection')->options(['direct'=>'Direct network','remote'=>'Remote site bridge'])->default('direct')->live()
+                        ->visible(fn($get)=>$get('vendor')==='matrix'),
+                    Select::make('site_bridge_id')->label('Site bridge')
+                        ->options(fn()=>\App\Models\SiteBridge::where('tenant_id',(string)tenant('id'))->whereNull('revoked_at')->whereNotNull('public_key')->pluck('name','id'))
+                        ->required(fn($get)=>$get('connection_mode')==='remote')
+                        ->visible(fn($get)=>$get('vendor')==='matrix' && $get('connection_mode')==='remote'),
+                    TextInput::make('remote_web_host')->label('Browser hostname')->disabled()->dehydrated(false)
+                        ->afterStateHydrated(function ($component, $record) { if ($record?->exists) $component->state(app(\App\Services\Bridge\BridgeGateway::class)->webHost($record)); })
+                        ->visible(fn($get,$record)=>$record?->exists && $get('vendor')==='matrix' && $get('connection_mode')==='remote')
+                        ->helperText('Uses the existing bridge domain. Open one Matrix device per browser session; use a separate private window for another device.'),
                     TextInput::make('ip_address')
                         ->label('IP Address')
                         ->required(fn ($get) => in_array($get('vendor'), ['hikvision', 'matrix'])),
@@ -217,6 +228,9 @@ class DeviceResource extends Resource
                     ->label('Branch'),
             ])
             ->recordActions([
+                Action::make('remote_web')->label('Open remote interface')->icon('heroicon-o-globe-alt')
+                    ->visible(fn($record)=>$record->vendor==='matrix' && $record->connection_mode==='remote')
+                    ->url(fn($record)=>url('/'.tenant('shortname').'/bridge-device/'.$record->getKey().'/open'))->openUrlInNewTab(),
                 ActionGroup::make([
                     ViewAction::make(),
                     EditAction::make(),
@@ -383,6 +397,7 @@ class DeviceResource extends Resource
                                 ->status($cmd->status === 'failed' ? 'danger' : 'success')
                                 ->send();
                         }),
+                    \App\Filament\Tenant\Resources\DeviceResource\Actions\ConfigureInternalReader::make(),
                     Action::make('configureReader')
                         ->label('Configure External / Exit Reader')
                         ->icon('heroicon-o-arrow-right-on-rectangle')

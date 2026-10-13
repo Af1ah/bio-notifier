@@ -1,0 +1,18 @@
+[Unit]
+Description=Biomatrix site bridge gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/aflah/projects/biomatrix/bridge-gateway
+EnvironmentFile=/home/aflah/projects/biomatrix/bridge-gateway/.env
+ExecStart=/home/aflah/projects/biomatrix/bridge-gateway/bin/bridge-gateway
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=10
+NoNewPrivileges=true
+UMask=0077
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,8 @@
+menu "Matrix Bridge local setup credentials"
+    config MATRIX_SETUP_PASSWORD
+        string "Setup Wi-Fi password (8 to 32 characters)"
+        default ""
+    config MATRIX_ADMIN_PASSWORD
+        string "Local admin password (1 to 32 characters)"
+        default ""
+endmenu

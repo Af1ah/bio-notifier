@@ -155,6 +155,10 @@ class ViewDevice extends ViewRecord
                                     'regex' => 'Card 1 must contain up to 20 digits.',
                                 ])
                                 ->autocomplete('off'),
+                            \Filament\Forms\Components\Toggle::make('card1_is_raw_rfid')
+                                ->label('Card 1 is raw RFID')
+                                ->helperText('Converts the 24-bit reader value to the Matrix card value when saved.')
+                                ->default(false),
                             \Filament\Forms\Components\TextInput::make('card2')
                                 ->label('Card 2')
                                 ->maxLength(20)
@@ -164,10 +168,33 @@ class ViewDevice extends ViewRecord
                                     'regex' => 'Card 2 must contain up to 20 digits.',
                                 ])
                                 ->autocomplete('off'),
+                            \Filament\Forms\Components\Toggle::make('card2_is_raw_rfid')
+                                ->label('Card 2 is raw RFID')
+                                ->helperText('Converts the 24-bit reader value to the Matrix card value when saved.')
+                                ->default(false),
                         ])
                         ->columns(2),
                 ])
                 ->action(function (array $data): void {
+                    foreach (['card1', 'card2'] as $field) {
+                        if (empty($data["{$field}_is_raw_rfid"]) || blank($data[$field] ?? null)) {
+                            continue;
+                        }
+
+                        try {
+                            $data[$field] = \App\Services\Attendance\MatrixDeviceService::convert24BitRawRfid($data[$field]);
+                        } catch (\InvalidArgumentException $exception) {
+                            \Filament\Notifications\Notification::make()
+                                ->title('Invalid Raw RFID')
+                                ->body("{$field}: {$exception->getMessage()}")
+                                ->danger()
+                                ->persistent()
+                                ->send();
+
+                            return;
+                        }
+                    }
+
                     $result = app(\App\Services\Attendance\MatrixDeviceService::class)->setUser($this->record, $data);
 
                     \Filament\Notifications\Notification::make()

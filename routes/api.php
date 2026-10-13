@@ -15,3 +15,10 @@ Route::prefix('devices/{device}')->group(function () {
     Route::get('status', [DeviceControlController::class, 'status'])->name('api.devices.status');
 });
 
+
+// Bridge pairing is public only with a short-lived, single-use site pairing code.
+Route::post('/bridges/pair', [\App\Http\Controllers\Api\SiteBridgeController::class, 'pair'])->middleware('throttle:6,1');
+Route::prefix('bridge-internal')->middleware(\App\Http\Middleware\BridgeGatewayAuth::class)->group(function () {
+    Route::post('auth', [\App\Http\Controllers\Api\SiteBridgeController::class, 'authenticate']);
+    Route::post('heartbeat', [\App\Http\Controllers\Api\SiteBridgeController::class, 'heartbeat']);
+});

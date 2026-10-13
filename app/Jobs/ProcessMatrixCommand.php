@@ -39,6 +39,11 @@ class ProcessMatrixCommand implements ShouldQueue
                 return;
             }
 
+            if ($device->connection_mode === 'remote') {
+                $claimed = DeviceCommand::whereKey($command->id)->where('status','pending')->where('outcome_unknown',false)
+                    ->update(['status'=>'sent','sent_at'=>now()]);
+                if (!$claimed) return;
+            }
             $matrixService = app(MatrixDeviceService::class);
             $content = $command->command_content;
 
@@ -170,13 +175,25 @@ class ProcessMatrixCommand implements ShouldQueue
                 $command->update(['status' => 'failed', 'response' => 'Clear Log command not supported via Matrix HTTP API']);
 
             } else {
-                $command->update(['status' => 'acknowledged', 'response' => 'Simulated success (Command not strictly mapped for Matrix)']);
+                $command->update(['status' => 'failed', 'response' => 'Unsupported Matrix command; no device operation was performed.']);
             }
 
         } catch (\Exception $e) {
             Log::error('Matrix API Error: '.$e->getMessage());
-            $command?->update(['status' => 'failed', 'response' => 'Matrix API Error: '.$e->getMessage()]);
+            $uncertain = isset($claimed, $device) && $claimed && $device->connection_mode === 'remote'
+                && !preg_match('/^(INFO|CHECK|DATA QUERY)/', $command->command_content);
+            $command?->update(['status' => 'failed', 'outcome_unknown' => $uncertain,
+                'response' => $uncertain ? 'Outcome unknown after an execution error. Reconcile device state before retrying.' : 'Matrix API Error: '.$e->getMessage()]);
         } finally {
+            if ($command && isset($device) && $device?->connection_mode === 'remote' && isset($result)
+                && !preg_match('/^(INFO|CHECK|DATA QUERY)/', $command->command_content)
+                && !empty($result['outcome_unknown'])) {
+                $command->update(['status'=>'failed','outcome_unknown'=>true,
+                    'response'=>'Outcome unknown after a transport interruption. Reconcile device state before retrying.']);
+            }
+            if ($command && isset($device) && $device?->connection_mode === 'remote' && $command->fresh()?->status === 'sent') {
+                $command->update(['status'=>'failed','outcome_unknown'=>true,'response'=>'Execution ended without a confirmed device result. Reconcile before retrying.']);
+            }
             if ($previousTenant) {
                 tenancy()->initialize($previousTenant);
             } else {

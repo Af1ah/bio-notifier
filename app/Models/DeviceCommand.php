@@ -25,6 +25,7 @@ class DeviceCommand extends Model
 
     protected $casts = [
         'sent_at' => 'datetime',
+        'outcome_unknown' => 'boolean',
         'acknowledged_at' => 'datetime',
     ];
 
@@ -65,8 +66,14 @@ class DeviceCommand extends Model
 
     public function retry(): void
     {
+        if ($this->device?->vendor === 'matrix' && $this->device?->connection_mode === 'remote'
+            && ($this->outcome_unknown || $this->status === 'sent')
+            && !preg_match('/^(INFO|CHECK|DATA QUERY)/', $this->command_content)) {
+            throw new \RuntimeException('The previous outcome is unknown. Read the device state and reconcile it before retrying this write.');
+        }
         $this->update([
             'status' => 'pending',
+            'outcome_unknown' => false,
             'retry_count' => $this->retry_count + 1,
         ]);
     }

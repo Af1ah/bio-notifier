@@ -130,4 +130,15 @@ Route::get('/magic-login', function () {
 // Redirect /{tenant} to /{tenant}/admin automatically
 Route::get('/{tenant}', function ($tenant) {
     return redirect('/'.$tenant.'/admin');
-})->where('tenant', '^(?!master|manifest\.json|iclock|magic-login|api|livewire|_debugbar).*$');
+})->where('tenant', '^(?!master|manifest\.json|iclock|magic-login|api|livewire|_debugbar)[^/]+$');
+
+Route::get('/{tenant}/bridge-device/{id}/open', function (\Illuminate\Http\Request $request, string $id) {
+    if (!auth()->check()) {
+        $request->session()->put('url.intended', $request->fullUrl());
+        return redirect()->route('filament.tenant.auth.login', ['tenant'=>tenant('shortname') ?: tenant('id')]);
+    }
+    abort_unless(auth()->check() && ((int)auth()->user()->privilege === 14 || auth()->user()->role === 'admin'), 403);
+    $device = \App\Models\Device::findOrFail($id);
+    abort_unless($device->vendor === 'matrix' && $device->connection_mode === 'remote', 404);
+    return redirect()->away(app(\App\Services\Bridge\BridgeGateway::class)->webUrl($device));
+})->middleware(['web', \App\Http\Middleware\InitializeTenancyByShortname::class])->whereNumber('id')->name('bridge.device.web');

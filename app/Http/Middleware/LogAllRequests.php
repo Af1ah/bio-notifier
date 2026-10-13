@@ -15,13 +15,14 @@ class LogAllRequests
      */
     public function handle(Request $request, Closure $next): Response
     {
+        if ($request->is('api/bridges/*', 'api/bridge-internal/*')) {
+            // Do not log pairing codes, gateway credentials, or identity proofs.
+            return $next($request);
+        }
         \Illuminate\Support\Facades\Log::channel('single')->info('INCOMING HTTP REQUEST:', [
-            'url' => $request->fullUrl(),
+            'path' => $request->path(),
             'method' => $request->method(),
             'ip' => $request->ip(),
-            'headers' => $request->headers->all(),
-            'payload' => $request->all(),
-            'content' => $request->getContent(),
         ]);
         return $next($request);
     }

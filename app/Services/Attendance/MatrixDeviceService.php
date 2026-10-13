@@ -9,6 +9,30 @@ use Illuminate\Support\Facades\Log;
 class MatrixDeviceService
 {
     /**
+     * Convert the 24-bit decimal RFID value shown by the local reader into
+     * the decimal card number used by Matrix VEGA/ARGO devices.
+     *
+     * Matrix stores this reader format as the hexadecimal prefix 5A00
+     * followed by the three-byte RFID value. For example, 0001843877 becomes
+     * 5A001C22A5 (386548900517).
+     */
+    public static function convert24BitRawRfid(string $rawRfid): string
+    {
+        $rawRfid = trim($rawRfid);
+
+        if (! preg_match('/^\d{1,10}$/', $rawRfid)) {
+            throw new \InvalidArgumentException('Raw RFID must contain digits only.');
+        }
+
+        $rawValue = (int) ltrim($rawRfid, '0');
+        if ($rawValue < 1 || $rawValue > 0xFFFFFF) {
+            throw new \InvalidArgumentException('Raw RFID must be a 24-bit value (1 to 16777215).');
+        }
+
+        return (string) ((0x5A00 << 24) + $rawValue);
+    }
+
+    /**
      * Map of Matrix API Response Codes to human-readable explanations
      * according to the Matrix COSEC Devices API User Guide (Table: API Response Codes).
      */
@@ -51,7 +75,8 @@ class MatrixDeviceService
             ];
         }
 
-        $baseUrl = $this->buildBaseUrl($device);
+        try { $baseUrl = $this->buildBaseUrl($device); }
+        catch (\RuntimeException $e) { return ['success'=>false,'message'=>$e->getMessage(),'code'=>null,'status'=>'offline']; }
         $auth = [$device->username ?? 'admin', $device->password ?? '1234'];
 
         try {
@@ -113,12 +138,14 @@ class MatrixDeviceService
             ];
         } catch (\Illuminate\Http\Client\ConnectionException $e) {
             return [
+                'outcome_unknown' => true,
                 'success' => false,
                 'message' => "Cannot connect to Matrix device at {$device->ip_address}:" . ($device->port ?? 80) . " (Connection timed out or host unreachable).",
                 'status' => 'offline',
             ];
         } catch (\Exception $e) {
             return [
+                'outcome_unknown' => true,
                 'success' => false,
                 'message' => 'Connection error: ' . $e->getMessage(),
                 'status' => 'offline',
@@ -146,7 +173,8 @@ class MatrixDeviceService
             ];
         }
 
-        $baseUrl = $this->buildBaseUrl($device);
+        try { $baseUrl = $this->buildBaseUrl($device); }
+        catch (\RuntimeException $e) { return ['success'=>false,'message'=>$e->getMessage(),'code'=>null,'status'=>'offline']; }
         $auth = [$device->username ?? 'admin', $device->password ?? '1234'];
 
         // Clean user name: Matrix only accepts alphanumeric and spaces, max 15 characters
@@ -243,6 +271,7 @@ class MatrixDeviceService
             return $this->parseResponse($response->body(), $response->status(), 'User successfully saved on Matrix device.');
         } catch (\Exception $e) {
             return [
+                'outcome_unknown' => true,
                 'success' => false,
                 'message' => 'Matrix HTTP request error: ' . $e->getMessage(),
                 'code' => null,
@@ -260,7 +289,8 @@ class MatrixDeviceService
             return ['success' => false, 'message' => 'User ID is required.', 'user' => null];
         }
 
-        $baseUrl = $this->buildBaseUrl($device);
+        try { $baseUrl = $this->buildBaseUrl($device); }
+        catch (\RuntimeException $e) { return ['success'=>false,'message'=>$e->getMessage(),'code'=>null,'status'=>'offline']; }
         $auth = [$device->username ?? 'admin', $device->password ?? '1234'];
 
         try {
@@ -296,7 +326,8 @@ class MatrixDeviceService
                 ],
             ];
         } catch (\Exception $e) {
-            return ['success' => false, 'message' => 'Get user error: ' . $e->getMessage(), 'user' => null];
+            return [
+                'outcome_unknown' => true,'success' => false, 'message' => 'Get user error: ' . $e->getMessage(), 'user' => null];
         }
     }
 
@@ -305,7 +336,8 @@ class MatrixDeviceService
      */
     public function enableDeviceEnrollment(Device $device, int $enrollMode = 0): array
     {
-        $baseUrl = $this->buildBaseUrl($device);
+        try { $baseUrl = $this->buildBaseUrl($device); }
+        catch (\RuntimeException $e) { return ['success'=>false,'message'=>$e->getMessage(),'code'=>null,'status'=>'offline']; }
         $auth = [$device->username ?? 'admin', $device->password ?? '1234'];
 
         try {
@@ -320,6 +352,7 @@ class MatrixDeviceService
             return $this->parseResponse($response->body(), $response->status(), 'Device enrollment enabled successfully (enroll-on-device=1).');
         } catch (\Exception $e) {
             return [
+                'outcome_unknown' => true,
                 'success' => false,
                 'message' => 'Failed to enable device enrollment: ' . $e->getMessage(),
                 'code' => null,
@@ -332,7 +365,8 @@ class MatrixDeviceService
      */
     public function deleteUser(Device $device, string $pin): array
     {
-        $baseUrl = $this->buildBaseUrl($device);
+        try { $baseUrl = $this->buildBaseUrl($device); }
+        catch (\RuntimeException $e) { return ['success'=>false,'message'=>$e->getMessage(),'code'=>null,'status'=>'offline']; }
         $auth = [$device->username ?? 'admin', $device->password ?? '1234'];
 
         try {
@@ -358,6 +392,7 @@ class MatrixDeviceService
             return $parsed;
         } catch (\Exception $e) {
             return [
+                'outcome_unknown' => true,
                 'success' => false,
                 'message' => 'Matrix HTTP request error: ' . $e->getMessage(),
                 'code' => null,
@@ -388,7 +423,8 @@ class MatrixDeviceService
             ];
         }
 
-        $baseUrl = $this->buildBaseUrl($device);
+        try { $baseUrl = $this->buildBaseUrl($device); }
+        catch (\RuntimeException $e) { return ['success'=>false,'message'=>$e->getMessage(),'code'=>null,'status'=>'offline']; }
         $auth = [$device->username ?? 'admin', $device->password ?? '1234'];
 
         try {
@@ -437,6 +473,7 @@ class MatrixDeviceService
             );
         } catch (\Exception $e) {
             return [
+                'outcome_unknown' => true,
                 'success' => false,
                 'message' => 'Matrix enrollment error: ' . $e->getMessage(),
                 'code' => null,
@@ -454,7 +491,8 @@ class MatrixDeviceService
             return ['success' => false, 'message' => "Invalid door action: {$action}", 'code' => null];
         }
 
-        $baseUrl = $this->buildBaseUrl($device);
+        try { $baseUrl = $this->buildBaseUrl($device); }
+        catch (\RuntimeException $e) { return ['success'=>false,'message'=>$e->getMessage(),'code'=>null,'status'=>'offline']; }
         $auth = [$device->username ?? 'admin', $device->password ?? '1234'];
 
         try {
@@ -473,7 +511,8 @@ class MatrixDeviceService
 
             return $this->parseResponse($response->body(), $response->status(), $successMsg);
         } catch (\Exception $e) {
-            return ['success' => false, 'message' => 'Door command error: ' . $e->getMessage(), 'code' => null];
+            return [
+                'outcome_unknown' => true,'success' => false, 'message' => 'Door command error: ' . $e->getMessage(), 'code' => null];
         }
     }
 
@@ -483,7 +522,8 @@ class MatrixDeviceService
     public function syncTime(Device $device, ?\Carbon\Carbon $dateTime = null): array
     {
         $dateTime = $dateTime ?? now();
-        $baseUrl = $this->buildBaseUrl($device);
+        try { $baseUrl = $this->buildBaseUrl($device); }
+        catch (\RuntimeException $e) { return ['success'=>false,'message'=>$e->getMessage(),'code'=>null,'status'=>'offline']; }
         $auth = [$device->username ?? 'admin', $device->password ?? '1234'];
 
         try {
@@ -502,7 +542,8 @@ class MatrixDeviceService
 
             return $this->parseResponse($response->body(), $response->status(), 'Device time synchronized successfully.');
         } catch (\Exception $e) {
-            return ['success' => false, 'message' => 'Time sync error: ' . $e->getMessage(), 'code' => null];
+            return [
+                'outcome_unknown' => true,'success' => false, 'message' => 'Time sync error: ' . $e->getMessage(), 'code' => null];
         }
     }
 
@@ -511,7 +552,8 @@ class MatrixDeviceService
      */
     public function getUserCount(Device $device): array
     {
-        $baseUrl = $this->buildBaseUrl($device);
+        try { $baseUrl = $this->buildBaseUrl($device); }
+        catch (\RuntimeException $e) { return ['success'=>false,'message'=>$e->getMessage(),'code'=>null,'status'=>'offline']; }
         $auth = [$device->username ?? 'admin', $device->password ?? '1234'];
 
         try {
@@ -533,7 +575,8 @@ class MatrixDeviceService
 
             return $this->parseResponse($body, $response->status(), 'User count retrieved.');
         } catch (\Exception $e) {
-            return ['success' => false, 'message' => 'Get user count error: ' . $e->getMessage(), 'count' => null];
+            return [
+                'outcome_unknown' => true,'success' => false, 'message' => 'Get user count error: ' . $e->getMessage(), 'count' => null];
         }
     }
 
@@ -542,7 +585,8 @@ class MatrixDeviceService
      */
     public function getEventCount(Device $device): array
     {
-        $baseUrl = $this->buildBaseUrl($device);
+        try { $baseUrl = $this->buildBaseUrl($device); }
+        catch (\RuntimeException $e) { return ['success'=>false,'message'=>$e->getMessage(),'code'=>null,'status'=>'offline']; }
         $auth = [$device->username ?? 'admin', $device->password ?? '1234'];
 
         try {
@@ -583,6 +627,7 @@ class MatrixDeviceService
             ];
         } catch (\Exception $e) {
             return [
+                'outcome_unknown' => true,
                 'success' => false,
                 'message' => 'Get event count error: ' . $e->getMessage(),
                 'code' => null,
@@ -663,7 +708,8 @@ class MatrixDeviceService
      */
     public function getReaderConfig(Device $device): array
     {
-        $baseUrl = $this->buildBaseUrl($device);
+        try { $baseUrl = $this->buildBaseUrl($device); }
+        catch (\RuntimeException $e) { return ['success'=>false,'message'=>$e->getMessage(),'code'=>null,'status'=>'offline']; }
         $auth = [$device->username ?? 'admin', $device->password ?? '1234'];
 
         try {
@@ -678,6 +724,9 @@ class MatrixDeviceService
                 return ['success' => false, 'message' => 'Authentication failed (401)', 'data' => []];
             }
 
+            if (!$response->successful()) {
+                return ['success'=>false,'message'=>'Device returned HTTP '.$response->status(),'data'=>[]];
+            }
             $body = $response->body();
             $xml = @simplexml_load_string($body);
             if ($xml) {
@@ -686,6 +735,7 @@ class MatrixDeviceService
                     'message' => 'Reader configuration retrieved.',
                     'data' => [
                         'reader1' => (string) ($xml->reader1 ?? ''),
+                        'reader2' => (string) ($xml->reader2 ?? ''),
                         'reader3' => (string) ($xml->reader3 ?? ''),
                         'door_access_mode' => (string) ($xml->{'door-access-mode'} ?? ''),
                         'door_entry_exit_mode' => (string) ($xml->{'door-entry-exit-mode'} ?? ''),
@@ -698,8 +748,27 @@ class MatrixDeviceService
 
             return ['success' => false, 'message' => 'Failed to parse reader config XML', 'data' => []];
         } catch (\Exception $e) {
-            return ['success' => false, 'message' => $e->getMessage(), 'data' => []];
+            return [
+                'outcome_unknown' => true,'success' => false, 'message' => $e->getMessage(), 'data' => []];
         }
+    }
+
+    public function setInternalCardReader(Device $device, int $type): array
+    {
+        if ($device->vendor !== 'matrix' || !in_array($type, [0,1,2,3,4,5], true)) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['reader1'=>'Select a supported Matrix internal card reader type.']);
+        }
+        // Only reader1 is sent: preserve biometric, external and door policy settings.
+        $result = $this->setReaderConfig($device, ['reader1'=>$type]);
+        if (!$result['success']) {
+            if (!empty($result['outcome_unknown'])) $result['message']='The connection was interrupted. Reopen reader settings to check the saved type before trying again.';
+            return $result;
+        }
+        $readback = $this->getReaderConfig($device);
+        if (!$readback['success'] || ($readback['data']['reader1'] ?? '') !== (string) $type) {
+            return ['success'=>false,'outcome_unknown'=>true,'message'=>'The device accepted the update, but its saved type could not be confirmed. Reopen reader settings before trying again.'];
+        }
+        return ['success'=>true,'message'=>'Internal card reader type saved and confirmed.'];
     }
 
     /**
@@ -707,7 +776,8 @@ class MatrixDeviceService
      */
     public function setReaderConfig(Device $device, array $params = []): array
     {
-        $baseUrl = $this->buildBaseUrl($device);
+        try { $baseUrl = $this->buildBaseUrl($device); }
+        catch (\RuntimeException $e) { return ['success'=>false,'message'=>$e->getMessage(),'code'=>null,'status'=>'offline']; }
         $auth = [$device->username ?? 'admin', $device->password ?? '1234'];
 
         $queryParams = array_merge([
@@ -722,7 +792,8 @@ class MatrixDeviceService
 
             return $this->parseResponse($response->body(), $response->status(), 'Reader configuration updated successfully.');
         } catch (\Exception $e) {
-            return ['success' => false, 'message' => 'Failed to update reader config: ' . $e->getMessage(), 'code' => null];
+            return [
+                'outcome_unknown' => true,'success' => false, 'message' => 'Failed to update reader config: ' . $e->getMessage(), 'code' => null];
         }
     }
 
@@ -731,7 +802,8 @@ class MatrixDeviceService
      */
     public function getEventLogs(Device $device, int $seqNumber = 1, int $count = 20, int $rollOver = 0): array
     {
-        $baseUrl = $this->buildBaseUrl($device);
+        try { $baseUrl = $this->buildBaseUrl($device); }
+        catch (\RuntimeException $e) { return ['success'=>false,'message'=>$e->getMessage(),'code'=>null,'status'=>'offline']; }
         $auth = [$device->username ?? 'admin', $device->password ?? '1234'];
 
         try {
@@ -768,7 +840,8 @@ class MatrixDeviceService
 
             return ['success' => true, 'events' => $events, 'raw' => $body];
         } catch (\Exception $e) {
-            return ['success' => false, 'message' => $e->getMessage(), 'events' => []];
+            return [
+                'outcome_unknown' => true,'success' => false, 'message' => $e->getMessage(), 'events' => []];
         }
     }
 
@@ -787,6 +860,9 @@ class MatrixDeviceService
      */
     protected function buildBaseUrl(Device $device): string
     {
+        if ($device->connection_mode === 'remote') {
+            return app(\App\Services\Bridge\BridgeGateway::class)->endpoint($device);
+        }
         $protocol = $device->protocol ?: 'http';
         $ip = $device->ip_address;
         $port = $device->port ?: 80;

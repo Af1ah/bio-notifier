@@ -34,6 +34,18 @@ class Device extends Model
         'options' => 'array',
     ];
 
+    protected static function booted(): void
+    {
+        static::saving(function (Device $device): void {
+            if ($device->connection_mode !== 'remote') { $device->site_bridge_id = null; return; }
+            try {
+                app(\App\Services\Bridge\BridgeGateway::class)->approvedTarget($device);
+            } catch (\RuntimeException $e) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['site_bridge_id'=>$e->getMessage()]);
+            }
+        });
+    }
+
     public function getTable(): string
     {
         return 'devices';
