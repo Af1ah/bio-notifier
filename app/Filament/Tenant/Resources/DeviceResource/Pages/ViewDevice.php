@@ -14,6 +14,7 @@ class ViewDevice extends ViewRecord
     {
         return [
             Actions\EditAction::make(),
+            ...DeviceResource::connectionActions(),
         ];
     }
 }

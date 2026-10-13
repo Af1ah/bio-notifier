@@ -54,6 +54,7 @@ class BranchesTable
                 \Filament\Actions\BulkActionGroup::make([
                     \Filament\Actions\DeleteBulkAction::make(),
                     \Filament\Actions\BulkAction::make('unblockBranchUsers')
+                        ->authorize(fn (): bool => \App\Services\Devices\DeviceIntegration::usesEbio())
                         ->label('Unblock users from door')
                         ->icon('heroicon-o-check-circle')
                         ->color('success')
@@ -88,6 +89,7 @@ class BranchesTable
                         })
                         ->deselectRecordsAfterCompletion(),
                     \Filament\Actions\BulkAction::make('blockBranchUsers')
+                        ->authorize(fn (): bool => \App\Services\Devices\DeviceIntegration::usesEbio())
                         ->label('Block users from door')
                         ->icon('heroicon-o-x-circle')
                         ->color('warning')

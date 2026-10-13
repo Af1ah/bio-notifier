@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Filament\Tenant\Resources\AttendanceApprovals\Pages\ListAttendanceApprovals;
 use App\Models\AttendanceApproval;
+use App\Models\AttendanceCorrection;
 use App\Models\AttendanceDay;
 use App\Models\AttendanceLog;
 use App\Models\Device;
@@ -42,6 +43,61 @@ class AttendanceWorkflowTest extends TestCase
         return $s;
     }
 
+    public function test_break_deduction_agrees_between_daily_status_and_occurrence(): void
+    {
+        Carbon::setTestNow('2026-10-01 23:00:00');
+        try {
+            $shift = $this->shift();
+            $shift->update(['rules' => array_merge($shift->rules, ['breaks' => [['name' => 'Lunch', 'start_time' => '13:00', 'duration_minutes' => 60, 'weekdays' => [4]]]])]);
+            app(ShiftRuleService::class)->sync($shift);
+            $user = User::create(['name' => 'Break test', 'pin' => 'break']);
+            app(ShiftAssignmentService::class)->setDefault($shift, today()->toDateString());
+            $device = Device::create(['serial_number' => 'BREAK']);
+            AttendanceLog::create(['device_id' => $device->id, 'pin' => $user->pin, 'punched_at' => today()->setTime(9, 30), 'status' => 0]);
+            AttendanceLog::create(['device_id' => $device->id, 'pin' => $user->pin, 'punched_at' => today()->setTime(17, 30), 'status' => 1]);
+            $day = app(AttendanceCalculationService::class)->calculate($user, today());
+            $this->assertSame('half_day', $day->status);
+            $this->assertSame(420, $day->candidate_worked_minutes);
+            $this->assertSame(420, $day->approved_worked_minutes);
+            $this->assertSame(420, $day->occurrences->first()->candidate_worked_minutes);
+            $this->assertSame(0, $day->candidate_overtime_minutes);
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_unchanged_recalculation_keeps_hr_checkout_and_approved_overtime(): void
+    {
+        Carbon::setTestNow('2026-10-01 23:00:00');
+        try {
+            $shift = $this->shift();
+            $shift->update(['rules' => array_merge($shift->rules, ['auto_checkout_enabled' => true, 'auto_checkout_time' => '18:30', 'auto_checkout_day_offset' => 0])]);
+            app(ShiftRuleService::class)->sync($shift);
+            $user = User::create(['name' => 'HR', 'pin' => 'hr', 'privilege' => 14]);
+            app(ShiftAssignmentService::class)->setDefault($shift, today()->toDateString());
+            $device = Device::create(['serial_number' => 'HR']);
+            AttendanceLog::create(['device_id' => $device->id, 'pin' => $user->pin, 'punched_at' => today()->setTime(9, 30), 'status' => 0]);
+            $calculator = app(AttendanceCalculationService::class);
+            $day = $calculator->calculate($user, today());
+            $approval = $day->approvals()->where('type', 'attendance')->firstOrFail();
+            app(ApprovalService::class)->decide($approval, $user, true, checkoutAt: today()->setTime(18, 0)->toDateTimeString());
+            $ot = $day->approvals()->where('type', 'overtime')->where('state', 'pending')->firstOrFail();
+            app(ApprovalService::class)->decide($ot, $user, true);
+            $before = $day->fresh();
+            $occurrenceId = $before->occurrences()->first()->id;
+            $after = $calculator->calculate($user, today());
+            $this->assertSame($before->calculation_revision, $after->calculation_revision);
+            $this->assertSame($before->approved_worked_minutes, $after->approved_worked_minutes);
+            $this->assertSame($before->approved_overtime_minutes, $after->approved_overtime_minutes);
+            $this->assertSame($occurrenceId, $after->occurrences->first()->id);
+            $this->assertSame('approved', $approval->fresh()->state);
+            AttendanceLog::create(['device_id' => $device->id, 'pin' => $user->pin, 'punched_at' => today()->addDay()->setTime(9, 30), 'status' => 0]);
+            $this->assertSame($after->calculation_revision, $calculator->calculate($user, today())->calculation_revision);
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
     public function test_disabling_a_holiday_restores_scheduled_absence(): void
     {
         Carbon::setTestNow('2026-08-26 23:00:00');
@@ -55,6 +111,42 @@ class AttendanceWorkflowTest extends TestCase
             $this->assertSame('holiday', $day->fresh()->status);
             $holiday->update(['active' => false]);
             $this->assertSame('absent', $day->fresh()->status);
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_legacy_approved_day_without_baseline_is_preserved_instead_of_reset(): void
+    {
+        $user = User::create(['name' => 'Legacy', 'pin' => 'legacy']);
+        $day = AttendanceDay::create(['user_id' => $user->id, 'work_date' => today(), 'status' => 'present', 'approved_worked_minutes' => 480, 'calculation_revision' => 1]);
+        AttendanceApproval::create(['attendance_day_id' => $day->id, 'type' => 'attendance', 'state' => 'approved', 'calculation_revision' => 1, 'proposal' => []]);
+        try {
+            app(AttendanceCalculationService::class)->calculate($user, today());
+            $this->fail('Legacy baseline must require review.');
+        } catch (ValidationException $exception) {
+            $this->assertStringContainsString('Legacy', $exception->getMessage());
+        }
+        $this->assertSame(480, $day->fresh()->approved_worked_minutes);
+        $this->assertSame(1, $day->fresh()->calculation_revision);
+    }
+
+    public function test_manual_time_correction_uses_net_break_minutes_and_refreshes_day_status(): void
+    {
+        Carbon::setTestNow('2026-10-01 23:00:00');
+        try {
+            $shift = $this->shift();
+            $shift->update(['rules' => array_merge($shift->rules, ['breaks' => [['name' => 'Lunch', 'start_time' => '13:00', 'duration_minutes' => 60, 'weekdays' => [4]]]])]);
+            app(ShiftRuleService::class)->sync($shift);
+            $user = User::create(['name' => 'Corrector', 'pin' => 'corrector', 'privilege' => 14]);
+            app(ShiftAssignmentService::class)->setDefault($shift, today()->toDateString());
+            $day = app(AttendanceCalculationService::class)->calculate($user, today());
+            $correction = AttendanceCorrection::create(['attendance_day_id' => $day->id, 'reason' => 'Missing device punches', 'proposed_in_at' => today()->setTime(9, 30), 'proposed_out_at' => today()->setTime(17, 30)]);
+            $approval = AttendanceApproval::create(['attendance_day_id' => $day->id, 'type' => 'attendance', 'state' => 'pending', 'calculation_revision' => 1, 'proposal' => ['reason' => 'manual_correction', 'correction_id' => $correction->id]]);
+            app(ApprovalService::class)->decide($approval, $user, true);
+            $this->assertSame(420, $day->fresh()->approved_worked_minutes);
+            $this->assertSame('half_day', $day->fresh()->status);
+            $this->assertSame('approved', $correction->fresh()->state);
         } finally {
             Carbon::setTestNow();
         }
@@ -134,6 +226,10 @@ class AttendanceWorkflowTest extends TestCase
         $this->assertSame(540, $day->candidate_worked_minutes);
         $this->assertSame(2, AttendanceLog::count());
         $this->assertDatabaseHas('attendance_approvals', ['attendance_day_id' => $day->id, 'type' => 'overtime', 'state' => 'pending']);
+        app(AttendanceCalculationService::class)->calculate($user, Carbon::today());
+        $this->assertSame(1, $day->fresh()->calculation_revision);
+        $this->assertDatabaseCount('attendance_day_revisions', 0);
+        AttendanceLog::create(['device_id' => $device->id, 'pin' => $user->pin, 'punched_at' => today()->setTime(19, 0), 'status' => 1]);
         app(AttendanceCalculationService::class)->calculate($user, Carbon::today());
         $this->assertDatabaseHas('attendance_day_revisions', ['attendance_day_id' => $day->id, 'revision' => 1]);
     }

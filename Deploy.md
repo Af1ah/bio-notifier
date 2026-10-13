@@ -1,5 +1,7 @@
 # Production Deployment Guide
 
+For the October security/schema changes and webhook credential migration, follow [Beta verification and recovery](docs/beta-verification.md) before resuming workers.
+
 Since we have merged everything into a single, unified application, deploying to a fresh production instance (like a VPS or Laravel Forge) is now incredibly simple. 
 
 You no longer need to worry about custom packages, symlinks, or private repositories. Your entire app lives in one place on GitHub: `https://github.com/Af1ah/bio-notifier`.

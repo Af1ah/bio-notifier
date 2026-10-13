@@ -27,32 +27,32 @@ class ListAttendanceDays extends ListRecords
             Action::make('recalculate')->label('Recalculate')->icon('heroicon-o-arrow-path')
                 ->modalDescription('Choose up to 31 days per calculation. For a longer period, calculate one month at a time.')
                 ->modalSubmitActionLabel('Queue calculation')->schema([
-                DatePicker::make('from_date')->required()->default(today()), DatePicker::make('to_date')->required()->default(today())->afterOrEqual('from_date')->helperText('Maximum range: 31 days, including both dates.'), Select::make('user_ids')->label('Employees (blank means all)')->options(fn () => User::pluck('name', 'id'))->multiple()->searchable(),
-            ])->action(function (array $data, Schema $schema) {
-                if (AttendanceCalculationRun::whereIn('state', ['queued', 'running'])->exists()) {
-                    $this->rejectCalculation($schema, 'from_date', 'Another recalculation is already active for this tenant.');
-                }
-                $from = Carbon::parse($data['from_date']);
-                $to = Carbon::parse($data['to_date']);
-                if ($to->lt($from)) {
-                    $this->rejectCalculation($schema, 'to_date', 'The end date must be on or after the start date.');
-                }
-                if ($from->diffInDays($to) > 30) {
-                    $this->rejectCalculation($schema, 'to_date', 'Maximum range is 31 days.');
-                }$ids = $data['user_ids'] ?: User::pluck('id')->all();
-                if (count($ids) * ($from->diffInDays($to) + 1) > 10000) {
-                    $this->rejectCalculation($schema, 'user_ids', 'Maximum workload is 10,000 employee-days.');
-                }
-                try {
-                    app(AttendanceRateLimiter::class)->ensure('recalculation', 5);
-                } catch (ValidationException $exception) {
-                    $this->rejectCalculation($schema, 'from_date', implode(' ', $exception->validator->errors()->all()));
-                }
-                $run = AttendanceCalculationRun::create(['run_key' => Str::uuid(), 'from_date' => $from, 'to_date' => $to, 'filters' => ['user_ids' => $data['user_ids'] ?? []], 'total' => count($ids) * ($from->diffInDays($to) + 1)]);
-                foreach (array_chunk($ids, 100) as $chunk) {
-                    RecalculateAttendanceChunk::dispatch(tenancy()->tenant, $run->id, $chunk);
-                }Notification::make()->title('Recalculation queued')->body("{$run->total} employee-days")->success()->send();
-            }),
+                    DatePicker::make('from_date')->required()->default(today()), DatePicker::make('to_date')->required()->default(today())->afterOrEqual('from_date')->helperText('Maximum range: 31 days, including both dates.'), Select::make('user_ids')->label('Employees (blank means all)')->options(fn () => User::employees()->pluck('name', 'id'))->multiple()->searchable(),
+                ])->action(function (array $data, Schema $schema) {
+                    if (AttendanceCalculationRun::whereIn('state', ['queued', 'running'])->exists()) {
+                        $this->rejectCalculation($schema, 'from_date', 'Another recalculation is already active for this tenant.');
+                    }
+                    $from = Carbon::parse($data['from_date']);
+                    $to = Carbon::parse($data['to_date']);
+                    if ($to->lt($from)) {
+                        $this->rejectCalculation($schema, 'to_date', 'The end date must be on or after the start date.');
+                    }
+                    if ($from->diffInDays($to) > 30) {
+                        $this->rejectCalculation($schema, 'to_date', 'Maximum range is 31 days.');
+                    }$ids = User::employees()->when($data['user_ids'], fn ($query, $ids) => $query->whereIn('id', $ids))->pluck('id')->all();
+                    if (count($ids) * ($from->diffInDays($to) + 1) > 10000) {
+                        $this->rejectCalculation($schema, 'user_ids', 'Maximum workload is 10,000 employee-days.');
+                    }
+                    try {
+                        app(AttendanceRateLimiter::class)->ensure('recalculation', 5);
+                    } catch (ValidationException $exception) {
+                        $this->rejectCalculation($schema, 'from_date', implode(' ', $exception->validator->errors()->all()));
+                    }
+                    $run = AttendanceCalculationRun::create(['run_key' => Str::uuid(), 'from_date' => $from, 'to_date' => $to, 'filters' => ['user_ids' => $data['user_ids'] ?? []], 'total' => count($ids) * ($from->diffInDays($to) + 1)]);
+                    foreach (array_chunk($ids, 100) as $chunk) {
+                        RecalculateAttendanceChunk::dispatch(tenancy()->tenant, $run->id, $chunk);
+                    }Notification::make()->title('Recalculation queued')->body("{$run->total} employee-days")->success()->send();
+                }),
         ];
     }
 

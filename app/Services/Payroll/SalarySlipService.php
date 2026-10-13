@@ -7,7 +7,9 @@ use App\Models\AttendanceDay;
 use App\Models\EmployeeLeave;
 use App\Models\SalarySlip;
 use App\Models\User;
+use App\Services\Attendance\ShiftAssignmentResolver;
 use Carbon\Carbon;
+use Carbon\CarbonPeriod;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -43,6 +45,9 @@ class SalarySlipService
             $issues[] = 'Calculated attendance is missing for this payroll month.';
 
             return $issues;
+        }
+        if ($missing = $this->missingCoverage($user, $start, $end, $days)) {
+            $issues[] = 'Attendance is incomplete for scheduled dates: '.implode(', ', array_slice($missing, 0, 5)).'. Recalculate the full payroll month.';
         }
 
         if ($days->contains(fn (AttendanceDay $day) => $day->stale_at !== null)) {
@@ -97,6 +102,7 @@ class SalarySlipService
         $end = $period->copy()->endOfMonth();
 
         return DB::transaction(function () use ($user, $start, $end) {
+            User::whereKey($user->id)->lockForUpdate()->firstOrFail();
             $profile = $user->payrollProfile()->lockForUpdate()->first();
             if (! $profile?->payroll_enabled) {
                 throw ValidationException::withMessages(['payroll' => "Payroll is not enabled for {$user->name}."]);
@@ -114,6 +120,9 @@ class SalarySlipService
 
             if ($days->isEmpty()) {
                 throw ValidationException::withMessages(['attendance' => "No calculated attendance is available for {$user->name} in {$start->format('F Y')}."]);
+            }
+            if ($missing = $this->missingCoverage($user, $start, $end, $days)) {
+                throw ValidationException::withMessages(['attendance' => 'Attendance is incomplete for scheduled dates: '.implode(', ', array_slice($missing, 0, 5)).'. Recalculate the full payroll month.']);
             }
             if ($days->contains(fn (AttendanceDay $day) => $day->stale_at !== null)) {
                 throw ValidationException::withMessages(['attendance' => "{$user->name} has stale attendance that must be recalculated first."]);
@@ -243,6 +252,27 @@ class SalarySlipService
 
             return $existing ? tap($existing)->update($payload) : SalarySlip::create($payload);
         });
+    }
+
+    private function missingCoverage(User $user, Carbon $start, Carbon $end, Collection $days): array
+    {
+        $covered = $days->pluck('work_date')->map->toDateString()->flip();
+        $missing = [];
+        $resolver = app(ShiftAssignmentResolver::class);
+        $effective = $user->payrollProfile?->effective_from;
+        foreach (CarbonPeriod::create($start, $end) as $date) {
+            if ($covered->has($date->toDateString()) || ($effective && $date->lt($effective))) {
+                continue;
+            }
+            $set = $resolver->resolve($user, $date);
+            if ($set && $set->slots->contains(function ($slot) use ($date) {
+                return $slot->schedule?->activeRuleRevision($date)?->weekdays()->where('weekday', $date->dayOfWeek)->exists();
+            })) {
+                $missing[] = $date->toDateString();
+            }
+        }
+
+        return $missing;
     }
 
     /** Reconcile leave and attendance without charging the same half twice. */

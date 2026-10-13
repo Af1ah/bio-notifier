@@ -14,7 +14,7 @@ class ReportService
         $start = Carbon::parse($fromDate)->startOfDay();
         $end = Carbon::parse($toDate)->endOfDay();
         $period = CarbonPeriod::create($start, $end);
-        $users = User::whereIn('id', $userIds)->get();
+        $users = User::employees()->whereIn('id', $userIds)->get();
         $results = AttendanceDay::with('occurrences.schedule')->whereIn('user_id', $userIds)->whereDate('work_date', '>=', $start->toDateString())->whereDate('work_date', '<=', $end->toDateString())->get()->groupBy('user_id');
         $rows = [];
         foreach ($users as $user) {

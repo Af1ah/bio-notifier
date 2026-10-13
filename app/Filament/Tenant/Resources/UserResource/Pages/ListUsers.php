@@ -2,172 +2,112 @@
 
 namespace App\Filament\Tenant\Resources\UserResource\Pages;
 
-use Filament\Actions;
-use Filament\Resources\Pages\ListRecords;
 use App\Filament\Tenant\Resources\UserResource;
+use App\Jobs\SyncEbioUsersJob;
+use App\Models\DeviceCommand;
+use App\Services\Imports\UserCsvImportService;
+use Filament\Actions;
+use Filament\Forms\Components\Checkbox;
+use Filament\Forms\Components\FileUpload;
+use Filament\Forms\Components\Select;
+use Filament\Notifications\Notification;
+use Filament\Resources\Pages\ListRecords;
+use Filament\Schemas\Components\Text;
+use Filament\Schemas\Components\Wizard\Step;
+use Filament\Schemas\Schema;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\HtmlString;
+use Illuminate\Validation\ValidationException;
+use Livewire\Attributes\Locked;
 
 class ListUsers extends ListRecords
 {
     protected static string $resource = UserResource::class;
+
+    public string $importPreview = '';
+
+    #[Locked]
+    public string $importFingerprint = '';
 
     protected function getHeaderActions(): array
     {
         return [
             Actions\CreateAction::make(),
             Actions\Action::make('syncEbioUsers')
-                ->label('Sync from eBioServer')
-                ->icon('heroicon-o-arrow-path')
-                ->color('warning')
-                ->requiresConfirmation()
-                ->modalHeading('Sync Users from eBioServer')
-                ->modalDescription('This will connect to your eBioServer over the local network and pull all registered users. This may take a few moments depending on the number of users.')
+                ->authorize(fn (): bool => \App\Services\Devices\DeviceIntegration::usesEbio())
+                ->label('Sync employees')->icon('heroicon-o-arrow-path')->color('warning')
+                ->requiresConfirmation()->modalHeading('Sync employees')
+                ->modalDescription('Import registered employees from the device connection. This may take a few moments.')
                 ->action(function () {
                     $command = null;
-
                     try {
-                        $command = \App\Models\DeviceCommand::create([
-                            'device_id' => null,
-                            'command_type' => 'sync_users',
-                            'command_content' => 'eBioServer SOAP Command: sync users',
-                            'status' => 'pending',
-                        ]);
-
-                        \App\Jobs\SyncEbioUsersJob::dispatch(tenancy()->tenant, $command->id);
-                        
-                        \Filament\Notifications\Notification::make()
-                            ->title('Sync Queued')
-                            ->body('User synchronization is tracked on the Device Commands page.')
-                            ->success()
-                            ->send();
+                        $command = DeviceCommand::create(['device_id' => null, 'command_type' => 'sync_users', 'command_content' => 'eBioServer SOAP Command: sync users', 'status' => 'pending']);
+                        SyncEbioUsersJob::dispatch(tenancy()->tenant, $command->id);
+                        Notification::make()->title('Sync Queued')->body('User synchronization is tracked on the Device Commands page.')->success()->send();
                     } catch (\Exception $e) {
                         $command?->markAsFailed($e->getMessage());
-
-                        \Filament\Notifications\Notification::make()
-                            ->title('Sync Failed')
-                            ->body($e->getMessage())
-                            ->danger()
-                            ->send();
+                        Notification::make()->title('Sync Failed')->body('Employee synchronization failed. Contact your administrator.')->danger()->send();
                     }
                 }),
             Actions\Action::make('importUsers')
-                ->label('Import Users')
-                ->icon('heroicon-o-arrow-up-tray')
-                ->color('info')
-                ->modalHeading('Import Users')
-                ->modalDescription(function () {
-                    $csvContent = "pin,name,email,card_number,privilege,device_password,is_enabled,branch_id,department_id,group\n" .
-                                  "1001,amal das,,,,,,,,\n" .
-                                  "1002,shamil ,shamil@example.com,12345678,0,1234,1,1,2,Staff\n";
-                    $base64Csv = base64_encode($csvContent);
-                    $dataUri = "data:text/csv;base64,{$base64Csv}";
-                    
-                    return new \Illuminate\Support\HtmlString('
-                        <div class="mb-4">
-                            <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap;">
-                                <p class="text-sm text-gray-600 dark:text-gray-400" style="flex: 1; min-width: 250px; margin: 0;">
-                                    Upload a CSV file containing user data. The file must include column headers matching the field names.
-                                </p>
-                                <div>
-                                    <a href="'.$dataUri.'" download="users_import_example.csv" 
-                                       style="display: inline-flex; align-items: center; gap: 0.5rem; background-color: #10b981; color: #ffffff; padding: 0.5rem 1rem; border-radius: 0.5rem; font-weight: 600; font-size: 0.875rem; text-decoration: none; box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05); border: 1px solid #059669; transition: all 0.2s ease-in-out;"
-                                       onmouseover="this.style.backgroundColor=\'#059669\'" 
-                                       onmouseout="this.style.backgroundColor=\'#10b981\'">
-                                        <svg style="width: 16px; height: 16px;" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
-                                        Download Example CSV
-                                    </a>
-                                </div>
-                            </div>
-                        </div>
-                    ');
-                })
-                ->form([
-                    \Filament\Forms\Components\FileUpload::make('file')
-                        ->label('CSV File')
-                        ->acceptedFileTypes(['text/csv', 'application/csv', 'text/x-csv', 'application/vnd.ms-excel', 'text/plain'])
-                        ->disk('local')
-                        ->directory('imports')
-                        ->required()
-                        ->storeFiles(true)
-                ])
-                ->action(function (array $data) {
-                    $filePath = \Illuminate\Support\Facades\Storage::disk('local')->path($data['file']);
-                    
-                    if (!file_exists($filePath) || !is_readable($filePath)) {
-                        \Filament\Notifications\Notification::make()->title('File not found or unreadable.')->danger()->send();
-                        return;
-                    }
+                ->label('Import Users')->icon('heroicon-o-arrow-up-tray')->color('info')
+                ->modalHeading('Import Users')->modalSubmitActionLabel('Import employees')
+                ->modalDescription(function (): HtmlString {
+                    $service = app(UserCsvImportService::class);
+                    $basic = base64_encode($service->template(false));
+                    $payroll = base64_encode($service->template(true));
 
-                    $header = null;
-                    $users = [];
-                    if (($handle = fopen($filePath, 'r')) !== false) {
-                        while (($row = fgetcsv($handle, 1000, ',')) !== false) {
-                            if (!$header) {
-                                $header = array_map(function($h) { return trim(strtolower($h)); }, $row);
-                            } else {
-                                if (count($header) == count($row)) {
-                                    $users[] = array_combine($header, $row);
-                                }
-                            }
+                    return new HtmlString('<p>Upload up to 1,000 employees in a UTF-8 CSV (5 MB maximum). Comma, semicolon and tab separators are detected. Blank cells preserve existing values. Login access and passwords are never changed.</p><p><a class="text-primary-600 underline" download="employees.csv" href="data:text/csv;base64,'.$basic.'">Employee template</a> · <a class="text-primary-600 underline" download="employees-payroll.csv" href="data:text/csv;base64,'.$payroll.'">Payroll template</a></p><p>Payroll amounts are INR, not paise, without commas (8000.00). Pay basis: monthly, daily or hourly. Dates: YYYY-MM-DD. New payroll profiles require pay_basis, basic_salary and effective_from; payroll_enabled defaults to 0. Use organisation branch/department IDs and task_group_ids separated by |. Department must belong to the branch. Device privilege: 0 or 14. Booleans: 0/1, true/false or yes/no.</p>');
+                })
+                ->steps([
+                    Step::make('Upload and validate')->schema([
+                        Select::make('mode')->label('Existing employees')
+                            ->options(['create' => 'Create only — reject existing PINs', 'upsert' => 'Create and update by PIN'])
+                            ->default('create')->required(),
+                        FileUpload::make('file')->label('CSV file')
+                            ->acceptedFileTypes(['text/csv', 'application/csv', 'text/x-csv', 'application/vnd.ms-excel', 'text/plain'])
+                            ->disk('local')->directory(fn () => app(UserCsvImportService::class)->directory())
+                            ->maxSize(5120)->required()->storeFiles(true),
+                    ])->afterValidation(function (Step $component): void {
+                        $data = $component->getChildSchema()->getState();
+                        $file = $data['file'] ?? null;
+                        if (! is_string($file)) {
+                            throw ValidationException::withMessages(['file' => 'Wait for the upload to finish.']);
                         }
-                        fclose($handle);
-                    }
-                    
-                    $successCount = 0;
-                    $errorCount = 0;
-                    
-                    foreach ($users as $userData) {
-                        if (empty($userData['pin']) || empty($userData['name'])) {
-                            $errorCount++;
-                            continue;
-                        }
-                        
-                        $existingUser = \App\Models\User::where('pin', $userData['pin'])->first();
-                        
-                        $userAttributes = [
-                            'name' => $userData['name'],
-                        ];
-                        
-                        $fields = ['email', 'card_number', 'device_password', 'group'];
-                        foreach ($fields as $field) {
-                            if (isset($userData[$field]) && $userData[$field] !== '') {
-                                $userAttributes[$field] = $userData[$field];
-                            }
-                        }
-                        
-                        if (isset($userData['privilege']) && $userData['privilege'] !== '') {
-                            $userAttributes['privilege'] = (int) $userData['privilege'];
-                        }
-                        if (isset($userData['is_enabled']) && $userData['is_enabled'] !== '') {
-                            $userAttributes['is_enabled'] = filter_var($userData['is_enabled'], FILTER_VALIDATE_BOOLEAN);
-                        }
-                        if (isset($userData['branch_id']) && $userData['branch_id'] !== '') {
-                            $userAttributes['branch_id'] = (int) $userData['branch_id'];
-                        }
-                        if (isset($userData['department_id']) && $userData['department_id'] !== '') {
-                            $userAttributes['department_id'] = (int) $userData['department_id'];
-                        }
-                        
                         try {
-                            if ($existingUser) {
-                                $existingUser->update($userAttributes);
-                            } else {
-                                $userAttributes['pin'] = $userData['pin'];
-                                \App\Models\User::create($userAttributes);
-                            }
-                            $successCount++;
-                        } catch (\Exception $e) {
-                            $errorCount++;
+                            $preview = app(UserCsvImportService::class)->preview($file, (string) $data['mode']);
+                        } catch (ValidationException $e) {
+                            $this->rejectImport($component->getChildSchema(), $e);
                         }
+                        $this->importPreview = "Validated {$preview['delimiter']}-separated CSV: {$preview['created']} new employees, {$preview['updated']} existing employees updated, {$preview['payroll']} payroll profiles included. All records are revalidated on submission and saved together; an error rolls back the entire upload.";
+                        $this->importFingerprint = $preview['fingerprint'];
+                    }),
+                    Step::make('Review and import')->schema([
+                        Text::make(fn (): string => $this->importPreview),
+                        Checkbox::make('confirmed')->label('I checked the import mode, employee details and payroll rates.')->accepted()->required(),
+                    ]),
+                ])
+                ->action(function (array $data, Schema $schema): void {
+                    Validator::make($data, ['confirmed' => ['accepted'], 'file' => ['required', 'string'], 'mode' => ['required', 'in:create,upsert']])->validate();
+                    try {
+                        $result = app(UserCsvImportService::class)->import($data['file'], $data['mode'], $this->importFingerprint);
+                    } catch (ValidationException $e) {
+                        $this->rejectImport($schema, $e);
                     }
-                    
-                    @unlink($filePath);
-                    
-                    \Filament\Notifications\Notification::make()
-                        ->title('Import Complete')
-                        ->body("Successfully imported {$successCount} users." . ($errorCount > 0 ? " {$errorCount} failed." : ""))
-                        ->status($errorCount > 0 ? 'warning' : 'success')
-                        ->send();
+                    Storage::disk('local')->delete($data['file']);
+                    $this->importFingerprint = '';
+                    Notification::make()->title('Import complete')
+                        ->body("Created {$result['created']} employees and updated {$result['updated']}. Changed payroll profiles require salary slips to be recalculated.")
+                        ->success()->send();
                 }),
         ];
+    }
+
+    private function rejectImport(Schema $schema, ValidationException $exception): never
+    {
+        $message = implode(' ', $exception->validator->errors()->all());
+        Notification::make()->title('Import not saved')->body($message)->danger()->send();
+        throw ValidationException::withMessages([$schema->getStatePath().'.file' => $message]);
     }
 }

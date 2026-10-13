@@ -16,6 +16,8 @@ class EbioSoapService
      */
     public function syncUsers(Organisation $organisation): array
     {
+        \App\Services\Devices\DeviceIntegration::requireEbio($organisation);
+
         if (empty($organisation->ebio_url) || empty($organisation->ebio_soap_username)) {
             throw new \Exception('eBioServer SOAP credentials are not configured for this organisation.');
         }
@@ -150,6 +152,8 @@ class EbioSoapService
      */
     public function syncDevices(Organisation $organisation): array
     {
+        \App\Services\Devices\DeviceIntegration::requireEbio($organisation);
+
         if (empty($organisation->ebio_url) || empty($organisation->ebio_soap_username)) {
             throw new \Exception('eBioServer SOAP credentials are not configured for this organisation.');
         }
@@ -263,6 +267,8 @@ class EbioSoapService
      */
     public function pushUser(Organisation $organisation, User $user, string $location = ''): bool
     {
+        \App\Services\Devices\DeviceIntegration::requireEbio($organisation);
+
         if (empty($organisation->ebio_url) || empty($organisation->ebio_soap_username)) {
             throw new \Exception('eBioServer SOAP credentials are not configured for this organisation.');
         }
@@ -338,6 +344,8 @@ class EbioSoapService
      */
     public function deleteUser(Organisation $organisation, string $employeeCode, string $location = ''): bool
     {
+        \App\Services\Devices\DeviceIntegration::requireEbio($organisation);
+
         if (empty($organisation->ebio_url) || empty($organisation->ebio_soap_username)) {
             throw new \Exception('eBioServer SOAP credentials are not configured for this organisation.');
         }
@@ -390,6 +398,8 @@ class EbioSoapService
      */
     public function rebootDevice(Organisation $organisation, string $serialNumber): bool
     {
+        \App\Services\Devices\DeviceIntegration::requireEbio($organisation);
+
         if (empty($organisation->ebio_url) || empty($organisation->ebio_soap_username)) {
             throw new \Exception('eBioServer SOAP credentials are not configured for this organisation.');
         }
@@ -435,6 +445,8 @@ class EbioSoapService
      */
     public function clearDeviceLogs(Organisation $organisation, string $serialNumber): bool
     {
+        \App\Services\Devices\DeviceIntegration::requireEbio($organisation);
+
         if (empty($organisation->ebio_url) || empty($organisation->ebio_soap_username)) {
             throw new \Exception('eBioServer SOAP credentials are not configured for this organisation.');
         }
@@ -480,6 +492,8 @@ class EbioSoapService
      */
     public function resetTransactionStamp(Organisation $organisation, string $serialNumber): bool
     {
+        \App\Services\Devices\DeviceIntegration::requireEbio($organisation);
+
         if (empty($organisation->ebio_url) || empty($organisation->ebio_soap_username)) {
             throw new \Exception('eBioServer SOAP credentials are not configured for this organisation.');
         }
@@ -525,6 +539,8 @@ class EbioSoapService
      */
     public function resetOPStamp(Organisation $organisation, string $serialNumber): bool
     {
+        \App\Services\Devices\DeviceIntegration::requireEbio($organisation);
+
         if (empty($organisation->ebio_url) || empty($organisation->ebio_soap_username)) {
             throw new \Exception('eBioServer SOAP credentials are not configured for this organisation.');
         }
@@ -570,6 +586,8 @@ class EbioSoapService
      */
     public function blockUserFromDoor(Organisation $organisation, string $serialNumber, string $employeeCode, bool $blockUser): bool
     {
+        \App\Services\Devices\DeviceIntegration::requireEbio($organisation);
+
         if (empty($organisation->ebio_url) || empty($organisation->ebio_soap_username)) {
             throw new \Exception('eBioServer SOAP credentials are not configured for this organisation.');
         }
@@ -623,6 +641,8 @@ class EbioSoapService
      */
     public function enrollFingerprint(Organisation $organisation, string $serialNumber, string $employeeCode, int $fingerIndex): bool
     {
+        \App\Services\Devices\DeviceIntegration::requireEbio($organisation);
+
         $payload = '<?xml version="1.0" encoding="utf-8"?>
         <soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
           <soap:Body>
@@ -665,6 +685,8 @@ class EbioSoapService
      */
     public function enrollFace(Organisation $organisation, string $serialNumber, string $employeeCode): bool
     {
+        \App\Services\Devices\DeviceIntegration::requireEbio($organisation);
+
         $payload = '<?xml version="1.0" encoding="utf-8"?>
         <soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
           <soap:Body>
@@ -743,6 +765,8 @@ class EbioSoapService
      */
     public function unlockDoor(Organisation $organisation, string $serialNumber): bool
     {
+        \App\Services\Devices\DeviceIntegration::requireEbio($organisation);
+
         if (empty($organisation->ebio_url) || empty($organisation->ebio_soap_username)) {
             throw new \Exception('eBioServer SOAP credentials are not configured for this organisation.');
         }
@@ -788,6 +812,8 @@ class EbioSoapService
      */
     public function addDevice(Organisation $organisation, array $data): bool
     {
+        \App\Services\Devices\DeviceIntegration::requireEbio($organisation);
+
         if (empty($organisation->ebio_url) || empty($organisation->ebio_soap_username)) {
             throw new \Exception('eBioServer SOAP credentials are not configured for this organisation.');
         }

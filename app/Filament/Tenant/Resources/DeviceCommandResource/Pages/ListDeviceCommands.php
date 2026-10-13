@@ -14,6 +14,7 @@ class ListDeviceCommands extends ListRecords
     {
         return [
             Actions\Action::make('runCommand')
+                ->authorize(fn (): bool => \App\Services\Devices\DeviceIntegration::usesEbio())
                 ->label('Run Command')
                 ->icon('heroicon-o-command-line')
                 ->color('primary')
@@ -71,7 +72,6 @@ class ListDeviceCommands extends ListRecords
                         ->success()
                         ->send();
                 }),
-            Actions\CreateAction::make(),
         ];
     }
 }

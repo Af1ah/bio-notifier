@@ -33,6 +33,45 @@ class DeviceCommandResource extends Resource
         return 'Device Management';
     }
 
+    public static function canCreate(): bool
+    {
+        // Device actions must go through the supported dispatch path.
+        return false;
+    }
+
+    private static function resultLabel(DeviceCommand $record): string
+    {
+        return match ($record->status) {
+            'acknowledged' => 'Completed',
+            'failed' => 'Action failed. Contact your administrator.',
+            'sent' => 'Awaiting completion',
+            'outcome_unknown' => 'Needs review. Contact your administrator.',
+            'expired' => 'Expired before execution',
+            'cancelled' => 'Cancelled',
+            default => 'Queued',
+        };
+    }
+
+    public static function infolist(Schema $schema): Schema
+    {
+        return $schema->components([
+            Section::make('Device action')->schema([
+                \Filament\Infolists\Components\TextEntry::make('device.name')
+                    ->label('Target')->placeholder('Company devices'),
+                \Filament\Infolists\Components\TextEntry::make('command_type')
+                    ->label('Action')
+                    ->formatStateUsing(fn (string $state): string => str($state)->replace('_', ' ')->title()->toString()),
+                \Filament\Infolists\Components\TextEntry::make('status')->badge(),
+                \Filament\Infolists\Components\TextEntry::make('response')
+                    ->label('Result')
+                    ->state(fn (DeviceCommand $record): string => self::resultLabel($record)),
+                \Filament\Infolists\Components\TextEntry::make('sent_at')->dateTime(),
+                \Filament\Infolists\Components\TextEntry::make('acknowledged_at')->dateTime(),
+                \Filament\Infolists\Components\TextEntry::make('retry_count')->label('Retries'),
+            ])->columns(2),
+        ]);
+    }
+
     public static function form(Schema $schema): Schema
     {
         return $schema->components([
@@ -46,9 +85,9 @@ class DeviceCommandResource extends Resource
                         ->options([
                             'INFO' => 'Get Device Info',
                             'REBOOT' => 'Reboot Device',
-                            'reboot' => 'Reboot Device (API)',
+                            'reboot' => 'Reboot Device',
                             'CLEAR' => 'Clear Data',
-                            'clear_logs' => 'Clear Logs (API)',
+                            'clear_logs' => 'Clear Logs',
                             'reset_transaction_stamp' => 'Reset Transaction Stamp',
                             'reset_op_stamp' => 'Reset OP Stamp',
                             'unlock_door' => 'Unlock Door',
@@ -70,6 +109,9 @@ class DeviceCommandResource extends Resource
                             'sent' => 'Sent',
                             'acknowledged' => 'Acknowledged',
                             'failed' => 'Failed',
+                            'outcome_unknown' => 'Needs review',
+                            'expired' => 'Expired',
+                            'cancelled' => 'Cancelled',
                         ])
                         ->default('pending')
                         ->disabled(),
@@ -85,7 +127,7 @@ class DeviceCommandResource extends Resource
             ->columns([
                 Tables\Columns\TextColumn::make('device.name')
                     ->label('Target')
-                    ->placeholder('eBioServer')
+                    ->placeholder('Company devices')
                     ->sortable()
                     ->searchable(),
                 Tables\Columns\TextColumn::make('command_type')
@@ -95,12 +137,16 @@ class DeviceCommandResource extends Resource
                     })
                     ->badge(),
                 Tables\Columns\TextColumn::make('command_content')
+                    ->label('Action')
+                    ->formatStateUsing(fn (DeviceCommand $record): string => str($record->command_type)->replace('_', ' ')->title()->toString())
                     ->limit(40)
                     ->visibleFrom('md'),
                 Tables\Columns\TextColumn::make('status')
                     ->badge()
                     ->formatStateUsing(fn (string $state): string => match ($state) {
-                        'sent' => 'Running / sent',
+                        'sent' => 'Sent / awaiting data',
+                        'outcome_unknown' => 'Needs review',
+                        'expired' => 'Expired',
                         'acknowledged' => 'Completed',
                         default => str($state)->title()->toString(),
                     })
@@ -122,8 +168,7 @@ class DeviceCommandResource extends Resource
                     ->visibleFrom('md'),
                 Tables\Columns\TextColumn::make('response')
                     ->label('Result')
-                    ->limit(70)
-                    ->tooltip(fn (DeviceCommand $record): ?string => $record->response)
+                    ->formatStateUsing(fn (DeviceCommand $record): string => self::resultLabel($record))
                     ->wrap()
                     ->toggleable(),
             ])
@@ -138,14 +183,17 @@ class DeviceCommandResource extends Resource
                         'sent' => 'Sent',
                         'acknowledged' => 'Acknowledged',
                         'failed' => 'Failed',
+                            'outcome_unknown' => 'Needs review',
+                            'expired' => 'Expired',
+                            'cancelled' => 'Cancelled',
                     ]),
                 Tables\Filters\SelectFilter::make('command_type')
                     ->options([
                         'INFO' => 'Get Device Info',
                         'REBOOT' => 'Reboot Device',
-                        'reboot' => 'Reboot Device (API)',
+                        'reboot' => 'Reboot Device',
                         'CLEAR' => 'Clear Data',
-                        'clear_logs' => 'Clear Logs (API)',
+                        'clear_logs' => 'Clear Logs',
                         'reset_transaction_stamp' => 'Reset Transaction Stamp',
                         'reset_op_stamp' => 'Reset OP Stamp',
                         'unlock_door' => 'Unlock Door',
@@ -154,6 +202,9 @@ class DeviceCommandResource extends Resource
                         'enroll_finger' => 'Enroll Finger',
                         'enroll_face' => 'Enroll Face',
                         'sync_users' => 'Sync Users',
+                        'info' => 'Read device information',
+                        'check' => 'Check connection',
+                        'query_users' => 'Read device users',
                         'DATA' => 'Send Data',
                         'CHECK' => 'Check Connection',
                     ]),
@@ -162,6 +213,7 @@ class DeviceCommandResource extends Resource
                 \Filament\Actions\ActionGroup::make([
                     ViewAction::make(),
                     Action::make('retry')
+                        ->authorize(fn (): bool => \App\Services\Devices\DeviceIntegration::usesEbio())
                         ->icon('heroicon-o-arrow-path')
                         ->color('warning')
                         ->requiresConfirmation()

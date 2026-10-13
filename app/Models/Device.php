@@ -49,6 +49,11 @@ class Device extends Model
         return $this->hasMany(DeviceCommand::class);
     }
 
+    public function deviceUsers(): HasMany
+    {
+        return $this->hasMany(DeviceRosterEntry::class, 'device_id');
+    }
+
     public function pendingCommands(): HasMany
     {
         return $this->commands()->where('status', 'pending');

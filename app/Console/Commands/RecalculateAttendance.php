@@ -44,7 +44,7 @@ class RecalculateAttendance extends Command
             return self::FAILURE;
         }tenancy()->initialize($tenant);
         try {
-            $users = User::query()->when($this->option('user'), fn ($q, $ids) => $q->whereIn('id', $ids))->cursor();
+            $users = User::employees()->when($this->option('user'), fn ($q, $ids) => $q->whereIn('id', $ids))->cursor();
             $count = 0;
             foreach ($users as $user) {
                 foreach (CarbonPeriod::create($from, $to) as $date) {

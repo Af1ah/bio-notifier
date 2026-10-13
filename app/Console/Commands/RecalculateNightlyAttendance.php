@@ -44,14 +44,16 @@ class RecalculateNightlyAttendance extends Command
                     continue;
                 }
 
-                $userIds = User::query()->pluck('id')->all();
+                $userIds = User::employees()->pluck('id')->all();
                 $run = AttendanceCalculationRun::create([
                     'run_key' => Str::uuid(),
-                    'from_date' => $workDate,
+                    // A bounded rolling window revisits overnight cutoffs and
+                    // late deliveries instead of finalizing yesterday once.
+                    'from_date' => $this->option('date') ? $workDate : CarbonImmutable::parse($workDate, $timezone)->subDays(2)->toDateString(),
                     'to_date' => $workDate,
                     'filters' => ['source' => 'nightly'],
                     'state' => $userIds ? 'queued' : 'completed',
-                    'total' => count($userIds),
+                    'total' => count($userIds) * ($this->option('date') ? 1 : 3),
                 ]);
 
                 foreach (array_chunk($userIds, 100) as $chunk) {

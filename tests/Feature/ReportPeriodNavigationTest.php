@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Filament\Tenant\Pages\Reports;
 use App\Models\User;
+use App\Services\Attendance\ReportService;
 use Carbon\Carbon;
 use Filament\Facades\Filament;
 use Illuminate\Support\Facades\Artisan;
@@ -39,6 +40,18 @@ class ReportPeriodNavigationTest extends TestCase
             ->assertSet('tableFilters.date_range.from_date', '2026-08-26')
             ->assertSet('tableFilters.date_range.to_date', '2026-08-26')
             ->assertSet('tableDeferredFilters.date_range.from_date', '2026-08-26');
+    }
+
+    public function test_reports_exclude_bootstrap_account_but_keep_employee_admin(): void
+    {
+        $system = User::create(['name' => 'System login', 'pin' => '999', 'email' => User::DEFAULT_LOGIN_EMAIL, 'privilege' => 14]);
+        $employee = User::create(['name' => 'Employee admin', 'pin' => '998', 'privilege' => 14]);
+        $system->update(['email' => 'renamed@example.test']);
+        $page = Livewire::test(Reports::class)->instance();
+        $this->assertTrue($page->getTable()->getQuery()->whereKey($employee)->exists());
+        $this->assertFalse($page->getTable()->getQuery()->whereKey($system)->exists());
+        $report = app(ReportService::class)->generateReport([$system->id, $employee->id], today()->toDateString(), today()->toDateString());
+        $this->assertCount(1, $report['data']);
     }
 
     public function test_week_navigation_crosses_years_and_keeps_employee_filters(): void

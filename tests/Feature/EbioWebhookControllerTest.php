@@ -3,13 +3,59 @@
 namespace Tests\Feature;
 
 use App\Jobs\ProcessEbioWebhookJob;
+use App\Models\Device;
 use App\Models\Organisation;
+use App\Models\WebhookReceipt;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
 
 class EbioWebhookControllerTest extends TestCase
 {
+    public function test_receipts_are_encrypted_deduplicated_and_recoverable_after_device_rejection(): void
+    {
+        Queue::fake();
+        config(['services.ebio.allow_device_discovery' => false]);
+        $org = Organisation::create(['name' => 'Receipt test']);
+        $this->organisations[] = $org;
+        $payload = [['EmployeeCode' => 'receipt-pin', 'SerialNumber' => 'REGISTER-ME', 'LogDate' => '2026-09-01 09:00:00']];
+        $url = '/api/ebio/webhook/'.$org->ebio_webhook_token;
+        $this->postJson($url, $payload)->assertOk();
+        $this->postJson($url, $payload)->assertOk();
+        Queue::assertPushed(ProcessEbioWebhookJob::class, 1);
+        $receipt = WebhookReceipt::firstOrFail();
+        $this->assertStringNotContainsString('receipt-pin', $receipt->getRawOriginal('payload'));
+        $job = new ProcessEbioWebhookJob($org, [], $receipt->id);
+        try {
+            $job->handle();
+            $this->fail('An unknown device must be rejected in strict mode.');
+        } catch (\RuntimeException $exception) {
+            $this->assertStringContainsString('Unregistered', $exception->getMessage());
+        }
+        $this->assertFalse(tenancy()->initialized);
+        $this->assertSame('failed', $receipt->fresh()->state);
+        tenancy()->initialize($org);
+        Device::create(['serial_number' => 'REGISTER-ME']);
+        tenancy()->end();
+        $this->artisan('ebio:replay-receipts', ['--failed' => true])->assertSuccessful();
+        $job->handle();
+        $this->assertSame('processed', $receipt->fresh()->state);
+        $this->assertSame([], $receipt->fresh()->payload);
+        tenancy()->initialize($org);
+        $this->assertDatabaseCount('attendance_logs', 1);
+        $this->assertDatabaseHas('attendance_logs', ['pin' => 'receipt-pin']);
+    }
+
+    public function test_missing_serial_uses_a_real_tenant_device_not_invalid_foreign_key_zero(): void
+    {
+        $org = Organisation::create(['name' => 'No serial']);
+        $this->organisations[] = $org;
+        (new ProcessEbioWebhookJob($org, [['EmployeeCode' => 'no-serial', 'LogDate' => '2026-09-01 09:00:00']]))->handle();
+        tenancy()->initialize($org);
+        $device = Device::where('serial_number', 'ebio-unidentified')->firstOrFail();
+        $this->assertDatabaseHas('attendance_logs', ['pin' => 'no-serial', 'device_id' => $device->id]);
+    }
+
     private array $organisations = [];
 
     protected function setUp(): void
@@ -55,7 +101,7 @@ class EbioWebhookControllerTest extends TestCase
             ],
         ];
 
-        $response = $this->postJson("/api/ebio/webhook/{$organisation->id}", $payload);
+        $response = $this->postJson("/api/ebio/webhook/{$organisation->ebio_webhook_token}", $payload);
 
         $response->assertStatus(200)
             ->assertSee('Success')
@@ -81,13 +127,13 @@ class EbioWebhookControllerTest extends TestCase
             'LogDate' => '2023-10-10 10:05:00',
         ];
 
-        $response = $this->postJson("/api/ebio/webhook/{$organisation->id}", $payload);
+        $response = $this->postJson("/api/ebio/webhook/{$organisation->ebio_webhook_token}", $payload);
 
         $response->assertStatus(200)
             ->assertSee('Success');
 
         Queue::assertPushed(ProcessEbioWebhookJob::class, function ($job) {
-            return count($job->logs) === 1 && $job->logs[0]['EmployeeCode'] === '1002';
+            return $job->logs === [] && WebhookReceipt::findOrFail($job->receiptId)->payload[0]['EmployeeCode'] === '1002';
         });
     }
 }

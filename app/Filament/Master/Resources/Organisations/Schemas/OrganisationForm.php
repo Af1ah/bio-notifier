@@ -2,8 +2,18 @@
 
 namespace App\Filament\Master\Resources\Organisations\Schemas;
 
+use App\Models\Organisation;
+use App\Services\Devices\DeviceIntegration;
+use Filament\Forms\Components\ColorPicker;
+use Filament\Forms\Components\FileUpload;
+use Filament\Forms\Components\Placeholder;
+use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
+use Filament\Forms\Components\ToggleButtons;
+use Filament\Schemas\Components\Utilities\Get;
+use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
+use Illuminate\Support\HtmlString;
 
 class OrganisationForm
 {
@@ -11,47 +21,71 @@ class OrganisationForm
     {
         return $schema
             ->components([
-                \Filament\Schemas\Components\Section::make('General Information')
+                Section::make('General Information')
                     ->schema([
-                TextInput::make('name')
-                    ->required(),
-                TextInput::make('shortname')
-                    ->required()
-                    ->unique(ignoreRecord: true)
-                    ->alphaDash(),
-                TextInput::make('email')
-                    ->label('Email address')
-                    ->email()
-                    ->default(null),
-                TextInput::make('phone')
-                    ->tel()
-                    ->default(null),
-                \Filament\Forms\Components\FileUpload::make('logo')
-                    ->image()
-                    ->acceptedFileTypes(['image/png', 'image/svg+xml', 'image/jpeg', 'image/webp'])
-                    ->maxSize(100)
-                    ->directory('organisations/logos')
-                    ->default(null),
-                \Filament\Forms\Components\ColorPicker::make('brand_color')
-                    ->default(null),
-                \Filament\Forms\Components\Select::make('status')
-                    ->options([
-                        'active' => 'Active',
-                        'inactive' => 'Inactive',
-                    ])
-                    ->default('active')
-                    ->required(),
-                ])->columns(2),
+                        TextInput::make('name')
+                            ->required(),
+                        TextInput::make('shortname')
+                            ->required()
+                            ->unique(ignoreRecord: true)
+                            ->alphaDash(),
+                        TextInput::make('email')
+                            ->label('Email address')
+                            ->email()
+                            ->default(null),
+                        TextInput::make('phone')
+                            ->tel()
+                            ->default(null),
+                        FileUpload::make('logo')
+                            ->image()
+                            ->acceptedFileTypes(['image/png', 'image/svg+xml', 'image/jpeg', 'image/webp'])
+                            ->maxSize(100)
+                            ->directory('organisations/logos')
+                            ->default(null),
+                        ColorPicker::make('brand_color')
+                            ->default(null),
+                        Select::make('status')
+                            ->options([
+                                'active' => 'Active',
+                                'inactive' => 'Inactive',
+                            ])
+                            ->default('active')
+                            ->required(),
+                    ])->columns(2),
 
-                \Filament\Schemas\Components\Section::make('eBioServer Credentials')
+                Section::make('Device integration')
                     ->schema([
-                        \Filament\Forms\Components\Placeholder::make('webhook_url')
+                        ToggleButtons::make('device_integration')
+                            ->label('Connection')
+                            ->options(DeviceIntegration::options())
+                            ->default(DeviceIntegration::GATEWAY)
+                            ->inline()
+                            ->live()
+                            ->required()
+                            ->in(array_keys(DeviceIntegration::options())),
+                        Placeholder::make('gateway_connection')
+                            ->label('Shared gateway')
+                            ->content('Manage the shared connection and approved device ownership in the master Device gateway page. Device actions become available after provisioning is synchronized.')
+                            ->visible(fn (Get $get): bool => $get('device_integration') === DeviceIntegration::GATEWAY),
+                    ]),
+
+                Section::make('eBioServer Credentials')
+                    ->visible(fn (Get $get): bool => $get('device_integration') === DeviceIntegration::EBIO)
+                    ->dehydratedWhenHidden(false)
+                    ->schema([
+                        Placeholder::make('webhook_url')
                             ->label('Webhook Post URL')
-                            ->hidden(fn (?\App\Models\Organisation $record) => $record === null)
-                            ->content(function (?\App\Models\Organisation $record) {
-                                if (!$record) return '-';
-                                $url = url('/api/ebio/webhook/' . $record->id);
-                                return new \Illuminate\Support\HtmlString('
+                            ->hidden(fn (?Organisation $record) => $record === null)
+                            ->content(function (?Organisation $record) {
+                                if (! $record) {
+                                    return '-';
+                                }
+                                if (! $record->ebio_webhook_token) {
+                                    return 'Generate a webhook credential before enabling eBio delivery.';
+                                }
+                                $url = e(url('/api/ebio/webhook/'.$record->ebio_webhook_token));
+
+                                return new HtmlString('
                                     <div class="flex items-center gap-2">
                                         <code class="font-mono text-sm px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded">'.$url.'</code>
                                         <button type="button" onclick="navigator.clipboard.writeText(\''.$url.'\')" class="text-primary-600 hover:text-primary-500" title="Copy URL">

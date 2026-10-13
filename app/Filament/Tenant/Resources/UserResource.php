@@ -107,7 +107,8 @@ class UserResource extends Resource
                         ->default(0)
                         ->helperText('Controls access to Secumax. Device sync never changes this field.'),
                     Select::make('device_privilege')
-                        ->label('eBio Device Privilege')
+                        ->visible(fn (): bool => \App\Services\Devices\DeviceIntegration::usesEbio())
+                        ->label('Device privilege')
                         ->options([
                             0 => 'Normal User',
                             14 => 'Device Admin',
@@ -115,6 +116,7 @@ class UserResource extends Resource
                         ->default(0)
                         ->helperText('Controls privileges on biometric devices.'),
                     TextInput::make('device_password')
+                        ->visible(fn (): bool => \App\Services\Devices\DeviceIntegration::usesEbio())
                         ->label('Device Password (Numeric)')
                         ->numeric()
                         ->maxLength(8)
@@ -132,7 +134,7 @@ class UserResource extends Resource
                 ])
                 ->columns(2)
                 ->columnSpanFull(),
-            Section::make('Enrollment Details')
+            Section::make('Organisation details')
                 ->schema([
                     Select::make('branch_id')
                         ->relationship('branch', 'name')
@@ -253,6 +255,7 @@ class UserResource extends Resource
                                 ->label('Designation / Group')
                                 ->default('Not Assigned'),
                             TextEntry::make('fingerprints')
+                    ->visible(fn (): bool => \App\Services\Devices\DeviceIntegration::usesEbio())
                                 ->label('Added Fingerprints')
                                 ->badge()
                                 ->state(function ($record) {
@@ -279,6 +282,7 @@ class UserResource extends Resource
                                 ->color('success')
                                 ->columnSpanFull(),
                             TextEntry::make('face_enrolled')
+                    ->visible(fn (): bool => \App\Services\Devices\DeviceIntegration::usesEbio())
                                 ->label('Face Template Saved')
                                 ->badge()
                                 ->formatStateUsing(fn ($state): string => match ($state) {
@@ -288,7 +292,8 @@ class UserResource extends Resource
                                 })
                                 ->color(fn ($state): string => $state ? 'success' : ($state === false ? 'gray' : 'warning')),
                             TextEntry::make('device_verification_type')
-                                ->label('eBio Verification Type')
+                                ->visible(fn (): bool => \App\Services\Devices\DeviceIntegration::usesEbio())
+                                ->label('Verification type')
                                 ->default('Not reported'),
                         ])->columns(['default' => 2, 'sm' => 2, 'md' => 2]),
 
@@ -408,12 +413,14 @@ class UserResource extends Resource
                     ->color(fn ($state): string => $state === 14 ? 'primary' : 'gray')
                     ->visibleFrom('md'),
                 Tables\Columns\TextColumn::make('device_privilege')
+                    ->visible(fn (): bool => \App\Services\Devices\DeviceIntegration::usesEbio())
                     ->label('Device Privilege')
                     ->badge()
                     ->formatStateUsing(fn ($state) => (int) $state === 14 ? 'Device Admin' : 'Normal User')
                     ->color(fn ($state): string => (int) $state === 14 ? 'warning' : 'gray')
                     ->toggleable(isToggledHiddenByDefault: true),
                 Tables\Columns\IconColumn::make('face_enrolled')
+                    ->visible(fn (): bool => \App\Services\Devices\DeviceIntegration::usesEbio())
                     ->label('Face Template')
                     ->boolean()
                     ->placeholder('Unknown')
@@ -430,6 +437,7 @@ class UserResource extends Resource
                         14 => 'Admin',
                     ]),
                 Tables\Filters\SelectFilter::make('device_privilege')
+                    ->visible(fn (): bool => \App\Services\Devices\DeviceIntegration::usesEbio())
                     ->label('Device Privilege')
                     ->options([
                         0 => 'Normal User',
@@ -451,6 +459,7 @@ class UserResource extends Resource
             ->recordActions([
                 ActionGroup::make([
                     Action::make('addBiometric')
+                        ->authorize(fn (): bool => \App\Services\Devices\DeviceIntegration::usesEbio())
                         ->label('Add Biometric')
                         ->icon('heroicon-o-finger-print')
                         ->form([
@@ -509,6 +518,7 @@ class UserResource extends Resource
                 BulkActionGroup::make([
                     DeleteBulkAction::make(),
                     BulkAction::make('enableUsers')
+                        ->authorize(fn (): bool => \App\Services\Devices\DeviceIntegration::usesEbio())
                         ->label('Unblock user from door')
                         ->icon('heroicon-o-check-circle')
                         ->color('success')
@@ -542,6 +552,7 @@ class UserResource extends Resource
                         })
                         ->deselectRecordsAfterCompletion(),
                     BulkAction::make('disableUsers')
+                        ->authorize(fn (): bool => \App\Services\Devices\DeviceIntegration::usesEbio())
                         ->label('Block user from door')
                         ->icon('heroicon-o-x-circle')
                         ->color('warning')
@@ -575,6 +586,7 @@ class UserResource extends Resource
                         })
                         ->deselectRecordsAfterCompletion(),
                     BulkAction::make('pushToDevice')
+                        ->authorize(fn (): bool => \App\Services\Devices\DeviceIntegration::usesEbio())
                         ->icon('heroicon-o-arrow-up-on-square')
                         ->color('success')
                         ->label('Push to Device / Location')
@@ -614,12 +626,13 @@ class UserResource extends Resource
 
                             Notification::make()
                                 ->title('Sync Queued')
-                                ->body("{$count} user(s) queued for sync to eBioServer.")
+                                ->body("{$count} user(s) queued for device synchronization.")
                                 ->success()
                                 ->send();
                         })
                         ->deselectRecordsAfterCompletion(),
                     BulkAction::make('deleteFromDevice')
+                        ->authorize(fn (): bool => \App\Services\Devices\DeviceIntegration::usesEbio())
                         ->icon('heroicon-o-trash')
                         ->color('danger')
                         ->label('Delete from Devices')
