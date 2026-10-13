@@ -52,7 +52,9 @@ final class ReceiptApplier
                         if ($employee) {
                             $dates = [$at->copy()->subDay()->toDateString(), $at->toDateString()];
                             $days = AttendanceDay::where('user_id', $employee->id)->where(function ($query) use ($dates, $at) {
-                                $query->whereIn('work_date', $dates)->orWhereHas('occurrences', fn ($q) => $q->where('window_starts_at', '<=', $at)->where('window_ends_at', '>=', $at));
+                                $query->where(function ($datesQuery) use ($dates) {
+                                    foreach ($dates as $date) $datesQuery->orWhereDate('work_date', $date);
+                                })->orWhereHas('occurrences', fn ($q) => $q->where('window_starts_at', '<=', $at)->where('window_ends_at', '>=', $at));
                             })->orderBy('id')->lockForUpdate()->get();
                             foreach ($days as $day) {
                                 $day->update(['stale_at' => now()]);
