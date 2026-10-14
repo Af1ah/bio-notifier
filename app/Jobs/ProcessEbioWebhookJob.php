@@ -6,6 +6,7 @@ use App\Models\AttendanceLog;
 use App\Models\Device;
 use App\Models\Organisation;
 use App\Models\WebhookReceipt;
+use App\Services\Devices\DeviceIntegration;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\QueryException;
@@ -54,10 +55,12 @@ class ProcessEbioWebhookJob implements ShouldQueue
             $receipt->increment('attempts');
             $receipt->update(['state' => 'processing', 'last_error' => null]);
         }
+        $previous = tenant();
         try {
             if ($receipt) {
                 $this->logs = $receipt->payload;
             }
+            DeviceIntegration::requireEbio($this->organisation);
             tenancy()->initialize($this->organisation);
             foreach ($this->logs as $logData) {
                 if (! isset($logData['EmployeeCode']) || ! isset($logData['LogDate'])) {
@@ -129,6 +132,9 @@ class ProcessEbioWebhookJob implements ShouldQueue
             throw $exception;
         } finally {
             tenancy()->end();
+            if ($previous) {
+                tenancy()->initialize($previous);
+            }
         }
     }
 }

@@ -36,6 +36,7 @@ class DeviceCommandTrackingTest extends TestCase
         $organisation = (new Organisation)->forceFill(['id' => 'tenant-id']);
         $tenancy = Mockery::mock(Tenancy::class);
         $tenancy->shouldReceive('initialize')->once()->with($organisation);
+        $tenancy->shouldReceive('end')->once();
         $this->app->instance(Tenancy::class, $tenancy);
         $service = Mockery::mock(EbioSoapService::class);
         $service->shouldReceive('syncUsers')->once()->with($organisation)->andReturn(['synced' => 7, 'errors' => 0]);
@@ -60,6 +61,7 @@ class DeviceCommandTrackingTest extends TestCase
         $organisation = (new Organisation)->forceFill(['id' => 'tenant-id']);
         $tenancy = Mockery::mock(Tenancy::class);
         $tenancy->shouldReceive('initialize')->once()->with($organisation);
+        $tenancy->shouldReceive('end')->once();
         $this->app->instance(Tenancy::class, $tenancy);
         $service = Mockery::mock(EbioSoapService::class);
         $service->shouldReceive('syncUsers')->once()->andThrow(new RuntimeException('Connection refused'));

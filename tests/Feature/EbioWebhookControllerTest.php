@@ -16,7 +16,7 @@ class EbioWebhookControllerTest extends TestCase
     {
         Queue::fake();
         config(['services.ebio.allow_device_discovery' => false]);
-        $org = Organisation::create(['name' => 'Receipt test']);
+        $org = Organisation::create(['device_integration' => 'ebio', 'name' => 'Receipt test']);
         $this->organisations[] = $org;
         $payload = [['EmployeeCode' => 'receipt-pin', 'SerialNumber' => 'REGISTER-ME', 'LogDate' => '2026-09-01 09:00:00']];
         $url = '/api/ebio/webhook/'.$org->ebio_webhook_token;
@@ -48,7 +48,7 @@ class EbioWebhookControllerTest extends TestCase
 
     public function test_missing_serial_uses_a_real_tenant_device_not_invalid_foreign_key_zero(): void
     {
-        $org = Organisation::create(['name' => 'No serial']);
+        $org = Organisation::create(['device_integration' => 'ebio', 'name' => 'No serial']);
         $this->organisations[] = $org;
         (new ProcessEbioWebhookJob($org, [['EmployeeCode' => 'no-serial', 'LogDate' => '2026-09-01 09:00:00']]))->handle();
         tenancy()->initialize($org);
@@ -85,7 +85,7 @@ class EbioWebhookControllerTest extends TestCase
     {
         Queue::fake();
 
-        $organisation = Organisation::create([
+        $organisation = Organisation::create(['device_integration' => 'ebio',
             'name' => 'Test Org',
             'db_name' => 'test_org_controller_1',
         ]);
@@ -116,7 +116,7 @@ class EbioWebhookControllerTest extends TestCase
     {
         Queue::fake();
 
-        $organisation = Organisation::create([
+        $organisation = Organisation::create(['device_integration' => 'ebio',
             'name' => 'Test Org 2',
             'db_name' => 'test_org_controller_2',
         ]);

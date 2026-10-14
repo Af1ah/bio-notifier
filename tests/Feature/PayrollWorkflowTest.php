@@ -17,8 +17,10 @@ use App\Services\Attendance\HolidayAttendanceService;
 use App\Services\Attendance\ReportService;
 use App\Services\Attendance\ShiftAssignmentService;
 use App\Services\Attendance\ShiftRuleService;
+use App\Services\Payroll\ManualPayrollReviewService;
 use App\Services\Payroll\SalarySlipService;
 use Carbon\Carbon;
+use Carbon\CarbonPeriod;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -45,7 +47,7 @@ class PayrollWorkflowTest extends TestCase
         $user = User::create(['name' => 'Late', 'pin' => 'late']);
         $user->payrollProfile()->create(['payroll_enabled' => true, 'basic_salary_minor' => 800000, 'effective_from' => '2026-08-01']);
         $day = AttendanceDay::create(['user_id' => $user->id, 'work_date' => '2026-08-03', 'status' => 'present', 'calculation_revision' => 1]);
-        $slip = app(SalarySlipService::class)->generate($user, Carbon::parse('2026-08-01'));
+        $slip = $this->generateCompletePeriod($user, Carbon::parse('2026-08-01'));
         $slip->update(['status' => 'reviewed']);
         $amount = $slip->net_pay_minor;
         $device = Device::create(['serial_number' => 'LATE']);
@@ -61,11 +63,15 @@ class PayrollWorkflowTest extends TestCase
         $user->payrollProfile()->create(['payroll_enabled' => true, 'basic_salary_minor' => 80_000, 'effective_from' => '2026-08-01']);
         AttendanceDay::create(['user_id' => $user->id, 'work_date' => '2026-08-25', 'status' => 'present', 'calculation_revision' => 1]);
         $day = AttendanceDay::create(['user_id' => $user->id, 'work_date' => '2026-08-26', 'status' => 'absent', 'calculation_revision' => 1]);
-        $slip = app(SalarySlipService::class)->generate($user, Carbon::parse('2026-08-01'));
+        $slip = $this->generateCompletePeriod($user, Carbon::parse('2026-08-01'));
         $this->assertSame(2_581, $slip->attendance_deduction_minor);
         $holiday = Holiday::create(['name' => 'Onam', 'starts_on' => '2026-08-26', 'ends_on' => '2026-08-26', 'recurrence' => 'none', 'active' => true]);
         $this->assertSame('holiday', $day->fresh()->status);
         $this->assertSame(2, $day->fresh()->calculation_revision);
+        $this->assertSame(2581, $slip->fresh()->attendance_deduction_minor);
+        $this->assertTrue($slip->fresh()->calculation_snapshot['needs_recalculation']);
+        $this->reviewManualPeriod($user, Carbon::parse('2026-08-01'));
+        $this->generateCompletePeriod($user, Carbon::parse('2026-08-01'));
         $this->assertSame(0, $slip->fresh()->attendance_deduction_minor);
         $this->assertSame(80_000, $slip->fresh()->basic_salary_minor);
         $report = app(ReportService::class)->generateReport([$user->id], '2026-08-26', '2026-08-26');
@@ -84,13 +90,13 @@ class PayrollWorkflowTest extends TestCase
         AttendanceDay::create(['user_id' => $user->id, 'work_date' => '2026-08-26', 'status' => 'absent', 'calculation_revision' => 1]);
         $type = LeaveType::create(['name' => 'Unpaid', 'code' => 'UP', 'is_paid' => false, 'annual_allowance_half_units' => 0, 'deduction_method' => 'salary_day_rate']);
         EmployeeLeave::create(['user_id' => $user->id, 'leave_type_id' => $type->id, 'leave_date' => '2026-08-26', 'duration' => 'full', 'state' => 'approved']);
-        $slip = app(SalarySlipService::class)->generate($user, Carbon::parse('2026-08-01'));
+        $slip = $this->generateCompletePeriod($user, Carbon::parse('2026-08-01'));
         $slip->update(['status' => 'reviewed']);
         Holiday::create(['name' => 'Onam', 'starts_on' => '2026-08-26', 'ends_on' => '2026-08-26', 'recurrence' => 'none', 'active' => true]);
         $this->assertSame(40_000, $slip->fresh()->leave_deduction_minor);
         $this->assertTrue($slip->fresh()->calculation_snapshot['needs_recalculation']);
         $slip->update(['status' => 'draft']);
-        $recalculated = app(SalarySlipService::class)->generate($user, Carbon::parse('2026-08-01'));
+        $recalculated = $this->generateCompletePeriod($user, Carbon::parse('2026-08-01'));
         $this->assertSame(0, $recalculated->leave_deduction_minor);
         $this->assertSame(0, $recalculated->unpaid_leave_half_units);
         $this->assertSame(1, $recalculated->scheduled_days);
@@ -164,7 +170,7 @@ class PayrollWorkflowTest extends TestCase
         EmployeeLeave::create(['user_id' => $user->id, 'leave_type_id' => $paid->id, 'leave_date' => '2026-09-04', 'duration' => 'full', 'state' => 'approved']);
         EmployeeLeave::create(['user_id' => $user->id, 'leave_type_id' => $unpaid->id, 'leave_date' => '2026-09-05', 'duration' => 'full', 'state' => 'approved']);
 
-        $slip = app(SalarySlipService::class)->generate($user, Carbon::parse('2026-09-01'));
+        $slip = $this->generateCompletePeriod($user, Carbon::parse('2026-09-01'));
 
         $this->assertSame(5, $slip->scheduled_days);
         $this->assertSame(1, $slip->full_days);
@@ -195,7 +201,7 @@ class PayrollWorkflowTest extends TestCase
         AttendanceDay::create(['user_id' => $user->id, 'work_date' => '2026-09-03', 'status' => 'absent', 'calculation_revision' => 1]);
         AttendanceDay::create(['user_id' => $user->id, 'work_date' => '2026-09-04', 'status' => 'off', 'calculation_revision' => 1]);
 
-        $slip = app(SalarySlipService::class)->generate($user, Carbon::parse('2026-09-01'));
+        $slip = $this->generateCompletePeriod($user, Carbon::parse('2026-09-01'));
 
         $this->assertSame(15_000, $slip->basic_salary_minor);
         $this->assertSame(0, $slip->housing_allowance_minor);
@@ -222,7 +228,7 @@ class PayrollWorkflowTest extends TestCase
             'calculation_revision' => 1,
         ]);
 
-        $slip = app(SalarySlipService::class)->generate($user, Carbon::parse('2026-09-01'));
+        $slip = $this->generateCompletePeriod($user, Carbon::parse('2026-09-01'));
 
         $this->assertSame(96_000, $slip->basic_salary_minor);
         $this->assertSame(18_000, $slip->overtime_pay_minor);
@@ -237,10 +243,10 @@ class PayrollWorkflowTest extends TestCase
         $user->payrollProfile()->create(['payroll_enabled' => true, 'basic_salary_minor' => 300_000, 'effective_from' => '2026-09-01']);
         $day = AttendanceDay::create(['user_id' => $user->id, 'work_date' => '2026-09-01', 'status' => 'present', 'calculation_revision' => 1]);
         $service = app(SalarySlipService::class);
-        $original = $service->generate($user, Carbon::parse('2026-09-01'));
+        $original = $this->generateCompletePeriod($user, Carbon::parse('2026-09-01'));
 
         $day->update(['status' => 'absent', 'calculation_revision' => 2]);
-        $recalculated = $service->generate($user, Carbon::parse('2026-09-01'));
+        $recalculated = $this->generateCompletePeriod($user, Carbon::parse('2026-09-01'));
 
         $this->assertSame($original->id, $recalculated->id);
         $this->assertSame(10_000, $recalculated->attendance_deduction_minor);
@@ -255,7 +261,7 @@ class PayrollWorkflowTest extends TestCase
         AttendanceApproval::create(['attendance_day_id' => $day->id, 'type' => 'attendance', 'state' => 'pending', 'calculation_revision' => 1, 'proposal' => ['reason' => 'missing_checkout']]);
 
         $this->expectException(ValidationException::class);
-        app(SalarySlipService::class)->generate($user, Carbon::parse('2026-09-01'));
+        $this->generateCompletePeriod($user, Carbon::parse('2026-09-01'));
     }
 
     public function test_leave_deduction_can_use_basic_salary_divided_by_31_calendar_days(): void
@@ -278,7 +284,7 @@ class PayrollWorkflowTest extends TestCase
         EmployeeLeave::create(['user_id' => $user->id, 'leave_type_id' => $leaveType->id, 'leave_date' => '2026-09-03', 'duration' => 'half', 'state' => 'approved']);
         AttendanceDay::create(['user_id' => $user->id, 'work_date' => '2026-09-03', 'status' => 'half_day', 'approved_worked_minutes' => 240, 'calculation_revision' => 1]);
 
-        $slip = app(SalarySlipService::class)->generate($user, Carbon::parse('2026-09-01'));
+        $slip = $this->generateCompletePeriod($user, Carbon::parse('2026-09-01'));
 
         $this->assertSame(103_333, $slip->calculation_snapshot['calendar_day_rate_minor']);
         $this->assertSame(155_000, $slip->leave_deduction_minor);
@@ -309,6 +315,8 @@ class PayrollWorkflowTest extends TestCase
             'calculation_revision' => 1,
         ]);
 
+        $this->completeManualCalendar($user, Carbon::parse('2026-09-01'));
+        $this->reviewManualPeriod($user, Carbon::parse('2026-09-01'));
         $this->assertSame([], $service->readinessIssues($user->fresh(), Carbon::parse('2026-09-01')));
     }
 
@@ -319,14 +327,14 @@ class PayrollWorkflowTest extends TestCase
         $user->payrollProfile()->create(['payroll_enabled' => true, 'basic_salary_minor' => 1_000_000, 'effective_from' => '2026-09-01']);
         AttendanceDay::create(['user_id' => $user->id, 'work_date' => '2026-09-01', 'status' => 'present', 'calculation_revision' => 1]);
         $service = app(SalarySlipService::class);
-        $slip = $service->generate($user, Carbon::parse('2026-09-01'));
+        $slip = $this->generateCompletePeriod($user, Carbon::parse('2026-09-01'));
 
         $this->assertSame('reviewed', $service->transition($slip, $admin, 'reviewed')->status);
         $this->assertSame('approved', $service->transition($slip->fresh(), $admin, 'approved')->status);
         $this->assertSame('paid', $service->transition($slip->fresh(), $admin, 'paid')->status);
 
         $this->expectException(ValidationException::class);
-        $service->generate($user, Carbon::parse('2026-09-01'));
+        $this->generateCompletePeriod($user, Carbon::parse('2026-09-01'));
     }
 
     public function test_salary_slips_do_not_cross_tenant_database_boundaries(): void
@@ -334,7 +342,7 @@ class PayrollWorkflowTest extends TestCase
         $user = User::create(['name' => 'Tenant A Employee', 'pin' => '504']);
         $user->payrollProfile()->create(['payroll_enabled' => true, 'basic_salary_minor' => 1_000_000]);
         AttendanceDay::create(['user_id' => $user->id, 'work_date' => '2026-09-01', 'status' => 'present', 'calculation_revision' => 1]);
-        app(SalarySlipService::class)->generate($user, Carbon::parse('2026-09-01'));
+        $this->generateCompletePeriod($user, Carbon::parse('2026-09-01'));
         $first = config('database.connections.sqlite.database');
         $second = tempnam('/tmp', 'bio-payroll-tenant-b-');
 
@@ -353,5 +361,85 @@ class PayrollWorkflowTest extends TestCase
         config(['database.connections.sqlite.database' => $first]);
         DB::purge('sqlite');
         @unlink($second);
+    }
+
+    private function completeManualCalendar(User $user, Carbon $period): void
+    {
+        foreach (CarbonPeriod::create($period->copy()->startOfMonth(), $period->copy()->endOfMonth()) as $date) {
+            if (! AttendanceDay::where('user_id', $user->id)->whereDate('work_date', $date->toDateString())->exists()) {
+                AttendanceDay::create(['user_id' => $user->id, 'work_date' => $date->toDateString(),
+                    'status' => EmployeeLeave::where('user_id', $user->id)->whereDate('leave_date', $date->toDateString())->where('state', 'approved')->exists() ? 'absent' : 'off', 'calculation_revision' => 1]);
+            }
+        }
+    }
+
+    private function reviewManualPeriod(User $user, Carbon $period): void
+    {
+        $review = app(ManualPayrollReviewService::class);
+        if ($review->required($user, $period) && ! $review->approved($user, $period)) {
+            $actor = User::firstOrCreate(['pin' => '__payroll_review_admin'], ['name' => 'HR reviewer', 'privilege' => 14, 'is_system_account' => true]);
+            $review->approve($user, $actor, $period, 'Verified complete manual test period', $review->signature($user, $period));
+        }
+    }
+
+    private function generateCompletePeriod(User $user, Carbon $period): SalarySlip
+    {
+        $user = $user->fresh(['payrollProfile']);
+        if (($user->payrollProfile?->pay_basis ?: 'monthly') === 'monthly') {
+            $this->completeManualCalendar($user, $period);
+        }
+
+        $this->reviewManualPeriod($user, $period);
+
+        return app(SalarySlipService::class)->generate($user, $period);
+    }
+
+    public function test_sparse_manual_month_is_blocked_by_readiness_and_generation(): void
+    {
+        $user = User::create(['name' => 'Sparse', 'pin' => 'sparse']);
+        $user->payrollProfile()->create(['payroll_enabled' => true, 'basic_salary_minor' => 800000, 'effective_from' => '2026-08-01']);
+        AttendanceDay::create(['user_id' => $user->id, 'work_date' => '2026-08-03', 'status' => 'present', 'calculation_revision' => 1]);
+        $service = app(SalarySlipService::class);
+        $this->assertStringContainsString('incomplete', implode(' ', $service->readinessIssues($user, Carbon::parse('2026-08-01'))));
+        try {
+            $service->generate($user, Carbon::parse('2026-08-01'));
+            $this->fail('A sparse manual month must not receive a monthly salary.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('attendance', $exception->errors());
+        }
+        $this->assertDatabaseCount('salary_slips', 0);
+    }
+
+    public function test_complete_manual_month_includes_the_final_date_and_deducts_its_absence(): void
+    {
+        $user = User::create(['name' => 'Month end', 'pin' => 'month-end']);
+        $user->payrollProfile()->create(['payroll_enabled' => true, 'basic_salary_minor' => 310000, 'effective_from' => '2026-08-01']);
+        AttendanceDay::create(['user_id' => $user->id, 'work_date' => '2026-08-01', 'status' => 'present', 'calculation_revision' => 1]);
+        AttendanceDay::create(['user_id' => $user->id, 'work_date' => '2026-08-31', 'status' => 'absent', 'calculation_revision' => 1]);
+        $this->completeManualCalendar($user, Carbon::parse('2026-08-01'));
+        $this->reviewManualPeriod($user, Carbon::parse('2026-08-01'));
+        $slip = app(SalarySlipService::class)->generate($user, Carbon::parse('2026-08-01'));
+        $this->assertCount(31, $slip->calculation_snapshot['attendance_days']);
+        $this->assertSame(10000, $slip->attendance_deduction_minor);
+        $this->assertSame(300000, $slip->net_pay_minor);
+    }
+
+    public function test_existing_sparse_monthly_slips_cannot_be_reviewed_approved_or_paid(): void
+    {
+        $user = User::create(['name' => 'Legacy', 'pin' => 'legacy-sparse', 'privilege' => 14]);
+        $user->payrollProfile()->create(['payroll_enabled' => true, 'basic_salary_minor' => 800000, 'effective_from' => '2026-08-01']);
+        AttendanceDay::create(['user_id' => $user->id, 'work_date' => '2026-08-03', 'status' => 'present', 'calculation_revision' => 1]);
+        $slip = SalarySlip::create(['user_id' => $user->id, 'period_start' => '2026-08-01', 'period_end' => '2026-08-31', 'calculation_snapshot' => ['pay_basis' => 'monthly'], 'calculated_at' => now(), 'net_pay_minor' => 800000]);
+        foreach (['draft' => 'reviewed', 'reviewed' => 'approved', 'approved' => 'paid'] as $source => $target) {
+            $slip->update(['status' => $source]);
+            try {
+                app(SalarySlipService::class)->transition($slip->fresh(), $user, $target);
+                $this->fail('Incomplete monthly attendance must block '.$target);
+            } catch (ValidationException $exception) {
+                $this->assertArrayHasKey('attendance', $exception->errors());
+                $this->assertSame($source, $slip->fresh()->status);
+                $this->assertSame(800000, $slip->fresh()->net_pay_minor);
+            }
+        }
     }
 }

@@ -12,9 +12,28 @@ class EmployeeLeavePolicy
         return (int) $user->privilege === 14;
     }
 
-    public function viewAny(User $user): bool { return $this->admin($user); }
-    public function view(User $user, EmployeeLeave $leave): bool { return $this->admin($user); }
-    public function create(User $user): bool { return $this->admin($user); }
-    public function update(User $user, EmployeeLeave $leave): bool { return $this->admin($user); }
-    public function delete(User $user, EmployeeLeave $leave): bool { return $this->admin($user); }
+    public function viewAny(User $user): bool
+    {
+        return $this->admin($user);
+    }
+
+    public function view(User $user, EmployeeLeave $leave): bool
+    {
+        return $this->admin($user);
+    }
+
+    public function create(User $user): bool
+    {
+        return $this->admin($user);
+    }
+
+    public function update(User $user, EmployeeLeave $leave): bool
+    {
+        return $this->admin($user);
+    }
+
+    public function delete(User $user, EmployeeLeave $leave): bool
+    {
+        return false;
+    }
 }

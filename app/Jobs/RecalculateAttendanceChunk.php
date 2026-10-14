@@ -55,24 +55,41 @@ class RecalculateAttendanceChunk implements ShouldQueue
 
                 return;
             }
+            if ($run->state === 'needs_reconciliation') {
+                return;
+            }
             $run->update(['state' => 'running']);
-            foreach (User::employees()->whereIn('id', $this->userIds)->cursor() as $user) {
+            foreach ($this->userIds as $employeeId) {
                 foreach (CarbonPeriod::create($run->from_date, $run->to_date) as $date) {
-                    DB::transaction(function () use ($run, $user, $date, $calculator) {
+                    DB::transaction(function () use ($run, $employeeId, $date, $calculator) {
                         $locked = AttendanceCalculationRun::lockForUpdate()->findOrFail($run->id);
-                        $key = ['attendance_calculation_run_id' => $run->id, 'user_id' => $user->id, 'work_date' => $date->toDateString()];
-                        if (DB::table('attendance_calculation_items')->where($key)->exists()) {
+                        $key = ['attendance_calculation_run_id' => $run->id, 'employee_id_snapshot' => $employeeId, 'work_date' => $date->toDateString()];
+                        if (DB::table('attendance_calculation_results')->where($key)->exists()) {
                             return;
                         }
-                        $calculator->calculate($user, $date);
-                        DB::table('attendance_calculation_items')->insert($key);
-                        $locked->update(['completed' => DB::table('attendance_calculation_items')->where('attendance_calculation_run_id', $run->id)->count(), 'failed' => 0, 'last_error' => null]);
+                        $user = User::lockForUpdate()->find($employeeId);
+                        $eligible = $user && User::employees()->whereKey($employeeId)->exists();
+                        if ($eligible) {
+                            $calculator->calculate($user, $date);
+                            DB::table('attendance_calculation_items')->insertOrIgnore(['attendance_calculation_run_id' => $run->id, 'user_id' => $employeeId, 'work_date' => $date->toDateString()]);
+                        }
+                        DB::table('attendance_calculation_results')->insert($key + ['outcome' => $eligible ? 'completed' : 'skipped',
+                            'reason' => $eligible ? null : ($user ? 'employee_excluded' : 'employee_removed'), 'created_at' => now(), 'updated_at' => now()]);
+                        $results = DB::table('attendance_calculation_results')->where('attendance_calculation_run_id', $run->id);
+                        $completed = (clone $results)->where('outcome', 'completed')->count() + $locked->legacy_completed_credit;
+                        $skipped = (clone $results)->where('outcome', 'skipped')->count();
+                        $locked->update(['completed' => $completed, 'skipped' => $skipped, 'failed' => 0, 'last_error' => null,
+                            'state' => $completed + $skipped >= $locked->total ? ($skipped ? 'completed_with_skips' : 'completed') : 'running']);
                     }, 3);
                 }
             }
-            if ($run->fresh()->completed >= $run->total) {
-                $run->update(['state' => 'completed', 'failed' => 0, 'last_error' => null]);
-            }
+            DB::transaction(function () use ($run) {
+                $locked = AttendanceCalculationRun::lockForUpdate()->findOrFail($run->id);
+                $results = DB::table('attendance_calculation_results')->where('attendance_calculation_run_id', $run->id);
+                $completed = (clone $results)->where('outcome', 'completed')->count() + $locked->legacy_completed_credit;
+                $skipped = (clone $results)->where('outcome', 'skipped')->count();
+                $locked->update(['completed' => $completed, 'skipped' => $skipped, 'state' => $completed + $skipped >= $locked->total ? ($skipped ? 'completed_with_skips' : 'completed') : 'running']);
+            });
         } catch (\Throwable $e) {
             if (isset($run)) {
                 $run->update(['failed' => 1, 'last_error' => 'Calculation failed; inspect the failed queue job and retry.', 'state' => 'failed']);

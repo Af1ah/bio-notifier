@@ -84,4 +84,51 @@ class AttendanceQueueTest extends TestCase
         $this->assertEquals(0, $run->fresh()->total);
         $this->assertStringContainsString('end date', $run->fresh()->last_error);
     }
+
+    public function test_removed_or_excluded_employees_are_recorded_as_skipped_without_lowering_total(): void
+    {
+        $removed = User::create(['name' => 'Removed', 'pin' => 'removed']);
+        $id = $removed->id;
+        $removed->delete();
+        $excluded = User::create(['name' => 'Excluded', 'pin' => 'excluded', 'is_system_account' => true]);
+        $run = AttendanceCalculationRun::create(['run_key' => Str::uuid(), 'from_date' => '2026-10-01', 'to_date' => '2026-10-01', 'total' => 2]);
+        $org = (new Organisation)->forceFill(['id' => 'queue-test']);
+        $tenancy = Mockery::mock(Tenancy::class);
+        $tenancy->shouldReceive('initialize')->twice()->with($org);
+        $tenancy->shouldReceive('end')->twice();
+        $this->app->instance(Tenancy::class, $tenancy);
+        $calculator = Mockery::mock(AttendanceCalculationService::class);
+        $calculator->shouldNotReceive('calculate');
+        $job = new RecalculateAttendanceChunk($org, $run->id, [$id, $excluded->id]);
+        $job->handle($calculator);
+        $job->handle($calculator);
+        $this->assertSame(2, $run->fresh()->total);
+        $this->assertSame(0, $run->fresh()->completed);
+        $this->assertSame(2, $run->fresh()->skipped);
+        $this->assertSame('completed_with_skips', $run->fresh()->state);
+        $this->assertDatabaseHas('attendance_calculation_results', ['employee_id_snapshot' => $id, 'reason' => 'employee_removed']);
+        $this->assertDatabaseHas('attendance_calculation_results', ['employee_id_snapshot' => $excluded->id, 'reason' => 'employee_excluded']);
+    }
+
+    public function test_completed_run_evidence_survives_employee_deletion_and_retries(): void
+    {
+        $employee = User::create(['name' => 'Completed', 'pin' => 'completed']);
+        $id = $employee->id;
+        $run = AttendanceCalculationRun::create(['run_key' => Str::uuid(), 'from_date' => '2026-10-01', 'to_date' => '2026-10-01', 'total' => 1]);
+        $org = (new Organisation)->forceFill(['id' => 'queue-test']);
+        $tenancy = Mockery::mock(Tenancy::class);
+        $tenancy->shouldReceive('initialize')->twice()->with($org);
+        $tenancy->shouldReceive('end')->twice();
+        $this->app->instance(Tenancy::class, $tenancy);
+        $calculator = Mockery::mock(AttendanceCalculationService::class);
+        $calculator->shouldReceive('calculate')->once()->andReturn(new AttendanceDay);
+        $job = new RecalculateAttendanceChunk($org, $run->id, [$id]);
+        $job->handle($calculator);
+        $employee->delete();
+        $job->handle($calculator);
+        $this->assertSame(1, $run->fresh()->completed);
+        $this->assertSame(0, $run->fresh()->skipped);
+        $this->assertSame('completed', $run->fresh()->state);
+        $this->assertDatabaseHas('attendance_calculation_results', ['employee_id_snapshot' => $id, 'outcome' => 'completed']);
+    }
 }

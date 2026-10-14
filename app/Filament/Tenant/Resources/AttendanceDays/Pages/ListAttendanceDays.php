@@ -5,12 +5,16 @@ namespace App\Filament\Tenant\Resources\AttendanceDays\Pages;
 use App\Filament\Tenant\Resources\AttendanceDays\AttendanceDayResource;
 use App\Jobs\RecalculateAttendanceChunk;
 use App\Models\AttendanceCalculationRun;
+use App\Models\Schedule;
 use App\Models\User;
+use App\Services\Attendance\AttendanceEntryService;
 use App\Services\Attendance\AttendanceRateLimiter;
 use Carbon\Carbon;
 use Filament\Actions\Action;
 use Filament\Forms\Components\DatePicker;
+use Filament\Forms\Components\DateTimePicker;
 use Filament\Forms\Components\Select;
+use Filament\Forms\Components\Textarea;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\ListRecords;
 use Filament\Schemas\Schema;
@@ -24,6 +28,27 @@ class ListAttendanceDays extends ListRecords
     protected function getHeaderActions(): array
     {
         return [
+            Action::make('manualAttendance')->label('Add manual attendance')->icon('heroicon-o-plus')
+                ->visible(fn () => auth()->user()?->privilege === 14)->modalDescription('Create a manual shift interval. The shift rules calculate minutes automatically; attendance approval is required before payroll.')
+                ->schema([
+                    Select::make('user_id')->label('Employee')->options(fn () => User::employees()->orderBy('name')->pluck('name', 'id'))->searchable()->required(),
+                    DatePicker::make('work_date')->label('Work date')->default(today())->required(),
+                    Select::make('schedule_id')->label('Shift')->options(fn () => Schedule::where('status', true)->orderBy('name')->pluck('name', 'id'))->searchable()->required(),
+                    DateTimePicker::make('in_at')->label('Check-in date/time')->seconds(false)->required(),
+                    DateTimePicker::make('out_at')->label('Checkout date/time')->seconds(false)->after('in_at')->required(),
+                    Textarea::make('reason')->required()->maxLength(2000),
+                ])->action(function (array $data, Schema $schema) {
+                    try {
+                        app(AttendanceRateLimiter::class)->ensure('manual_entry', 30);
+                        app(AttendanceEntryService::class)->add(auth()->user(), $data);
+                    } catch (ValidationException $exception) {
+                        $errors = [];
+                        foreach ($exception->errors() as $field => $messages) {
+                            $errors[$schema->getStatePath().'.'.$field] = $messages;
+                        }throw ValidationException::withMessages($errors);
+                    }
+                    Notification::make()->title('Manual attendance calculated')->body('Review its attendance approval before payroll.')->success()->send();
+                }),
             Action::make('recalculate')->label('Recalculate')->icon('heroicon-o-arrow-path')
                 ->modalDescription('Choose up to 31 days per calculation. For a longer period, calculate one month at a time.')
                 ->modalSubmitActionLabel('Queue calculation')->schema([
@@ -48,7 +73,7 @@ class ListAttendanceDays extends ListRecords
                     } catch (ValidationException $exception) {
                         $this->rejectCalculation($schema, 'from_date', implode(' ', $exception->validator->errors()->all()));
                     }
-                    $run = AttendanceCalculationRun::create(['run_key' => Str::uuid(), 'from_date' => $from, 'to_date' => $to, 'filters' => ['user_ids' => $data['user_ids'] ?? []], 'total' => count($ids) * ($from->diffInDays($to) + 1)]);
+                    $run = AttendanceCalculationRun::create(['run_key' => Str::uuid(), 'from_date' => $from, 'to_date' => $to, 'filters' => ['user_ids' => $data['user_ids'] ?? []], 'state' => $ids ? 'queued' : 'completed', 'total' => count($ids) * ($from->diffInDays($to) + 1)]);
                     foreach (array_chunk($ids, 100) as $chunk) {
                         RecalculateAttendanceChunk::dispatch(tenancy()->tenant, $run->id, $chunk);
                     }Notification::make()->title('Recalculation queued')->body("{$run->total} employee-days")->success()->send();

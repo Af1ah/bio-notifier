@@ -18,6 +18,11 @@ class AttendanceDay extends Model
         return $this->belongsTo(User::class);
     }
 
+    public function compensatoryAward()
+    {
+        return $this->hasOne(CompensatoryAward::class);
+    }
+
     public function occurrences()
     {
         return $this->hasMany(AttendanceOccurrence::class);

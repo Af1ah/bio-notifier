@@ -3,14 +3,20 @@
 namespace App\Services\Payroll;
 
 use Barryvdh\DomPDF\Facade\Pdf;
+use Carbon\Carbon;
 use Filament\Notifications\Notification;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class SalarySlipExportService
 {
-    public function pdf(Builder $query, string $organisation): ?StreamedResponse
+    public function pdf(Builder $query, string $organisation, ?Carbon $period = null): ?StreamedResponse
     {
+        if (! $period) {
+            throw ValidationException::withMessages(['period' => 'Select one month before exporting.']);
+        }
+        $query = (clone $query)->whereDate('period_start', $period->copy()->startOfMonth());
         $slips = (clone $query)->with(['user.branch', 'user.department', 'user.taskGroups'])->limit(251)->get();
         if ($slips->isEmpty() || $slips->count() > 250) {
             Notification::make()->title('Download unavailable')->body($slips->isEmpty() ? 'No salary slips match the applied filters.' : 'Filter to 250 or fewer salary slips per PDF download.')->warning()->send();
@@ -23,11 +29,15 @@ class SalarySlipExportService
         ]);
         $pdf = Pdf::loadView('filament.tenant.pages.pdf.salary-slips', compact('slips', 'totals', 'organisation'))->setPaper('a4');
 
-        return response()->streamDownload(fn () => print($pdf->output()), 'salary-slips-'.now()->format('Y-m-d').'.pdf', ['Content-Type' => 'application/pdf']);
+        return response()->streamDownload(fn () => print ($pdf->output()), 'salary-slips-'.$period->format('Y-m').'.pdf', ['Content-Type' => 'application/pdf']);
     }
 
-    public function csv(Builder $query): ?StreamedResponse
+    public function csv(Builder $query, ?Carbon $period = null): ?StreamedResponse
     {
+        if (! $period) {
+            throw ValidationException::withMessages(['period' => 'Select one month before exporting.']);
+        }
+        $query = (clone $query)->whereDate('period_start', $period->copy()->startOfMonth());
         $count = (clone $query)->reorder()->count();
         if ($count === 0 || $count > 10000) {
             Notification::make()->title('Download unavailable')->body($count === 0 ? 'No salary slips match the applied filters.' : 'Filter to 10,000 or fewer salary slips per CSV download.')->warning()->send();
@@ -55,6 +65,6 @@ class SalarySlipExportService
                 fputcsv($stream, ['', '', 'TOTAL', '', '', '', '', $currency, ...array_map(fn ($minor) => number_format($minor / 100, 2, '.', ''), array_values($amounts))], ',', '"', '');
             }
             fclose($stream);
-        }, 'payroll-'.now()->format('Y-m-d').'.csv', ['Content-Type' => 'text/csv; charset=UTF-8']);
+        }, 'payroll-'.$period->format('Y-m').'.csv', ['Content-Type' => 'text/csv; charset=UTF-8']);
     }
 }

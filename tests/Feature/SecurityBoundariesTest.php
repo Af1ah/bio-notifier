@@ -32,7 +32,7 @@ class SecurityBoundariesTest extends TestCase
 
     private function organisation(): Organisation
     {
-        $tenant = Organisation::create(['name' => 'Security test']);
+        $tenant = Organisation::create(['device_integration' => 'ebio', 'name' => 'Security test']);
         $this->tenants[] = $tenant;
 
         return $tenant;

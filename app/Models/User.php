@@ -13,6 +13,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\ValidationException;
 
 class User extends Authenticatable implements FilamentUser
 {
@@ -44,6 +45,21 @@ class User extends Authenticatable implements FilamentUser
     protected static function boot()
     {
         parent::boot();
+
+        static::deleting(function ($user) {
+            $connection = $user->getConnection();
+            if (! $connection->getSchemaBuilder()->hasTable('manual_attendance_entries')) {
+                return;
+            }
+            foreach (['manual_attendance_entries', 'manual_payroll_reviews', 'salary_slips', 'leave_credit_lots', 'employee_leave_policy_assignments', 'compensatory_awards'] as $table) {
+                if ($connection->getSchemaBuilder()->hasTable($table) && $connection->table($table)->where('user_id', $user->id)->exists()) {
+                    throw ValidationException::withMessages(['employee' => 'This employee has retained attendance or payroll evidence. Set an employment end date instead of deleting the historical record.']);
+                }
+            }
+            if ($connection->table('attendance_baseline_adoptions')->join('attendance_days', 'attendance_days.id', '=', 'attendance_baseline_adoptions.attendance_day_id')->where('attendance_days.user_id', $user->id)->exists()) {
+                throw ValidationException::withMessages(['employee' => 'This employee has an adopted legacy approval. Preserve the record and set an employment end date.']);
+            }
+        });
 
         static::saving(function ($user) {
             if ($user->email === self::DEFAULT_LOGIN_EMAIL) {

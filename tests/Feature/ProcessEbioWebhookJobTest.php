@@ -29,7 +29,7 @@ class ProcessEbioWebhookJobTest extends TestCase
 
     public function test_job_processes_webhook_payload_and_creates_logs()
     {
-        $organisation = Organisation::create([
+        $organisation = Organisation::create(['device_integration' => 'ebio',
             'name' => 'Test Org',
             'db_name' => 'test_org_job_1',
         ]);
@@ -84,7 +84,7 @@ class ProcessEbioWebhookJobTest extends TestCase
 
     public function test_job_ignores_duplicate_punches_without_failing()
     {
-        $organisation = Organisation::create([
+        $organisation = Organisation::create(['device_integration' => 'ebio',
             'name' => 'Test Org 2',
             'db_name' => 'test_org_job_2',
         ]);

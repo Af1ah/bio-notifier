@@ -18,11 +18,11 @@ class EmployeeLeaveForm
         return $schema
             ->components([
                 Section::make('Employee leave')
-                    ->description('Record approved leave that should be included in payroll calculations.')
+                    ->description('Request or approve leave against unexpired balance. Holidays and rostered off days do not consume leave.')
                     ->schema([
                         Select::make('user_id')
                             ->label('Employee')
-                            ->options(fn () => User::query()->orderBy('name')->get()->mapWithKeys(fn (User $user) => [$user->id => "{$user->name} ({$user->pin})"]))
+                            ->options(fn () => User::employees()->orderBy('name')->get()->mapWithKeys(fn (User $user) => [$user->id => "{$user->name} ({$user->pin})"]))
                             ->searchable()
                             ->preload()
                             ->required(),
@@ -46,10 +46,12 @@ class EmployeeLeaveForm
                         Select::make('state')
                             ->label('Status')
                             ->options([
+                                'pending' => 'Pending',
                                 'approved' => 'Approved',
+                                'rejected' => 'Rejected',
                                 'cancelled' => 'Cancelled',
                             ])
-                            ->default('approved')
+                            ->default('pending')
                             ->required(),
                         TextInput::make('deduction_override_minor')
                             ->label('Deduction override')

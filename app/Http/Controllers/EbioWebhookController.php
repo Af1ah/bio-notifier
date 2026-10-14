@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Jobs\ProcessEbioWebhookJob;
 use App\Models\Organisation;
 use App\Models\WebhookReceipt;
+use App\Services\Devices\DeviceIntegration;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
@@ -18,7 +19,7 @@ class EbioWebhookController extends Controller
         }
         $organisation = Organisation::where('ebio_webhook_token', $token)->first();
 
-        if (! $organisation) {
+        if (! $organisation || ! DeviceIntegration::usesEbio($organisation)) {
             return response('Invalid Token', 403);
         }
 

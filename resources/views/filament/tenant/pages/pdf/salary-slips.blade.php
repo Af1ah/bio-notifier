@@ -44,7 +44,7 @@
             <table>
                 <thead><tr><th>Earnings</th><th class="money">Amount ({{ $slip->currency }})</th></tr></thead>
                 <tbody>
-                @foreach (['basic_salary_minor' => 'Base pay', 'housing_allowance_minor' => 'Housing allowance', 'transport_allowance_minor' => 'Transport allowance', 'other_allowance_minor' => 'Other allowance', 'overtime_pay_minor' => 'Overtime pay', 'gross_pay_minor' => 'Gross pay'] as $field => $label)
+                @foreach (['basic_salary_minor' => 'Base pay', 'housing_allowance_minor' => 'Housing allowance', 'transport_allowance_minor' => 'Transport allowance', 'other_allowance_minor' => 'Other earnings', 'overtime_pay_minor' => 'Overtime pay', 'gross_pay_minor' => 'Gross pay'] as $field => $label)
                     <tr><td>{{ $label }}</td><td class="money">{{ number_format($slip->{$field} / 100, 2) }}</td></tr>
                 @endforeach
                 </tbody>
@@ -58,7 +58,16 @@
                     <tr class="net"><td>Net pay</td><td class="money">{{ $slip->formattedMoney('net_pay_minor') }}</td></tr>
                 </tbody>
             </table>
+            @if (isset($slip->calculation_snapshot['eligible_start']))
+                <p>Eligible pay dates: {{ $slip->calculation_snapshot['eligible_start'] }}–{{ $slip->calculation_snapshot['eligible_end'] }} · {{ $slip->calculation_snapshot['eligible_days'] }} calendar days@if (($slip->calculation_snapshot['pay_basis'] ?? 'monthly') === 'monthly') of {{ $slip->calculation_snapshot['calendar_day_divisor'] }} in this month@endif</p>
+            @endif
             <p>Scheduled days: {{ $slip->scheduled_days }} · Full days: {{ $slip->full_days }} · Half days: {{ $slip->half_days }} · Absent days: {{ $slip->absent_days + (($slip->calculation_snapshot['leave_other_half_absent_days'] ?? 0) / 2) }}</p>
+            @if (($slip->calculation_snapshot['compensatory_payment_minor'] ?? 0) > 0)
+                <p>Included in other earnings: holiday/off-day reward {{ $slip->currency }} {{ number_format($slip->calculation_snapshot['compensatory_payment_minor'] / 100, 2) }}</p>
+            @endif
+            @if (($slip->calculation_snapshot['paid_leave_pay_minor'] ?? 0) > 0)
+                <p>Included in other earnings: paid leave earnings {{ $slip->currency }} {{ number_format($slip->calculation_snapshot['paid_leave_pay_minor'] / 100, 2) }}</p>
+            @endif
             <p>Paid leave: {{ $slip->paid_leave_half_units / 2 }} days · Unpaid leave: {{ $slip->unpaid_leave_half_units / 2 }} days · Approved overtime: {{ $slip->approved_overtime_minutes }} minutes</p>
         </section>
     @endforeach

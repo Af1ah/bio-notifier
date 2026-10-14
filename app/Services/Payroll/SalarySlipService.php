@@ -8,6 +8,8 @@ use App\Models\EmployeeLeave;
 use App\Models\SalarySlip;
 use App\Models\User;
 use App\Services\Attendance\ShiftAssignmentResolver;
+use App\Services\Leave\CompensatoryLeaveService;
+use App\Services\Leave\LeaveBalanceService;
 use Carbon\Carbon;
 use Carbon\CarbonPeriod;
 use Illuminate\Support\Collection;
@@ -25,8 +27,12 @@ class SalarySlipService
     {
         $start = $period->copy()->startOfMonth();
         $end = $period->copy()->endOfMonth();
+        [$start,$end] = app(ManualPayrollReviewService::class)->bounds($user, $period);
         $profile = $user->payrollProfile;
         $issues = [];
+        if ($end->lt($start)) {
+            return ['The employee has no eligible employment dates in this month.'];
+        }
 
         if (! $profile?->payroll_enabled) {
             return ['Payroll is not enabled.'];
@@ -38,7 +44,8 @@ class SalarySlipService
 
         $days = AttendanceDay::query()
             ->where('user_id', $user->id)
-            ->whereBetween('work_date', [$start->toDateString(), $end->toDateString()])
+            ->whereDate('work_date', '>=', $start->toDateString())
+            ->whereDate('work_date', '<=', $end->toDateString())
             ->get();
 
         if ($days->isEmpty()) {
@@ -47,18 +54,25 @@ class SalarySlipService
             return $issues;
         }
         if ($missing = $this->missingCoverage($user, $start, $end, $days)) {
-            $issues[] = 'Attendance is incomplete for scheduled dates: '.implode(', ', array_slice($missing, 0, 5)).'. Recalculate the full payroll month.';
+            $issues[] = 'Attendance is incomplete for payroll dates: '.implode(', ', array_slice($missing, 0, 5)).'. Calculate the full payroll period, including off days, or configure effective shift assignments.';
         }
 
         if ($days->contains(fn (AttendanceDay $day) => $day->stale_at !== null)) {
             $issues[] = 'Attendance contains stale results that must be recalculated.';
         }
 
+        if (EmployeeLeave::where('user_id', $user->id)->whereDate('leave_date', '>=', $start)->whereDate('leave_date', '<=', $end)->where('state', 'pending')->exists()) {
+            $issues[] = 'Leave requests are still pending.';
+        }
         $leaves = EmployeeLeave::query()->where('user_id', $user->id)
-            ->whereBetween('leave_date', [$start->toDateString(), $end->toDateString()])
+            ->whereDate('leave_date', '>=', $start->toDateString())->whereDate('leave_date', '<=', $end->toDateString())
             ->where('state', 'approved')->get();
         try {
             $this->attendanceUnits($days, $leaves);
+            foreach ($leaves as $leave) {
+                app(LeaveBalanceService::class)->payrollCoverage($leave);
+            }
+            app(CompensatoryLeaveService::class)->payrollPayment($user, $start, $end);
         } catch (ValidationException $exception) {
             $issues[] = collect($exception->errors())->flatten()->first();
         }
@@ -71,10 +85,10 @@ class SalarySlipService
             $issues[] = 'Attendance approvals are still pending.';
         }
 
-        if (! $days->contains(fn (AttendanceDay $day) => in_array($day->status, ['present', 'half_day', 'absent', 'pending'], true))) {
+        if (! $days->contains(fn (AttendanceDay $day) => in_array($day->status, ['present', 'half_day', 'absent', 'pending'], true)) && ! (($profile->pay_basis ?: 'monthly') === 'monthly' && $days->every(fn ($day) => in_array($day->status, ['off', 'holiday'], true)))) {
             $hasApprovedLeave = EmployeeLeave::query()
                 ->where('user_id', $user->id)
-                ->whereBetween('leave_date', [$start->toDateString(), $end->toDateString()])
+                ->whereDate('leave_date', '>=', $start->toDateString())->whereDate('leave_date', '<=', $end->toDateString())
                 ->where('state', 'approved')
                 ->exists();
 
@@ -85,12 +99,16 @@ class SalarySlipService
 
         $existing = SalarySlip::query()
             ->where('user_id', $user->id)
-            ->whereDate('period_start', $start)
-            ->whereDate('period_end', $end)
+            ->whereDate('period_start', $period->copy()->startOfMonth())
+            ->whereDate('period_end', $period->copy()->endOfMonth())
             ->first(['status']);
 
         if ($existing && $existing->status !== 'draft') {
             $issues[] = "The existing salary slip is {$existing->status} and cannot be recalculated.";
+        }
+
+        if (app(ManualPayrollReviewService::class)->required($user, $period) && ! app(ManualPayrollReviewService::class)->approved($user, $period)) {
+            $issues[] = 'Manual payroll period requires HR review of the complete eligible calendar.';
         }
 
         return $issues;
@@ -101,9 +119,17 @@ class SalarySlipService
         $start = $period->copy()->startOfMonth();
         $end = $period->copy()->endOfMonth();
 
-        return DB::transaction(function () use ($user, $start, $end) {
-            User::whereKey($user->id)->lockForUpdate()->firstOrFail();
+        $periodStart = $start->copy();
+        $periodEnd = $end->copy();
+
+        return DB::transaction(function () use ($user, $start, $end, $periodStart, $periodEnd) {
+            $user = User::whereKey($user->id)->lockForUpdate()->firstOrFail();
             $profile = $user->payrollProfile()->lockForUpdate()->first();
+            $user->setRelation('payrollProfile', $profile);
+            [$start,$end] = app(ManualPayrollReviewService::class)->bounds($user, $periodStart);
+            if ($end->lt($start)) {
+                throw ValidationException::withMessages(['payroll' => 'The employee has no eligible employment dates in this month.']);
+            }
             if (! $profile?->payroll_enabled) {
                 throw ValidationException::withMessages(['payroll' => "Payroll is not enabled for {$user->name}."]);
             }
@@ -113,7 +139,8 @@ class SalarySlipService
 
             $days = AttendanceDay::query()
                 ->where('user_id', $user->id)
-                ->whereBetween('work_date', [$start->toDateString(), $end->toDateString()])
+                ->whereDate('work_date', '>=', $start->toDateString())
+                ->whereDate('work_date', '<=', $end->toDateString())
                 ->with('approvals')
                 ->orderBy('work_date')
                 ->get();
@@ -122,7 +149,7 @@ class SalarySlipService
                 throw ValidationException::withMessages(['attendance' => "No calculated attendance is available for {$user->name} in {$start->format('F Y')}."]);
             }
             if ($missing = $this->missingCoverage($user, $start, $end, $days)) {
-                throw ValidationException::withMessages(['attendance' => 'Attendance is incomplete for scheduled dates: '.implode(', ', array_slice($missing, 0, 5)).'. Recalculate the full payroll month.']);
+                throw ValidationException::withMessages(['attendance' => 'Attendance is incomplete for payroll dates: '.implode(', ', array_slice($missing, 0, 5)).'. Calculate the full payroll period, including off days, or configure effective shift assignments.']);
             }
             if ($days->contains(fn (AttendanceDay $day) => $day->stale_at !== null)) {
                 throw ValidationException::withMessages(['attendance' => "{$user->name} has stale attendance that must be recalculated first."]);
@@ -135,9 +162,16 @@ class SalarySlipService
                 throw ValidationException::withMessages(['attendance' => "{$user->name} has pending attendance approvals."]);
             }
 
+            if (app(ManualPayrollReviewService::class)->required($user, $periodStart) && ! app(ManualPayrollReviewService::class)->approved($user, $periodStart)) {
+                throw ValidationException::withMessages(['review' => 'Manual payroll period requires HR review of the complete eligible calendar.']);
+            }
+
+            if (EmployeeLeave::where('user_id', $user->id)->whereDate('leave_date', '>=', $start)->whereDate('leave_date', '<=', $end)->where('state', 'pending')->exists()) {
+                throw ValidationException::withMessages(['leave' => 'Resolve pending leave requests before payroll.']);
+            }
             $leaves = EmployeeLeave::query()
                 ->where('user_id', $user->id)
-                ->whereBetween('leave_date', [$start->toDateString(), $end->toDateString()])
+                ->whereDate('leave_date', '>=', $start->toDateString())->whereDate('leave_date', '<=', $end->toDateString())
                 ->where('state', 'approved')
                 ->with('leaveType')
                 ->orderBy('leave_date')
@@ -149,7 +183,7 @@ class SalarySlipService
             $scheduledDates = $days->whereIn('status', $scheduledStatuses)->pluck('work_date')->map->toDateString()
                 ->merge($leaveDates->keys())->unique()->values();
             $scheduledDays = $scheduledDates->count();
-            if ($scheduledDays === 0) {
+            if ($scheduledDays === 0 && ! (($profile->pay_basis ?: 'monthly') === 'monthly' && $days->every(fn ($day) => in_array($day->status, ['off', 'holiday'], true)))) {
                 throw ValidationException::withMessages(['attendance' => "No scheduled attendance days are available for {$user->name}."]);
             }
 
@@ -160,8 +194,9 @@ class SalarySlipService
             $overtimeMinutes = (int) $days->sum('approved_overtime_minutes');
             $payBasis = $profile->pay_basis ?: 'monthly';
             $baseRate = (int) $profile->basic_salary_minor;
-            $scheduledDayRate = $this->divideMoney($baseRate, $scheduledDays);
-            $calendarDivisor = max(30, $start->daysInMonth);
+            $calendarDivisor = $periodStart->daysInMonth;
+            $eligibleDays = (int) $start->diffInDays($end) + 1;
+            $scheduledDayRate = $this->divideMoney($payBasis === 'monthly' ? $this->divideMoney($baseRate * $eligibleDays, $calendarDivisor) : $baseRate, max(1, $scheduledDays));
             $calendarDayRate = $this->divideMoney($baseRate, $calendarDivisor);
             $approvedWorkedMinutes = (int) $days->sum('approved_worked_minutes');
             $regularWorkedMinutes = max(0, $approvedWorkedMinutes - $overtimeMinutes);
@@ -169,7 +204,7 @@ class SalarySlipService
             $basic = match ($payBasis) {
                 'daily' => ($fullDays * $baseRate) + $this->halfUnitsMoney($baseRate, $halfDays),
                 'hourly' => $this->minutesMoney($baseRate, $regularWorkedMinutes),
-                default => $baseRate,
+                default => $this->divideMoney($baseRate * $eligibleDays, $calendarDivisor),
             };
             $attendanceDeduction = $payBasis === 'monthly'
                 ? $this->divideMoney($baseRate * $attendance['absent_half_units'], $calendarDivisor * 2)
@@ -189,17 +224,36 @@ class SalarySlipService
                 $overtimeRate = $baseRate;
             }
             $overtimePay = $this->minutesMoney($overtimeRate, $overtimeMinutes);
-            $housing = $payBasis === 'monthly' ? (int) $profile->housing_allowance_minor : 0;
-            $transport = $payBasis === 'monthly' ? (int) $profile->transport_allowance_minor : 0;
-            $other = $payBasis === 'monthly' ? (int) $profile->other_allowance_minor : 0;
-            $fixedDeduction = $payBasis === 'monthly' ? (int) $profile->fixed_deduction_minor : 0;
+            $housing = $payBasis === 'monthly' ? $this->divideMoney((int) $profile->housing_allowance_minor * $eligibleDays, $calendarDivisor) : 0;
+            $transport = $payBasis === 'monthly' ? $this->divideMoney((int) $profile->transport_allowance_minor * $eligibleDays, $calendarDivisor) : 0;
+            $other = $payBasis === 'monthly' ? $this->divideMoney((int) $profile->other_allowance_minor * $eligibleDays, $calendarDivisor) : 0;
+            $fixedDeduction = $payBasis === 'monthly' ? $this->divideMoney((int) $profile->fixed_deduction_minor * $eligibleDays, $calendarDivisor) : 0;
+            $compensatoryPayment = app(CompensatoryLeaveService::class)->payrollPayment($user, $start, $end);
+            $paidLeavePay = 0;
+            if ($payBasis === 'daily') {
+                $paidLeavePay = $this->halfUnitsMoney($baseRate, $paidLeaveUnits);
+            }
+            if ($payBasis === 'hourly') {
+                foreach ($leaveSnapshot as $leaveResult) {
+                    if (! $leaveResult['paid_half_units']) {
+                        continue;
+                    }
+                    $set = app(ShiftAssignmentResolver::class)->resolve($user, Carbon::parse($leaveResult['date']));
+                    $rule = $set?->dailyPolicyRuleRevision?->schedule?->activeRuleRevision(Carbon::parse($leaveResult['date']));
+                    if (! $rule) {
+                        throw ValidationException::withMessages(['leave' => 'Hourly paid leave requires an effective shift daily-hours rule.']);
+                    }
+                    $paidLeavePay += $this->divideMoney($baseRate * (int) $rule->full_day_minutes * $leaveResult['paid_half_units'], 120);
+                }
+            }
+            $other += $compensatoryPayment + $paidLeavePay;
             $gross = $basic + $housing + $transport + $other + $overtimePay;
             $totalDeduction = $fixedDeduction + $attendanceDeduction + $leaveDeduction;
 
             $existing = SalarySlip::query()
                 ->where('user_id', $user->id)
-                ->whereDate('period_start', $start)
-                ->whereDate('period_end', $end)
+                ->whereDate('period_start', $periodStart)
+                ->whereDate('period_end', $periodEnd)
                 ->lockForUpdate()
                 ->first();
             if ($existing && $existing->status !== 'draft') {
@@ -208,8 +262,8 @@ class SalarySlipService
 
             $payload = [
                 'user_id' => $user->id,
-                'period_start' => $start->toDateString(),
-                'period_end' => $end->toDateString(),
+                'period_start' => $periodStart->toDateString(),
+                'period_end' => $periodEnd->toDateString(),
                 'status' => 'draft',
                 'designation' => $user->group,
                 'currency' => $profile->currency,
@@ -236,6 +290,9 @@ class SalarySlipService
                     'profile_updated_at' => $profile->updated_at?->toIso8601String(),
                     'attendance_days' => $days->map(fn ($day) => ['id' => $day->id, 'date' => $day->work_date->toDateString(), 'status' => $day->status, 'revision' => $day->calculation_revision, 'approved_overtime_minutes' => $day->approved_overtime_minutes])->all(),
                     'leaves' => $leaveSnapshot,
+                    'compensatory_payment_minor' => $compensatoryPayment,
+                    'paid_leave_pay_minor' => $paidLeavePay,
+                    'leave_balance_evidence' => app(LeaveBalanceService::class)->payrollEvidence($user, $start, $end),
                     'attendance_absent_half_units' => $attendance['absent_half_units'],
                     'leave_other_half_absent_days' => $attendance['leave_other_half_absent_days'],
                     'day_units' => $attendance['days'],
@@ -243,7 +300,7 @@ class SalarySlipService
                     'base_rate_minor' => $baseRate,
                     'scheduled_day_rate_minor' => $scheduledDayRate,
                     'calendar_day_rate_minor' => $calendarDayRate,
-                    'calendar_day_divisor' => $calendarDivisor,
+                    'calendar_day_divisor' => $calendarDivisor, 'proration_policy' => 'actual_calendar_days', 'eligible_days' => $eligibleDays, 'eligible_start' => $start->toDateString(), 'eligible_end' => $end->toDateString(),
                     'approved_worked_minutes' => $approvedWorkedMinutes,
                 ],
                 'calculation_version' => ($existing?->calculation_version ?? 0) + 1,
@@ -254,8 +311,9 @@ class SalarySlipService
         });
     }
 
-    private function missingCoverage(User $user, Carbon $start, Carbon $end, Collection $days): array
+    private function missingCoverage(User $user, Carbon $start, Carbon $end, Collection $days, ?bool $monthly = null): array
     {
+        $monthly ??= ($user->payrollProfile?->pay_basis ?: 'monthly') === 'monthly';
         $covered = $days->pluck('work_date')->map->toDateString()->flip();
         $missing = [];
         $resolver = app(ShiftAssignmentResolver::class);
@@ -265,6 +323,11 @@ class SalarySlipService
                 continue;
             }
             $set = $resolver->resolve($user, $date);
+            if (! $set && $monthly) {
+                $missing[] = $date->toDateString();
+
+                continue;
+            }
             if ($set && $set->slots->contains(function ($slot) use ($date) {
                 return $slot->schedule?->activeRuleRevision($date)?->weekdays()->where('weekday', $date->dayOfWeek)->exists();
             })) {
@@ -331,6 +394,27 @@ class SalarySlipService
             if (($allowed[$locked->status] ?? null) !== $target) {
                 throw ValidationException::withMessages(['status' => "A {$locked->status} slip cannot be changed to {$target}."]);
             }
+            [$eligibleStart,$eligibleEnd] = app(ManualPayrollReviewService::class)->bounds($locked->user, $locked->period_start);
+            if (($locked->calculation_snapshot['pay_basis'] ?? 'monthly') === 'monthly') {
+                [$eligibleStart,$eligibleEnd] = app(ManualPayrollReviewService::class)->bounds($locked->user, $locked->period_start);
+                $days = AttendanceDay::where('user_id', $locked->user_id)
+                    ->whereDate('work_date', '>=', $eligibleStart->toDateString())
+                    ->whereDate('work_date', '<=', $eligibleEnd->toDateString())->get();
+                if ($this->missingCoverage($locked->user, $eligibleStart, $eligibleEnd, $days, true)) {
+                    throw ValidationException::withMessages(['attendance' => 'Monthly payroll attendance is incomplete. Resolve the missing dates before reviewing, approving or marking this slip paid.']);
+                }
+            }
+            if (app(ManualPayrollReviewService::class)->required($locked->user, $locked->period_start) && ! app(ManualPayrollReviewService::class)->approved($locked->user, $locked->period_start)) {
+                throw ValidationException::withMessages(['review' => 'Manual payroll period requires a current HR review before this status change.']);
+            }
+            if (isset($locked->calculation_snapshot['eligible_start']) && ($locked->calculation_snapshot['eligible_start'] !== $eligibleStart->toDateString() || $locked->calculation_snapshot['eligible_end'] !== $eligibleEnd->toDateString())) {
+                throw ValidationException::withMessages(['payroll' => 'Employment eligibility changed. Recalculate draft payroll or resolve an adjustment first.']);
+            }
+            app(CompensatoryLeaveService::class)->payrollPayment($locked->user, $eligibleStart, $eligibleEnd);
+            $currentLeaveEvidence = app(LeaveBalanceService::class)->payrollEvidence($locked->user, $eligibleStart, $eligibleEnd);
+            if (isset($locked->calculation_snapshot['leave_balance_evidence']) && $locked->calculation_snapshot['leave_balance_evidence'] !== $currentLeaveEvidence) {
+                throw ValidationException::withMessages(['leave' => 'Leave allocation or compensatory reward changed. Recalculate payroll before proceeding.']);
+            }
             $field = match ($target) {
                 'reviewed' => ['reviewed_by_user_id' => $actor->id, 'reviewed_at' => now()],
                 'approved' => ['approved_by_user_id' => $actor->id, 'approved_at' => now()],
@@ -361,7 +445,8 @@ class SalarySlipService
             $type = $leave->leaveType;
             $units = $leave->half_units;
             $used = (int) ($usedBefore[$type->id] ?? 0);
-            $covered = $applyLeavePolicy && $type->is_paid ? max(0, min($units, (int) $type->annual_allowance_half_units - $used)) : 0;
+            $allocatedCoverage = app(LeaveBalanceService::class)->payrollCoverage($leave);
+            $covered = $allocatedCoverage !== null ? ($type->is_paid ? min($units, $allocatedCoverage) : 0) : ($applyLeavePolicy && $type->is_paid ? max(0, min($units, (int) $type->annual_allowance_half_units - $used)) : 0);
             $deductible = $units - $covered;
             $paid += $covered;
             $unpaid += $deductible;
@@ -383,6 +468,7 @@ class SalarySlipService
                 'type' => $type->name,
                 'duration' => $leave->duration,
                 'paid_half_units' => $covered,
+                'balance_managed' => (bool) $leave->balance_managed,
                 'deducted_half_units' => $deductible,
                 'deduction_minor' => (int) $amount,
             ];

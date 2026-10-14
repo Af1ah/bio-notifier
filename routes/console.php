@@ -18,3 +18,5 @@ Schedule::command('ebio:replay-receipts')->everyMinute()->withoutOverlapping();
 Schedule::command('users:prune-imports')->hourly()->withoutOverlapping();
 
 Schedule::command('gateway:recover')->everyMinute()->withoutOverlapping();
+
+Schedule::command('leave:sync-balances')->hourly()->withoutOverlapping();

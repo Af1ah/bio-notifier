@@ -16,7 +16,7 @@ class LeaveTypeForm
         return $schema
             ->components([
                 Section::make('Leave policy')
-                    ->description('Define the allowance and payroll treatment for this leave type.')
+                    ->description('Define leave categories and deduction treatment. Configure monthly grants, carry-forward and compensatory rewards in Leave Settings.')
                     ->schema([
                         TextInput::make('name')
                             ->label('Leave name')
@@ -32,7 +32,7 @@ class LeaveTypeForm
                             ->dehydrateStateUsing(fn ($state): string => strtoupper(trim((string) $state))),
                         TextInput::make('annual_allowance_half_units')
                             ->label('Annual paid allowance')
-                            ->helperText('Use 0 when every occurrence should follow the deduction rule.')
+                            ->helperText('Legacy annual allowance. Enrolled Leave Settings policies use approved credit allocations instead.')
                             ->numeric()
                             ->minValue(0)
                             ->step(0.5)
@@ -43,7 +43,7 @@ class LeaveTypeForm
                             ->required(),
                         Toggle::make('is_paid')
                             ->label('Paid leave')
-                            ->helperText('Leave within the annual allowance is paid.')
+                            ->helperText('Approved leave covered by the applicable allowance or credit allocation is paid.')
                             ->default(true)
                             ->live(),
                         Select::make('deduction_method')
@@ -52,7 +52,7 @@ class LeaveTypeForm
                             ->options([
                                 'none' => 'No deduction',
                                 'salary_day_rate' => 'Employee salary day rate',
-                                'basic_salary_31_day_rate' => 'Basic salary ÷ month days (February: 30)',
+                                'basic_salary_31_day_rate' => 'Basic salary ÷ actual calendar days',
                                 'fixed_amount' => 'Fixed amount per full day',
                             ])
                             ->default('none')

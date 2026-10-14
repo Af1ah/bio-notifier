@@ -16,6 +16,7 @@ class ApprovalService
 {
     public function decide(AttendanceApproval $approval, User $actor, bool $approve, ?string $reason = null, ?string $checkoutAt = null): void
     {
+        abort_unless($actor->privilege === 14, 403);
         DB::transaction(function () use ($approval, $actor, $approve, $reason, $checkoutAt) {
             // Match calculation's day-before-approval lock order.
             $day = AttendanceDay::lockForUpdate()->findOrFail($approval->attendance_day_id);
@@ -38,7 +39,7 @@ class ApprovalService
                     if (($item->proposal['reason'] ?? null) !== 'missing_checkout' || ! $occurrence) {
                         throw ValidationException::withMessages(['checkout_at' => 'Checkout can only be edited for a missing-checkout approval.']);
                     }
-                    if ($day->approvals()->where('type', 'overtime')->where('state', 'approved')->exists()) {
+                    if ($day->approvals()->where('type', 'overtime')->where('state', 'approved')->where(fn ($q) => $q->whereNull('attendance_occurrence_id')->orWhere('attendance_occurrence_id', $occurrence?->id))->exists()) {
                         throw ValidationException::withMessages(['checkout_at' => 'Overtime is already approved. Resolve that approval before changing checkout.']);
                     }
                     Validator::make(['checkout_at' => $checkoutAt], ['checkout_at' => ['required', 'date']])->validate();
@@ -60,13 +61,14 @@ class ApprovalService
                     foreach ($pendingOvertime as $overtime) {
                         $overtime->update(['state' => 'superseded', 'superseded_at' => now()]);
                     }
-                    if ($day->candidate_overtime_minutes > 0) {
-                        $day->approvals()->create(['type' => 'overtime', 'state' => 'pending', 'calculation_revision' => $day->calculation_revision,
-                            'proposal' => ['reason' => 'qualifying_overtime', 'minutes' => $day->candidate_overtime_minutes, 'basis' => $day->explanation['overtime_basis'] ?? 'after_required_hours']]);
-                    }
+                    app(AttendanceCalculationService::class)->requestOvertime($day);
                 }
                 if (($item->proposal['reason'] ?? null) === 'manual_correction') {
+                    $day->revisions()->firstOrCreate(['revision' => $day->calculation_revision], ['snapshot' => ['day' => $day->toArray(), 'occurrences' => $day->occurrences()->get()->toArray(), 'approvals' => $day->approvals()->get()->toArray()], 'had_approved_attendance' => true, 'had_approved_overtime' => $day->approved_overtime_minutes > 0, 'superseded_at' => now()]);
                     $correction = AttendanceCorrection::lockForUpdate()->findOrFail($item->proposal['correction_id']);
+                    if ($correction->attendance_day_id !== $day->id || ($correction->attendance_occurrence_id && $correction->attendance_occurrence_id !== $item->attendance_occurrence_id)) {
+                        throw ValidationException::withMessages(['correction' => 'The correction belongs to another attendance row.']);
+                    }
                     if ((bool) $correction->proposed_in_at !== (bool) $correction->proposed_out_at) {
                         throw ValidationException::withMessages(['correction' => 'Provide both check-in and checkout for a time correction.']);
                     }
@@ -78,30 +80,36 @@ class ApprovalService
                         if (! $occurrence || $correction->proposed_out_at->lte($correction->proposed_in_at) || $correction->proposed_in_at->lt($occurrence->window_starts_at) || $correction->proposed_out_at->gt($occurrence->window_ends_at)) {
                             throw ValidationException::withMessages(['correction' => 'Correction times must be ordered and within a calculated shift window.']);
                         }
-                        if ($day->approvals()->where('type', 'overtime')->where('state', 'approved')->exists()) {
+                        if ($day->approvals()->where('type', 'overtime')->where('state', 'approved')->where(fn ($q) => $q->whereNull('attendance_occurrence_id')->orWhere('attendance_occurrence_id', $occurrence?->id))->exists()) {
                             throw ValidationException::withMessages(['correction' => 'Resolve approved overtime before changing attendance times.']);
                         }
                         $occurrence->update(['first_in_at' => $correction->proposed_in_at]);
-                        app(AttendanceCalculationService::class)->reviseAssumedCheckout($day, $occurrence, $correction->proposed_out_at);
+                        app(AttendanceCalculationService::class)->reviseAssumedCheckout($day, $occurrence, $correction->proposed_out_at, true);
                         $day->approvals()->where('type', 'overtime')->where('state', 'pending')->update(['state' => 'superseded', 'superseded_at' => now()]);
-                        if ($day->candidate_overtime_minutes > 0) {
-                            $day->approvals()->create(['type' => 'overtime', 'state' => 'pending', 'calculation_revision' => $day->calculation_revision,
-                                'proposal' => ['reason' => 'qualifying_overtime', 'minutes' => $day->candidate_overtime_minutes, 'basis' => $day->explanation['overtime_basis'] ?? 'after_required_hours']]);
-                        }
+                        app(AttendanceCalculationService::class)->requestOvertime($day);
                     }
                     if ($correction->proposed_status) {
                         $day->status = $correction->proposed_status;
                         $day->save();
                     }
+                    $day->update(['source' => $day->occurrences()->whereHas('punches')->exists() ? 'mixed' : 'manual']);
+                    $occurrence?->update(['source' => $occurrence->punches()->exists() ? 'mixed' : 'manual']);
                     $correction->update(['state' => 'approved']);
                 }
                 if ($occurrence) {
                     $occurrence->update(['approved_worked_minutes' => $occurrence->candidate_worked_minutes]);
-                    $day->update(['approved_worked_minutes' => $day->occurrences()->sum('approved_worked_minutes')]);
+                    app(AttendanceCalculationService::class)->allocateOvertime($day);
                 }
             }
             if ($approve && $item->type === 'overtime') {
-                $day->update(['approved_overtime_minutes' => $day->candidate_overtime_minutes]);
+                $slot = $item->occurrence;
+                if ($slot) {
+                    $legacy = $day->approvals()->where('type', 'overtime')->where('state', 'approved')->whereNull('attendance_occurrence_id')->exists() ? max(0, $day->approved_overtime_minutes - $day->occurrences()->sum('approved_overtime_minutes')) : 0;
+                    $slot->update(['approved_overtime_minutes' => $slot->candidate_overtime_minutes]);
+                    $day->update(['approved_overtime_minutes' => $legacy + $day->occurrences()->sum('approved_overtime_minutes')]);
+                } else {
+                    $day->update(['approved_overtime_minutes' => $day->candidate_overtime_minutes]);
+                }
             }
             $item->update(['state' => $approve ? 'approved' : 'rejected', 'decided_by_user_id' => $actor->id, 'decision_reason' => $reason, 'decided_at' => now()]);
             app(PayrollFreshnessService::class)->invalidate($day->user_id, $day->work_date);

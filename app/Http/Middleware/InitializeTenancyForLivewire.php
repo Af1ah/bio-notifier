@@ -22,6 +22,24 @@ class InitializeTenancyForLivewire
 
             $tenant = null;
             $verifiedPath = null;
+            $signedFileRequest = $request->is('livewire/upload-file*') || $request->is('livewire/preview-file/*');
+            if ($signedFileRequest) {
+                abort_unless($request->hasValidSignature(), 403, 'Invalid file signature.');
+                $scope = $request->route('fileTenant');
+                abort_unless(is_string($scope), 403, 'Missing file tenant context.');
+                if ($scope !== 'central') {
+                    $tenant = Organisation::find($scope);
+                    abort_unless($tenant, 403, 'Unknown file tenant context.');
+                }
+                $referer = $request->header('referer');
+                if ($referer) {
+                    $path = explode('/', trim(parse_url($referer, PHP_URL_PATH) ?? '', '/'))[0];
+                    abort_unless(parse_url($referer, PHP_URL_HOST) === $host && $path === ($tenant?->shortname ?? 'master'), 403, 'File tenant context mismatch.');
+                }
+                if (! $tenant && tenancy()->initialized) {
+                    tenancy()->end();
+                }
+            }
             if ($request->is('livewire/update')) {
                 $components = $request->input('components');
                 abort_unless(is_array($components) && count($components) > 0 && count($components) <= 50, 403, 'Invalid component context.');
@@ -51,7 +69,7 @@ class InitializeTenancyForLivewire
             }
 
             // 1. Try Domain-based tenancy
-            if ($host !== 'localhost' && ! filter_var($host, FILTER_VALIDATE_IP) && $host !== $centralDomain && ! str_ends_with($host, '.test')) {
+            if (! $signedFileRequest && $host !== 'localhost' && ! filter_var($host, FILTER_VALIDATE_IP) && $host !== $centralDomain && ! str_ends_with($host, '.test')) {
                 $domain = Domain::where('domain', $host)->first();
                 if ($domain) {
                     $tenant = $domain->tenant;
@@ -59,7 +77,7 @@ class InitializeTenancyForLivewire
             }
 
             // 2. Try Path-based tenancy (fallback for localhost or central domain)
-            if (! $tenant) {
+            if (! $tenant && ! $signedFileRequest) {
                 $referer = $request->header('referer');
                 if ($verifiedPath !== null) {
                     if ($referer) {

@@ -18,6 +18,9 @@ class SalarySlipInfolist
                         TextEntry::make('user.pin')->label('Employee PIN'),
                         TextEntry::make('designation')->placeholder('Not assigned'),
                         TextEntry::make('period_start')->label('Payroll month')->date('F Y'),
+                        TextEntry::make('calculation_snapshot.eligible_start')->label('Eligible pay from')->date('d M Y')->placeholder('Not recorded'),
+                        TextEntry::make('calculation_snapshot.eligible_end')->label('Eligible pay through')->date('d M Y')->placeholder('Not recorded'),
+                        TextEntry::make('calculation_snapshot.eligible_days')->label('Eligible calendar days')->placeholder('Not recorded'),
                         TextEntry::make('status')->badge()->color(fn ($state): string => match ($state) {
                             'paid', 'approved' => 'success',
                             'reviewed' => 'warning',
@@ -41,7 +44,9 @@ class SalarySlipInfolist
                         self::money('basic_salary_minor', 'Base pay'),
                         self::money('housing_allowance_minor', 'Housing allowance'),
                         self::money('transport_allowance_minor', 'Transport allowance'),
-                        self::money('other_allowance_minor', 'Other allowance'),
+                        self::money('other_allowance_minor', 'Other earnings (includes leave/work rewards)'),
+                        self::money('calculation_snapshot.compensatory_payment_minor', 'Holiday/off-day reward included')->visible(fn ($record) => ($record->calculation_snapshot['compensatory_payment_minor'] ?? 0) > 0),
+                        self::money('calculation_snapshot.paid_leave_pay_minor', 'Paid leave earnings included')->visible(fn ($record) => ($record->calculation_snapshot['paid_leave_pay_minor'] ?? 0) > 0),
                         self::money('overtime_pay_minor', 'Overtime pay'),
                         self::money('gross_pay_minor', 'Gross pay')->weight('bold'),
                     ])

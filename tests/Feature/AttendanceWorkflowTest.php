@@ -145,6 +145,7 @@ class AttendanceWorkflowTest extends TestCase
             $approval = AttendanceApproval::create(['attendance_day_id' => $day->id, 'type' => 'attendance', 'state' => 'pending', 'calculation_revision' => 1, 'proposal' => ['reason' => 'manual_correction', 'correction_id' => $correction->id]]);
             app(ApprovalService::class)->decide($approval, $user, true);
             $this->assertSame(420, $day->fresh()->approved_worked_minutes);
+            $this->assertSame('manual', $day->fresh()->source);
             $this->assertSame('half_day', $day->fresh()->status);
             $this->assertSame('approved', $correction->fresh()->state);
         } finally {

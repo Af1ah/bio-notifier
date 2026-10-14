@@ -2,8 +2,6 @@
 
 namespace App\Filament\Tenant\Resources\EmployeeLeaves\Tables;
 
-use Filament\Actions\BulkActionGroup;
-use Filament\Actions\DeleteBulkAction;
 use Filament\Actions\EditAction;
 use Filament\Actions\ViewAction;
 use Filament\Tables\Columns\TextColumn;
@@ -29,17 +27,13 @@ class EmployeeLeavesTable
             ->filters([
                 SelectFilter::make('user_id')->label('Employee')->relationship('user', 'name')->searchable()->preload(),
                 SelectFilter::make('leave_type_id')->label('Leave type')->relationship('leaveType', 'name')->preload(),
-                SelectFilter::make('state')->options(['approved' => 'Approved', 'cancelled' => 'Cancelled']),
+                SelectFilter::make('state')->options(['pending' => 'Pending', 'approved' => 'Approved', 'rejected' => 'Rejected', 'cancelled' => 'Cancelled']),
             ])
             ->defaultSort('leave_date', 'desc')
             ->recordActions([
                 ViewAction::make(),
                 EditAction::make(),
             ])
-            ->toolbarActions([
-                BulkActionGroup::make([
-                    DeleteBulkAction::make(),
-                ]),
-            ]);
+            ->toolbarActions([]);
     }
 }
