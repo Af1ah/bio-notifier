@@ -28,7 +28,14 @@ class PayrollProfileHistoryService
         if (! $profile->exists || ! $profile->isDirty(self::MONEY) || ! $profile->payroll_enabled) return;
         $date = Carbon::parse($profile->effective_from)->startOfDay();
         if (! $date->isSameDay($date->copy()->startOfMonth())) throw ValidationException::withMessages(['effective_from' => 'Salary changes must start on the first day of a month.']);
-        if (SalarySlip::where('user_id', $profile->user_id)->whereDate('period_end', '>=', $date)->whereIn('status', ['reviewed', 'approved', 'paid'])->exists()) throw ValidationException::withMessages(['effective_from' => 'This change overlaps closed payroll.']);
+        $lastClosedPeriod = SalarySlip::where('user_id', $profile->user_id)
+            ->whereIn('status', ['reviewed', 'approved', 'paid'])
+            ->max('period_end');
+        // Closed payslips keep their recorded rates. A late profile update
+        // applies from the following payroll month instead.
+        if ($lastClosedPeriod && $date->lte(Carbon::parse($lastClosedPeriod))) {
+            $profile->effective_from = Carbon::parse($lastClosedPeriod)->addDay()->startOfMonth();
+        }
         DB::table('payroll_profile_revisions')->insertOrIgnore(['employee_payroll_profile_id' => $profile->id, 'effective_from' => Carbon::parse($profile->getOriginal('effective_from'))->toDateString(), 'snapshot' => json_encode($profile->getRawOriginal()), 'created_at' => now(), 'updated_at' => now()]);
     }
 

@@ -10,6 +10,7 @@ use App\Models\Department;
 use App\Models\SalarySlip;
 use App\Models\TaskGroup;
 use App\Models\User;
+use App\Services\Payroll\PayrollProfileHistoryService;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
@@ -115,6 +116,7 @@ final class UserCsvImportService
                         $profile->fill($row->payroll);
                         if (! $profile->exists || $profile->isDirty()) {
                             $profile->save();
+                            app(PayrollProfileHistoryService::class)->afterSave($profile, Auth::guard('web')->user());
                             $payrollChanged = true;
                         }
                     }

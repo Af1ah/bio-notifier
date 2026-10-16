@@ -7,15 +7,14 @@ use App\Models\AttendanceLog;
 use App\Models\Device;
 use App\Models\EmployeeLeave;
 use App\Models\Holiday;
-use App\Models\HolidayEligibilityGroup;
 use App\Models\LeaveCreditLot;
 use App\Models\LeaveType;
 use App\Models\PayrollTemplate;
 use App\Models\Schedule;
+use App\Models\TaskGroup;
 use App\Models\User;
 use App\Services\Attendance\ApprovalService;
 use App\Services\Attendance\AttendanceCalculationService;
-use App\Services\Attendance\HolidayEligibilityService;
 use App\Services\Attendance\ShiftAssignmentService;
 use App\Services\Attendance\ShiftRuleService;
 use App\Services\Leave\CompensatoryLeaveService;
@@ -193,23 +192,22 @@ class BetaOrganisationFeaturesTest extends TestCase
         $this->assertSame(0, DB::table('leave_allocations')->count());
     }
 
-    public function test_holiday_eligibility_is_effective_dated_and_does_not_make_holiday_global(): void
+    public function test_task_group_holiday_scope_does_not_make_a_holiday_global(): void
     {
         $other = User::create(['name' => 'Other', 'pin' => 'other']);
-        $group = HolidayEligibilityGroup::create(['name' => 'Role holiday', 'kind' => 'role']);
-        app(HolidayEligibilityService::class)->assign($group, [$this->user->id], '2026-01-10', '2026-01-20', $this->hr);
+        $group = TaskGroup::create(['name' => 'Role holiday']);
+        $this->user->taskGroups()->sync([$group->id]);
         $holiday = DB::transaction(function () use ($group) {
             $h = Holiday::create(['name' => 'Scoped', 'starts_on' => '2026-01-09', 'ends_on' => '2026-01-21', 'recurrence' => 'none', 'active' => true]);
-            $h->eligibilityGroups()->sync([$group->id]);
+            $h->taskGroups()->sync([$group->id]);
 
             return $h;
         });
         $calc = app(AttendanceCalculationService::class);
-        $this->assertFalse($calc->isHoliday($this->user, Carbon::parse('2026-01-09')));
+        $this->assertTrue($calc->isHoliday($this->user, Carbon::parse('2026-01-09')));
         $this->assertTrue($calc->isHoliday($this->user, Carbon::parse('2026-01-10')));
-        $this->assertFalse($calc->isHoliday($this->user, Carbon::parse('2026-01-21')));
+        $this->assertTrue($calc->isHoliday($this->user, Carbon::parse('2026-01-21')));
         $this->assertFalse($calc->isHoliday($other, Carbon::parse('2026-01-12')));
-        $this->rejects(fn () => app(HolidayEligibilityService::class)->assign($group, [$this->user->id], '2026-01-15', null, $this->hr), 'overlapping');
     }
 
     public function test_payroll_templates_update_enabled_profiles_and_leave_disabled_profiles_untouched(): void
