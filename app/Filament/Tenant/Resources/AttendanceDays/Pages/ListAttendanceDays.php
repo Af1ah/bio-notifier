@@ -3,22 +3,21 @@
 namespace App\Filament\Tenant\Resources\AttendanceDays\Pages;
 
 use App\Filament\Tenant\Resources\AttendanceDays\AttendanceDayResource;
-use App\Jobs\RecalculateAttendanceChunk;
-use App\Models\AttendanceCalculationRun;
 use App\Models\Schedule;
 use App\Models\User;
 use App\Services\Attendance\AttendanceEntryService;
 use App\Services\Attendance\AttendanceRateLimiter;
-use Carbon\Carbon;
 use Filament\Actions\Action;
 use Filament\Forms\Components\DatePicker;
-use Filament\Forms\Components\DateTimePicker;
+use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
+use Filament\Forms\Components\TimePicker;
+use Filament\Schemas\Components\Utilities\Get;
+use Filament\Schemas\Components\Group;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\ListRecords;
 use Filament\Schemas\Schema;
-use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class ListAttendanceDays extends ListRecords
@@ -29,15 +28,22 @@ class ListAttendanceDays extends ListRecords
     {
         return [
             Action::make('manualAttendance')->label('Add manual attendance')->icon('heroicon-o-plus')
-                ->visible(fn () => auth()->user()?->privilege === 14)->modalDescription('Create a manual shift interval. The shift rules calculate minutes automatically; attendance approval is required before payroll.')
-                ->schema([
-                    Select::make('user_id')->label('Employee')->options(fn () => User::employees()->orderBy('name')->pluck('name', 'id'))->searchable()->required(),
-                    DatePicker::make('work_date')->label('Work date')->default(today())->required(),
-                    Select::make('schedule_id')->label('Shift')->options(fn () => Schedule::where('status', true)->orderBy('name')->pluck('name', 'id'))->searchable()->required(),
-                    DateTimePicker::make('in_at')->label('Check-in date/time')->seconds(false)->required(),
-                    DateTimePicker::make('out_at')->label('Checkout date/time')->seconds(false)->after('in_at')->required(),
-                    Textarea::make('reason')->required()->maxLength(2000),
-                ])->action(function (array $data, Schema $schema) {
+                ->visible(fn () => auth()->user()?->privilege === 14)->modalWidth('lg')->modalDescription('Choose the work date, shift and time range. The date is applied automatically to both times.')
+                ->schema([Group::make([
+                    Select::make('user_id')->label('Employee')->options(fn () => User::employees()->orderBy('name')->pluck('name', 'id'))->searchable()->required()->columnSpan(1),
+                    DatePicker::make('work_date')->label('Work date')->default(today())->required()->live()->columnSpan(1),
+                    Select::make('schedule_id')->label('Shift')->options(fn () => Schedule::where('status', true)->orderBy('name')->pluck('name', 'id'))->searchable()->required()->live()->columnSpan(1),
+                    Placeholder::make('shift_window')->label('Shift check')->content(function (Get $get): string {
+                        if (! $get('schedule_id') || ! $get('work_date')) return 'Choose a work date and shift.';
+                        $rule = Schedule::find($get('schedule_id'))?->activeRuleRevision(\Carbon\Carbon::parse($get('work_date')));
+                        if (! $rule) return 'No active rule for this work date.';
+                        $overnight = (int) $rule->end_day_offset > 0 || $rule->end_time <= $rule->start_time;
+                        return ($overnight ? 'Night shift' : 'Day shift').' · '.$rule->start_time.'–'.$rule->end_time.($overnight ? ' next day' : ' same day');
+                    })->columnSpan(1),
+                    TimePicker::make('in_time')->label('Check-in')->seconds(false)->required()->columnSpan(1),
+                    TimePicker::make('out_time')->label('Checkout')->seconds(false)->required()->columnSpan(1),
+                    Textarea::make('reason')->required()->maxLength(2000)->rows(3)->columnSpanFull(),
+                ])->columns(2)])->action(function (array $data, Schema $schema) {
                     try {
                         app(AttendanceRateLimiter::class)->ensure('manual_entry', 30);
                         app(AttendanceEntryService::class)->add(auth()->user(), $data);
@@ -49,42 +55,6 @@ class ListAttendanceDays extends ListRecords
                     }
                     Notification::make()->title('Manual attendance calculated')->body('Review its attendance approval before payroll.')->success()->send();
                 }),
-            Action::make('recalculate')->label('Recalculate')->icon('heroicon-o-arrow-path')
-                ->modalDescription('Choose up to 31 days per calculation. For a longer period, calculate one month at a time.')
-                ->modalSubmitActionLabel('Queue calculation')->schema([
-                    DatePicker::make('from_date')->required()->default(today()), DatePicker::make('to_date')->required()->default(today())->afterOrEqual('from_date')->helperText('Maximum range: 31 days, including both dates.'), Select::make('user_ids')->label('Employees (blank means all)')->options(fn () => User::employees()->pluck('name', 'id'))->multiple()->searchable(),
-                ])->action(function (array $data, Schema $schema) {
-                    if (AttendanceCalculationRun::whereIn('state', ['queued', 'running'])->exists()) {
-                        $this->rejectCalculation($schema, 'from_date', 'Another recalculation is already active for this tenant.');
-                    }
-                    $from = Carbon::parse($data['from_date']);
-                    $to = Carbon::parse($data['to_date']);
-                    if ($to->lt($from)) {
-                        $this->rejectCalculation($schema, 'to_date', 'The end date must be on or after the start date.');
-                    }
-                    if ($from->diffInDays($to) > 30) {
-                        $this->rejectCalculation($schema, 'to_date', 'Maximum range is 31 days.');
-                    }$ids = User::employees()->when($data['user_ids'], fn ($query, $ids) => $query->whereIn('id', $ids))->pluck('id')->all();
-                    if (count($ids) * ($from->diffInDays($to) + 1) > 10000) {
-                        $this->rejectCalculation($schema, 'user_ids', 'Maximum workload is 10,000 employee-days.');
-                    }
-                    try {
-                        app(AttendanceRateLimiter::class)->ensure('recalculation', 5);
-                    } catch (ValidationException $exception) {
-                        $this->rejectCalculation($schema, 'from_date', implode(' ', $exception->validator->errors()->all()));
-                    }
-                    $run = AttendanceCalculationRun::create(['run_key' => Str::uuid(), 'from_date' => $from, 'to_date' => $to, 'filters' => ['user_ids' => $data['user_ids'] ?? []], 'state' => $ids ? 'queued' : 'completed', 'total' => count($ids) * ($from->diffInDays($to) + 1)]);
-                    foreach (array_chunk($ids, 100) as $chunk) {
-                        RecalculateAttendanceChunk::dispatch(tenancy()->tenant, $run->id, $chunk);
-                    }Notification::make()->title('Recalculation queued')->body("{$run->total} employee-days")->success()->send();
-                }),
         ];
-    }
-
-    protected function rejectCalculation(Schema $schema, string $field, string $message): never
-    {
-        Notification::make()->title('Calculation not queued')->body($message)->danger()->send();
-        // Action fields live under mountedActions.{index}.data, not at the page root.
-        throw ValidationException::withMessages([$schema->getStatePath().'.'.$field => $message]);
     }
 }

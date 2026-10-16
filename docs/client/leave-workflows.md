@@ -15,7 +15,7 @@ Use these workflows after configuring your company in [Leave Settings](leave-set
 | --- | --- |
 | Employee | Employee taking the leave. This cannot change on an existing record. |
 | Leave type | The requested category. To use compensatory credit, select its credited category. |
-| Leave date | The actual date of leave, within the employee's employment dates. Use one record per employee/date. |
+| Leave date | The actual date of leave, within the employee's employment dates. Use one record per employee/date, or **Add leave range** to preview and save multiple dates together. |
 | Duration | Full day or Half day. |
 | Status | Pending, Approved, Rejected or Cancelled. |
 | Deduction override | Optional exact deduction for that leave record. Leave blank to use the company rule. Enter 0 only when deliberately overriding the deduction to zero. It does not create leave balance. |
@@ -39,6 +39,7 @@ Cancel a record instead of deleting it. Restored credit keeps its original expir
 - A holiday or rostered off day does not consume ordinary leave. Choose a working leave date.
 - Full-day leave cannot overlap approved work. Half-day leave with work requires a verified half-day attendance result.
 - A new request cannot spend future monthly entitlement that has not yet been issued. It can reserve already earned credit valid on the requested future date.
+- New paid leave requires an applicable entitlement policy configured in Leave settings.
 - Insufficient balance rejects the request unless the applicable company policy allows the excess as unpaid.
 - Reviewed, approved or paid payroll periods are closed to leave changes. Ask HR/payroll to follow the company's adjustment process for a historical correction.
 
@@ -61,7 +62,7 @@ There is no separate compensatory page. Open **Organisation Management → Atten
 | Reward | Paid leave credit, Payment, or Both. The selected category's policy must permit it. |
 | Reason | HR's verified reason for the decision. |
 
-With the starter thresholds, 240 approved net minutes earn 0.5 day and 480 earn 1 day. Breaks do not count toward net work. The date's shifts are considered together; additional shifts or repeated submission do not create duplicate awards. Payment for a half-day award is half the configured full-day reward amount.
+Rewards inherit the effective daily shift thresholds. For a shift configured with 240/480-minute thresholds, 240 approved net minutes earn 0.5 day and 480 earn 1 day. Breaks do not count toward net work. The date's shifts are considered together; additional shifts or repeated submission do not create duplicate awards. Payment for a half-day award is half the configured full-day reward amount.
 
 Choosing paid leave credit records a balance for later use; it does not automatically create a leave request or change the work date to leave. Choosing payment puts the approved reward in the work month's payroll when the slip is calculated. Both does both only when explicitly allowed. Payment also requires a configured positive amount and matching employee/policy currency.
 
@@ -93,7 +94,7 @@ Open **Payroll → Leave Balances**. In Filters, select the leave type and balan
 | Balance column | Meaning |
 | --- | --- |
 | Available days | Eligible unspent credit that can cover leave on the selected date, after reservations and expiry checks. |
-| Carried days | Remaining eligible regular entitlement from before the selected month. |
+| Carried days | Remaining eligible regular entitlement whose grant period has ended. Current-year annual entitlement is not carried merely because a new month begins. |
 | Reserved days | Credit held by pending requests. |
 | Consumed days | Credit consumed by approved requests. |
 | Expiring soon days | Eligible unspent credit expiring within the company's warning window. |
@@ -111,3 +112,11 @@ Use this for a verified opening balance or positive correction. Select the categ
 Select the credit, the days to remove and a reason. The reduction must fit the free credit; it cannot take away reserved or consumed leave. Compensatory credits are handled with Reverse reward on the attendance row instead. The original granted amount remains in history alongside the correction.
 
 For how these records appear in reports and payroll, read [Attendance, reports and payslips](leave-attendance-reports.md).
+
+## At the leave-period end
+
+The configured period-end date stops new regular grants, while each credit's expiry date controls its last usable leave date. For a period ending 31 March with a 30 June annual cutoff, eligible unused credit may still cover leave through 30 June, subject to carry caps and the applicable policy/assignment. At 1 July it is unavailable. An annual cutoff repeats by month/day; actual leave-period From/To dates require a reviewed revision for the next cycle. Monthly expiry duration remains an alternative to the annual cutoff.
+
+## Leave ranges and dated holiday eligibility
+
+**Add leave range** previews paid/unpaid days and skipped holidays/off days before saving all records atomically. **Holiday eligibility** provides explicit role/religion/custom membership periods. See [0.2 business rules](../beta-02-business-features.md) for both workflows.

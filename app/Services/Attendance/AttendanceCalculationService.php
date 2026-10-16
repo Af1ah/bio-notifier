@@ -142,7 +142,7 @@ class AttendanceCalculationService
             $full = (int) $policy->full_day_minutes;
             $half = (int) $policy->half_day_minutes;
             $eligible = $policy->overtime_basis === 'after_shift_end' ? collect($occurrences)->sum(fn ($v) => $this->minutesAfter($v[3], $v[2])) : max(0, $total - $full);
-            $ot = $eligible >= (int) $policy->overtime_minimum_minutes ? $eligible : 0;
+            $ot = ($policy->snapshot['overtime_enabled'] ?? true) && $eligible >= (int) $policy->overtime_minimum_minutes ? $eligible : 0;
             $day->update(['source' => ($day->occurrences()->where('source', 'mixed')->exists() || ($day->occurrences()->where('source', 'manual')->exists() && $day->occurrences()->where('source', 'device')->exists())) ? 'mixed' : ($day->occurrences()->where('source', 'manual')->exists() ? 'manual' : 'device'), 'candidate_worked_minutes' => $total, 'approved_worked_minutes' => $day->occurrences()->sum('approved_worked_minutes'), 'candidate_overtime_minutes' => $ot, 'status' => self::dailyStatus($total, $half, $full), 'explanation' => ['input_signature' => $signature, 'calendar_kind' => $calendarKind, 'assignment_set_id' => $set?->id, 'daily_policy_rule_revision_id' => $policy->id]]);
             $this->allocateOvertime($day);
             $this->requestOvertime($day);
@@ -232,7 +232,7 @@ class AttendanceCalculationService
         }
         $day->update([
             'candidate_worked_minutes' => $total, 'approved_worked_minutes' => $occurrences->sum('approved_worked_minutes'),
-            'candidate_overtime_minutes' => $eligible >= (int) $policy->overtime_minimum_minutes ? $eligible : 0,
+            'candidate_overtime_minutes' => ($policy->snapshot['overtime_enabled'] ?? true) && $eligible >= (int) $policy->overtime_minimum_minutes ? $eligible : 0,
             'status' => self::dailyStatus($total, (int) $policy->half_day_minutes, (int) $policy->full_day_minutes),
             'explanation' => array_merge($day->explanation ?? [], ['overtime_basis' => $policy->overtime_basis]),
         ]);
@@ -258,10 +258,10 @@ class AttendanceCalculationService
                 $approved = array_merge($approved, $net);
             }
             $end = Carbon::parse($day->work_date->toDateString().' '.$rule->end_time)->addDays($rule->end_day_offset);
-            $available[$slot->id] = $policy->overtime_basis === 'after_shift_end' ? $this->minutesAfter($net, $end) : $slot->candidate_worked_minutes;
+            $available[$slot->id] = ($rule->snapshot['overtime_enabled'] ?? true) ? ($policy->overtime_basis === 'after_shift_end' ? $this->minutesAfter($net, $end) : $slot->candidate_worked_minutes) : 0;
         }
         $eligible = $policy->overtime_basis === 'after_shift_end' ? array_sum($available) : max(0, $day->candidate_worked_minutes - $policy->full_day_minutes);
-        $pool = $eligible >= $policy->overtime_minimum_minutes ? $eligible : 0;
+        $pool = ($policy->snapshot['overtime_enabled'] ?? true) && $eligible >= $policy->overtime_minimum_minutes ? min($eligible, array_sum($available)) : 0;
         $legacy = $day->approvals()->where('type', 'overtime')->where('state', 'approved')->whereNull('attendance_occurrence_id')->exists() ? max(0, $day->approved_overtime_minutes - $slots->sum('approved_overtime_minutes')) : 0;
         $protected = $slots->sum('approved_overtime_minutes') + $legacy;
         if ($protected > $pool) {
@@ -413,8 +413,8 @@ class AttendanceCalculationService
 
     public function isHoliday(User $user, Carbon $date): bool
     {
-        return HolidayOccurrence::whereDate('holiday_date', $date)->whereHas('holiday', function ($q) use ($user) {
-            $q->where('active', true)->where(function ($q) use ($user) {
+        return HolidayOccurrence::whereDate('holiday_date', $date)->whereHas('holiday', function ($q) use ($user, $date) {
+            $q->where('active', true)->where(function ($q) use ($user, $date) {
                 $q->whereDoesntHave('branches')->whereDoesntHave('departments')->whereDoesntHave('taskGroups')->orWhereHas('branches', fn ($x) => $x->whereKey($user->branch_id))->orWhereHas('departments', fn ($x) => $x->whereKey($user->department_id))->orWhereHas('taskGroups', fn ($x) => $x->whereIn('task_groups.id', $user->taskGroups()->pluck('task_groups.id')));
             });
         })->exists();

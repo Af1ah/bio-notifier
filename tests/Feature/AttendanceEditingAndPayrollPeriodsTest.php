@@ -103,7 +103,7 @@ class AttendanceEditingAndPayrollPeriodsTest extends TestCase
     {
         $user = $this->employee();
         $shift = $this->shift();
-        Livewire::test(ListAttendanceDays::class)->callAction('manualAttendance', data: ['user_id' => $user->id, 'schedule_id' => $shift->id, 'work_date' => '2026-08-03', 'in_at' => '2026-08-03 09:00', 'out_at' => '2026-08-03 17:00', 'reason' => 'HR entered verified times'])->assertHasNoErrors();
+        Livewire::test(ListAttendanceDays::class)->callAction('manualAttendance', data: ['user_id' => $user->id, 'schedule_id' => $shift->id, 'work_date' => '2026-08-03', 'in_time' => '09:00', 'out_time' => '17:00', 'reason' => 'HR entered verified times'])->assertHasNoErrors();
         $this->assertSame(480, AttendanceDay::firstOrFail()->candidate_worked_minutes);
     }
 
@@ -330,8 +330,8 @@ class AttendanceEditingAndPayrollPeriodsTest extends TestCase
     {
         $user = $this->employee();
         $shift = $this->shift();
-        Livewire::test(ListAttendanceDays::class)->callAction('manualAttendance', data: ['user_id' => $user->id, 'schedule_id' => $shift->id, 'work_date' => '2026-08-03', 'in_at' => '2026-08-03 04:00', 'out_at' => '2026-08-03 17:00', 'reason' => 'Outside shift'])
-            ->assertHasErrors(['mountedActions.0.data.in_at']);
+        Livewire::test(ListAttendanceDays::class)->callAction('manualAttendance', data: ['user_id' => $user->id, 'schedule_id' => $shift->id, 'work_date' => '2026-08-03', 'in_time' => '04:00', 'out_time' => '17:00', 'reason' => 'Outside shift'])
+            ->assertHasErrors(['mountedActions.0.data.in_time']);
         $this->assertDatabaseCount('manual_attendance_entries', 0);
     }
 

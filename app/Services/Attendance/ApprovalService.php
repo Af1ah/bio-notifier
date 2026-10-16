@@ -6,6 +6,7 @@ use App\Models\AttendanceApproval;
 use App\Models\AttendanceCorrection;
 use App\Models\AttendanceDay;
 use App\Models\User;
+use App\Services\Payroll\OvertimePayService;
 use App\Services\Payroll\PayrollFreshnessService;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -103,6 +104,9 @@ class ApprovalService
             }
             if ($approve && $item->type === 'overtime') {
                 $slot = $item->occurrence;
+                $rate = app(OvertimePayService::class)->capture($day, $slot);
+                $item->proposal = array_merge($item->proposal ?? [], ['pay_rate' => $rate]);
+                $item->save();
                 if ($slot) {
                     $legacy = $day->approvals()->where('type', 'overtime')->where('state', 'approved')->whereNull('attendance_occurrence_id')->exists() ? max(0, $day->approved_overtime_minutes - $day->occurrences()->sum('approved_overtime_minutes')) : 0;
                     $slot->update(['approved_overtime_minutes' => $slot->candidate_overtime_minutes]);

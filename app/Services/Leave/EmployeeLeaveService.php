@@ -4,6 +4,7 @@ namespace App\Services\Leave;
 
 use App\Models\AttendanceDay;
 use App\Models\EmployeeLeave;
+use App\Models\LeaveType;
 use App\Models\SalarySlip;
 use App\Models\User;
 use App\Services\Attendance\AttendanceCalculationService;
@@ -66,6 +67,9 @@ class EmployeeLeaveService
                 app(PayrollFreshnessService::class)->invalidate($user->id, $leave->leave_date);
             }
             $revision = app(LeavePolicyService::class)->resolve($user, $v['leave_type_id'], $date);
+            if (in_array($v['state'], ['pending', 'approved']) && ! $revision && LeaveType::findOrFail($v['leave_type_id'])->is_paid) {
+                throw ValidationException::withMessages(['leave_type_id' => 'Configure an applicable entitlement policy in Leave settings before requesting paid leave.']);
+            }
             $managed = $revision !== null;
             $leave ??= new EmployeeLeave;
             $leave->fill($v + ['reviewed_by_user_id' => $actor->id, 'reviewed_at' => now(), 'balance_managed' => $managed])->save();

@@ -2,15 +2,15 @@
 
 namespace Tests\Feature;
 
-use App\Filament\Tenant\Resources\AttendanceDays\Pages\ListAttendanceDays;
-use App\Models\AttendanceCalculationRun;
+use App\Filament\Tenant\Resources\AttendanceCalculationRuns\Pages\ListAttendanceCalculationRuns;
 use App\Jobs\RecalculateAttendanceChunk;
+use App\Models\AttendanceCalculationRun;
 use App\Models\Organisation;
 use App\Models\User;
 use Filament\Facades\Filament;
 use Illuminate\Support\Facades\Artisan;
-use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Str;
 use Livewire\Livewire;
 use Tests\TestCase;
@@ -28,7 +28,7 @@ class AttendanceRecalculationFormTest extends TestCase
 
     public function test_long_range_shows_the_error_inside_the_modal_and_does_not_create_a_run(): void
     {
-        Livewire::test(ListAttendanceDays::class)
+        Livewire::test(ListAttendanceCalculationRuns::class)
             ->callAction('recalculate', data: ['from_date' => '2026-08-01', 'to_date' => '2026-10-01', 'user_ids' => []])
             ->assertHasErrors(['mountedActions.0.data.to_date'])
             ->assertNotified('Calculation not queued');
@@ -38,7 +38,7 @@ class AttendanceRecalculationFormTest extends TestCase
     public function test_active_run_error_is_visible_in_the_modal(): void
     {
         AttendanceCalculationRun::create(['run_key' => Str::uuid(), 'from_date' => '2026-08-01', 'to_date' => '2026-08-31', 'total' => 31, 'state' => 'queued']);
-        Livewire::test(ListAttendanceDays::class)
+        Livewire::test(ListAttendanceCalculationRuns::class)
             ->callAction('recalculate', data: ['from_date' => '2026-09-01', 'to_date' => '2026-09-30', 'user_ids' => []])
             ->assertHasErrors(['mountedActions.0.data.from_date'])
             ->assertNotified('Calculation not queued');
@@ -51,7 +51,7 @@ class AttendanceRecalculationFormTest extends TestCase
         $organisation = (new Organisation)->forceFill(['id' => 'submit-test']);
         tenancy()->tenant = $organisation;
         try {
-            Livewire::test(ListAttendanceDays::class)
+            Livewire::test(ListAttendanceCalculationRuns::class)
                 ->callAction('recalculate', data: ['from_date' => '2026-08-01', 'to_date' => '2026-08-31', 'user_ids' => []])
                 ->assertHasNoErrors()
                 ->assertSet('mountedActions', []);

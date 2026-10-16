@@ -24,7 +24,8 @@ class LeaveBalanceService
             if (! $first) {
                 return;
             }
-            $limit = $through->copy()->min(Carbon::today(LeaveSettingsService::timezone()));
+            $limit = Carbon::parse($through->toDateString())->startOfDay()
+                ->min(Carbon::parse(Carbon::today(LeaveSettingsService::timezone())->toDateString())->startOfDay());
             $profile = $user->payrollProfile()->first();
             foreach (CarbonPeriod::create(Carbon::parse($first)->startOfMonth(), '1 month', $limit->copy()->startOfMonth()) as $month) {
                 // A mid-month enrolment is eligible for the remaining calendar days.
@@ -34,9 +35,18 @@ class LeaveBalanceService
                     continue;
                 }
                 $r = $revision->rules;
-                $periodStart = $r['mode'] === 'annual' ? $month->copy()->startOfYear() : $month->copy();
-                $periodEnd = $r['mode'] === 'annual' ? $month->copy()->endOfYear()->startOfDay() : $month->copy()->endOfMonth()->startOfDay();
+                $windowStart = empty($r['leave_period_from']) ? null : Carbon::parse($r['leave_period_from'])->startOfDay();
+                $windowEnd = empty($r['leave_period_to']) ? null : Carbon::parse($r['leave_period_to'])->startOfDay();
+                if (($windowStart && $month->copy()->endOfMonth()->lt($windowStart)) || ($windowEnd && $month->gt($windowEnd))) {
+                    continue;
+                }
+                $periodStart = $r['mode'] === 'annual' ? ($windowStart?->copy() ?? $month->copy()->startOfYear()) : $month->copy();
+                $nominalEnd = $r['mode'] === 'annual' ? ($windowEnd?->copy() ?? $month->copy()->endOfYear()->startOfDay()) : $month->copy()->endOfMonth()->startOfDay();
+                $periodEnd = $windowEnd ? $nominalEnd->copy()->min($windowEnd) : $nominalEnd->copy();
                 $start = $periodStart->copy()->max($revision->effective_from);
+                if ($windowStart) {
+                    $start = $start->max($windowStart);
+                }
                 $assignment = DB::table('employee_leave_policy_assignments')->where('user_id', $user->id)->where('leave_policy_id', $revision->leave_policy_id)->whereDate('starts_on', '<=', $probe)->where(fn ($q) => $q->whereNull('ends_on')->orWhereDate('ends_on', '>=', $probe))->first();
                 if ($assignment) {
                     $start = $start->max(Carbon::parse($assignment->starts_on));
@@ -54,20 +64,26 @@ class LeaveBalanceService
                 if ($start->gt($end)) {
                     continue;
                 }
+                // Rollover is due at the period boundary, even for end-of-period grants.
+                $boundary = $periodStart->copy()->max($start);
+                if ($boundary->lte($limit)) {
+                    $this->applyCarryCap($user, $typeId, $boundary, $r);
+                }
                 $available = $r['grant_timing'] === 'end' ? $end : $start;
                 if ($available->gt($limit)) {
                     continue;
                 }
                 $key = "grant:{$user->id}:{$typeId}:".$periodStart->toDateString();
-                if (LeaveCreditLot::where('source_key', $key)->exists()) {
+                if (LeaveCreditLot::with('policyRevision')->where('source_key', $key)->exists()) {
                     continue;
                 }
-                $this->applyCarryCap($user, $typeId, $periodStart, $r);
                 $units = (int) $r['grant_half_units'];
                 if ($r['prorate_join_exit']) {
-                    $units = intdiv($units * ((int) $start->diffInDays($end) + 1), (int) $periodStart->diffInDays($periodEnd) + 1);
+                    $units = intdiv($units * ((int) $start->diffInDays($end) + 1), (int) $periodStart->diffInDays($nominalEnd) + 1);
                 }
-                $existing = $this->availableUnits($user, $typeId, $available);
+                $existing = LeaveCreditLot::with('policyRevision')->where('user_id', $user->id)->where('leave_type_id', $typeId)
+                    ->where('source_kind', 'entitlement')->whereDate('available_on', '<=', $available)
+                    ->whereDate('expires_on', '>=', $available)->get()->sum(fn ($lot) => $this->remaining($lot, $available));
                 $units = min($units, max(0, (int) $r['balance_cap_half_units'] - $existing));
 
                 $expiry = $r['carry_enabled'] ? $periodEnd->copy()->addMonthsNoOverflow((int) $r['expiry_months'])->endOfMonth()->startOfDay() : $periodEnd->copy();
@@ -79,7 +95,10 @@ class LeaveBalanceService
                         $expiry->day(min((int) $r['fixed_expiry_day'], $expiry->daysInMonth));
                     }
                 }
-                if ($r['carry_enabled'] && ! $r['carry_roll_again']) {
+                if ($r['carry_enabled'] && ! empty($r['reset_dates'])) {
+                    $expiry = app(LeaveExpiryService::class)->beforeNextReset($available, $r['reset_dates']);
+                }
+                if ($r['carry_enabled'] && array_key_exists('carry_roll_again', $r) && ! $r['carry_roll_again']) {
                     $expiry = $expiry->min($periodEnd->copy()->addMonthNoOverflow()->endOfMonth()->startOfDay());
                 }
                 $lot = LeaveCreditLot::create(['user_id' => $user->id, 'leave_type_id' => $typeId, 'leave_policy_revision_id' => $revision->id,
@@ -92,7 +111,7 @@ class LeaveBalanceService
 
     private function applyCarryCap(User $user, int $typeId, Carbon $boundary, array $rules): void
     {
-        $lots = LeaveCreditLot::where('user_id', $user->id)->where('leave_type_id', $typeId)->where('source_kind', 'entitlement')
+        $lots = LeaveCreditLot::with('policyRevision')->where('user_id', $user->id)->where('leave_type_id', $typeId)->where('source_kind', 'entitlement')
             ->whereDate('available_on', '<', $boundary)->whereDate('expires_on', '>=', $boundary)->orderBy('expires_on')->orderBy('id')->get();
         $remaining = $rules['carry_enabled'] ? (int) $rules['carry_cap_half_units'] : 0;
         foreach ($lots as $lot) {
@@ -109,6 +128,9 @@ class LeaveBalanceService
 
     public function remaining(LeaveCreditLot $lot, ?Carbon $asOf = null): int
     {
+        if ($lot->leave_policy_revision_id && ! $lot->policyRevision?->leave_policy_id) {
+            return 0;
+        }
         if ($lot->source_kind === 'compensatory') {
             $award = CompensatoryAward::find($lot->evidence['award_id'] ?? null);
             if (! $award || $award->state !== 'approved' || ! hash_equals($award->evidence_signature, app(CompensatoryLeaveService::class)->signature($award->day))) {
@@ -125,19 +147,19 @@ class LeaveBalanceService
 
     public function availableUnits(User $user, int $typeId, Carbon $date): int
     {
-        return LeaveCreditLot::where('user_id', $user->id)->where('leave_type_id', $typeId)->whereDate('available_on', '<=', $date)->whereDate('expires_on', '>=', $date)->get()->sum(fn ($lot) => $this->remaining($lot, $date));
+        return LeaveCreditLot::with('policyRevision')->where('user_id', $user->id)->where('leave_type_id', $typeId)->whereDate('available_on', '<=', $date)->whereDate('expires_on', '>=', $date)->get()->sum(fn ($lot) => $this->remaining($lot, $date));
     }
 
     public function balance(User $user, int $typeId, Carbon $date): array
     {
         $this->ensureGrants($user, $typeId, $date);
-        $lots = LeaveCreditLot::where('user_id', $user->id)->where('leave_type_id', $typeId)->whereDate('available_on', '<=', $date)->orderBy('expires_on')->get();
+        $lots = LeaveCreditLot::with('policyRevision')->where('user_id', $user->id)->where('leave_type_id', $typeId)->whereDate('available_on', '<=', $date)->orderBy('expires_on')->get();
         $eligible = $lots->filter(fn ($lot) => $lot->expires_on->gte($date->copy()->startOfDay()));
         $ids = $lots->pluck('id');
 
         return ['available_half_units' => $eligible->sum(fn ($lot) => $this->remaining($lot, $date)),
             'expiring_half_units' => $eligible->filter(fn ($lot) => $lot->expires_on->lte($date->copy()->addDays(LeaveSettingsService::expiryWarningDays())))->sum(fn ($lot) => $this->remaining($lot, $date)),
-            'carried_half_units' => $eligible->filter(fn ($lot) => $lot->source_kind === 'entitlement' && $lot->available_on->lt($date->copy()->startOfMonth()))->sum(fn ($lot) => $this->remaining($lot, $date)),
+            'carried_half_units' => $eligible->filter(fn ($lot) => $lot->source_kind === 'entitlement' && ! empty($lot->evidence['period_end']) && Carbon::parse($lot->evidence['period_end'])->lt($date->copy()->startOfDay()))->sum(fn ($lot) => $this->remaining($lot, $date)),
             'reserved_half_units' => (int) DB::table('leave_allocations')->whereIn('leave_credit_lot_id', $ids)->where('state', 'reserved')->sum('half_units'),
             'consumed_half_units' => (int) DB::table('leave_allocations')->whereIn('leave_credit_lot_id', $ids)->where('state', 'consumed')->sum('half_units')];
     }
@@ -152,7 +174,7 @@ class LeaveBalanceService
         }
         $this->ensureGrants($user, $leave->leave_type_id, $date);
         $units = $leave->half_units;
-        $lots = LeaveCreditLot::where('user_id', $user->id)->where('leave_type_id', $leave->leave_type_id)
+        $lots = LeaveCreditLot::with('policyRevision')->where('user_id', $user->id)->where('leave_type_id', $leave->leave_type_id)
             ->whereDate('available_on', '<=', $date)->whereDate('expires_on', '>=', $date)->orderBy('expires_on')->orderBy('available_on')->orderBy('id')->get();
         foreach ($lots as $lot) {
             $take = min($units, $this->remaining($lot));

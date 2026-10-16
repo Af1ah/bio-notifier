@@ -13,8 +13,11 @@ use Carbon\Carbon;
 use Filament\Actions\Action;
 use Filament\Actions\ViewAction;
 use Filament\Forms\Components\Select;
+use Filament\Forms\Components\Radio;
 use Filament\Tables\Columns\TextColumn;
+use Filament\Tables\Filters\Filter;
 use Filament\Tables\Filters\SelectFilter;
+use Filament\Tables\Grouping\Group;
 use Filament\Tables\Table;
 
 class SalarySlipsTable
@@ -25,10 +28,8 @@ class SalarySlipsTable
             ->columns([
                 TextColumn::make('period_start')->label('Month')->date('M Y')->sortable(),
                 TextColumn::make('user.name')->label('Employee')->description(fn ($record): string => 'PIN '.$record->user->pin)->searchable()->sortable(),
-                TextColumn::make('designation')->placeholder('—')->searchable()->toggleable(),
-                TextColumn::make('user.branch.name')->label('Branch')->placeholder('—')->sortable()->toggleable(),
-                TextColumn::make('user.department.name')->label('Department')->placeholder('—')->sortable()->toggleable(),
-                TextColumn::make('user.taskGroups.name')->label('Task groups')->badge()->toggleable(),
+                TextColumn::make('scheduled_days')->label('Working days')->sortable(),
+                TextColumn::make('total_worked_hours')->label('Work time')->placeholder('—'),
                 TextColumn::make('gross_pay_minor')->label('Gross pay')->formatStateUsing(fn ($state, $record): string => $record->currency.' '.number_format(((int) $state) / 100, 2))->sortable(),
                 TextColumn::make('total_deduction_minor')->label('Total deduction')->formatStateUsing(fn ($state, $record): string => $record->currency.' '.number_format(((int) $state) / 100, 2))->sortable(),
                 TextColumn::make('net_pay_minor')->label('Net pay')->weight('bold')->formatStateUsing(fn ($state, $record): string => $record->currency.' '.number_format(((int) $state) / 100, 2))->sortable(),
@@ -37,8 +38,22 @@ class SalarySlipsTable
                     'reviewed' => 'warning',
                     default => 'gray',
                 }),
+                TextColumn::make('designation')->placeholder('—')->searchable()->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('user.branch.name')->label('Branch')->placeholder('—')->sortable()->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('user.department.name')->label('Department')->placeholder('—')->sortable()->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('user.taskGroups.name')->label('Task groups')->badge()->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
+                Filter::make('display_group')
+                    ->label('Group results')
+                    ->schema([
+                        Radio::make('value')
+                            ->label('Group salary results by')
+                            ->options(['none' => 'No grouping', 'branch' => 'Branch', 'department' => 'Department'])
+                            ->default('none')
+                            ->live(),
+                    ])
+                    ->query(fn ($query) => $query),
                 SelectFilter::make('payroll_month')->label('Payroll month')->default(now()->format('Y-m'))
                     ->options(fn () => SalarySlip::orderByDesc('period_start')->get()->mapWithKeys(fn ($slip) => [$slip->period_start->format('Y-m') => $slip->period_start->format('F Y')])->all())
                     ->query(fn ($query, array $data) => $query->when($data['value'] ?? null, fn ($q, $month) => $q->whereDate('period_start', Carbon::createFromFormat('!Y-m', $month)))),
@@ -52,6 +67,11 @@ class SalarySlipsTable
                 SelectFilter::make('status')->default('unpaid')->options(['unpaid' => 'Unpaid (hide paid)', 'all' => 'All statuses', 'draft' => 'Draft', 'reviewed' => 'Reviewed', 'approved' => 'Approved', 'paid' => 'Paid'])
                     ->query(fn ($query, array $data) => ($data['value'] ?? 'unpaid') === 'unpaid' ? $query->where('status', '!=', 'paid') : $query->when(($data['value'] ?? 'all') !== 'all', fn ($q) => $q->where('status', $data['value']))),
             ])
+            ->groups([
+                Group::make('user.branch.name')->label('Branch')->collapsible(),
+                Group::make('user.department.name')->label('Department')->collapsible(),
+            ])
+            ->groupingSettingsHidden()
             ->headerActions([
                 Action::make('downloadPayslips')->label('Download payslips')->icon('heroicon-o-document-arrow-down')->color('gray')
                     ->visible(fn (): bool => (int) auth()->user()?->privilege === 14)

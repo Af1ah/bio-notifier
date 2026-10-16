@@ -16,7 +16,7 @@ class ManualPayrollReviewService
 {
     public function bounds(User $user, Carbon $period): array
     {
-        $profile = $user->payrollProfile()->first();
+        $profile = app(PayrollProfileHistoryService::class)->forDate($user, $period);
         $start = $period->copy()->startOfMonth();
         $end = $period->copy()->endOfMonth()->startOfDay();
         foreach ([$profile?->effective_from, $profile?->employment_starts_on] as $date) {
@@ -33,7 +33,7 @@ class ManualPayrollReviewService
 
     public function required(User $user, Carbon $period): bool
     {
-        if (($user->payrollProfile()->first()?->pay_basis ?: 'monthly') !== 'monthly') {
+        if ((app(PayrollProfileHistoryService::class)->forDate($user, $period)?->pay_basis ?: 'monthly') !== 'monthly') {
             return false;
         }
         [$start,$end] = $this->bounds($user, $period);
@@ -52,7 +52,7 @@ class ManualPayrollReviewService
         [$start,$end] = $this->bounds($user, $period);
         $days = AttendanceDay::where('user_id', $user->id)->whereDate('work_date', '>=', $start)->whereDate('work_date', '<=', $end)->orderBy('work_date')->get();
 
-        return ['profile' => $user->payrollProfile()->first()?->toArray(), 'eligible_start' => $start->toDateString(), 'eligible_end' => $end->toDateString(),
+        return ['profile' => app(PayrollProfileHistoryService::class)->forDate($user, $period)?->toArray(), 'eligible_start' => $start->toDateString(), 'eligible_end' => $end->toDateString(),
             'days' => $days->map(fn ($d) => ['id' => $d->id, 'date' => $d->work_date->toDateString(), 'status' => $d->status, 'source' => $d->source, 'revision' => $d->calculation_revision, 'approved_minutes' => $d->approved_worked_minutes, 'approved_ot' => $d->approved_overtime_minutes, 'stale' => $d->stale_at?->toIso8601String()])->all(),
             'leaves' => EmployeeLeave::with('leaveType')->where('user_id', $user->id)->whereDate('leave_date', '>=', $start)->whereDate('leave_date', '<=', $end)->orderBy('id')->get()->toArray(),
             'leave_history' => EmployeeLeave::with('leaveType')->where('user_id', $user->id)->where('state', 'approved')->whereDate('leave_date', '>=', $start->copy()->startOfYear())->whereDate('leave_date', '<', $start)->orderBy('id')->get()->toArray(),
@@ -62,12 +62,44 @@ class ManualPayrollReviewService
 
     public function signature(User $user, Carbon $period): string
     {
-        return hash('sha256', json_encode($this->evidence($user, $period), JSON_THROW_ON_ERROR));
+        return $this->evidenceSignature($this->evidence($user, $period));
     }
 
     public function approved(User $user, Carbon $period): bool
     {
-        return DB::table('manual_payroll_reviews')->where('user_id', $user->id)->whereDate('period_start', $period->copy()->startOfMonth())->whereDate('period_end', $period->copy()->endOfMonth())->where('evidence_signature', $this->signature($user, $period))->exists();
+        $query = DB::table('manual_payroll_reviews')->where('user_id', $user->id)->whereDate('period_start', $period->copy()->startOfMonth())->whereDate('period_end', $period->copy()->endOfMonth());
+        $signature = $this->signature($user, $period);
+        if ((clone $query)->where('evidence_signature', $signature)->exists()) {
+            return true;
+        }
+        // Retain valid older reviews without rewriting their original evidence.
+        foreach ($query->get(['snapshot', 'evidence_signature']) as $review) {
+            $snapshot = json_decode($review->snapshot, true, 512, JSON_THROW_ON_ERROR);
+            $original = hash('sha256', json_encode($snapshot, JSON_THROW_ON_ERROR));
+            if (hash_equals($review->evidence_signature, $original) && hash_equals($signature, $this->evidenceSignature($snapshot))) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function evidenceSignature(array $evidence): string
+    {
+        foreach (['payroll_template_id', 'template_snapshot'] as $field) {
+            if (($evidence['profile'][$field] ?? null) === null) {
+                unset($evidence['profile'][$field]);
+            }
+        }
+        foreach (['leaves', 'leave_history'] as $key) {
+            foreach ($evidence[$key] ?? [] as $index => $leave) {
+                if ($leave['leave_type']['is_paid'] ?? false) {
+                    unset($evidence[$key][$index]['leave_type']['deduction_method'], $evidence[$key][$index]['leave_type']['deduction_amount_minor']);
+                }
+            }
+        }
+
+        return hash('sha256', json_encode($evidence, JSON_THROW_ON_ERROR));
     }
 
     public function approve(User $user, User $actor, Carbon $period, string $reason, string $expectedSignature): void

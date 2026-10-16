@@ -11,12 +11,12 @@ use Filament\Schemas\Schema;
 
 class LeaveTypeForm
 {
-    public static function configure(Schema $schema): Schema
+    public static function configure(Schema $schema, bool $paidOnly = false): Schema
     {
         return $schema
             ->components([
-                Section::make('Leave policy')
-                    ->description('Define leave categories and deduction treatment. Configure monthly grants, carry-forward and compensatory rewards in Leave Settings.')
+                Section::make('Leave category')
+                    ->description('Set the category and payroll deduction treatment. Paid leave entitlement is configured in Leave settings.')
                     ->schema([
                         TextInput::make('name')
                             ->label('Leave name')
@@ -30,33 +30,24 @@ class LeaveTypeForm
                             ->maxLength(24)
                             ->unique(ignoreRecord: true)
                             ->dehydrateStateUsing(fn ($state): string => strtoupper(trim((string) $state))),
-                        TextInput::make('annual_allowance_half_units')
-                            ->label('Annual paid allowance')
-                            ->helperText('Legacy annual allowance. Enrolled Leave Settings policies use approved credit allocations instead.')
-                            ->numeric()
-                            ->minValue(0)
-                            ->step(0.5)
-                            ->suffix('days')
-                            ->default(0)
-                            ->formatStateUsing(fn ($state): string => number_format(((int) ($state ?? 0)) / 2, 1, '.', ''))
-                            ->dehydrateStateUsing(fn ($state): int => (int) round(((float) $state) * 2))
-                            ->required(),
                         Toggle::make('is_paid')
                             ->label('Paid leave')
-                            ->helperText('Approved leave covered by the applicable allowance or credit allocation is paid.')
+                            ->helperText('Approved leave covered by policy credit allocations is paid.')
+                            ->visible(! $paidOnly)
                             ->default(true)
                             ->live(),
                         Select::make('deduction_method')
                             ->label('Deduction rule')
-                            ->helperText('Applied to unpaid leave and paid leave taken beyond its annual allowance.')
+                            ->helperText('Applied to this unpaid category in monthly payroll. No deduction keeps salary unchanged.')
                             ->options([
                                 'none' => 'No deduction',
                                 'salary_day_rate' => 'Employee salary day rate',
                                 'basic_salary_31_day_rate' => 'Basic salary ÷ actual calendar days',
                                 'fixed_amount' => 'Fixed amount per full day',
                             ])
-                            ->default('none')
-                            ->required()
+                            ->default('salary_day_rate')
+                            ->visible(fn ($get): bool => ! $get('is_paid'))
+                            ->required(fn ($get): bool => ! $get('is_paid'))
                             ->live(),
                         TextInput::make('deduction_amount_minor')
                             ->label('Fixed deduction per full day')
@@ -67,8 +58,8 @@ class LeaveTypeForm
                             ->default(0)
                             ->formatStateUsing(fn ($state): string => number_format(((int) ($state ?? 0)) / 100, 2, '.', ''))
                             ->dehydrateStateUsing(fn ($state): int => (int) round(((float) $state) * 100))
-                            ->visible(fn ($get): bool => $get('deduction_method') === 'fixed_amount')
-                            ->required(fn ($get): bool => $get('deduction_method') === 'fixed_amount'),
+                            ->visible(fn ($get): bool => ! $get('is_paid') && $get('deduction_method') === 'fixed_amount')
+                            ->required(fn ($get): bool => ! $get('is_paid') && $get('deduction_method') === 'fixed_amount'),
                         Toggle::make('active')
                             ->label('Active')
                             ->default(true),

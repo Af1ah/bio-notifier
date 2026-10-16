@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Services\Payroll\PayrollProfileHistoryService;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Validation\ValidationException;
 
@@ -15,13 +16,14 @@ class EmployeePayrollProfile extends Model
             if ($profile->employment_starts_on && $profile->employment_ends_on && $profile->employment_ends_on->lt($profile->employment_starts_on)) {
                 throw ValidationException::withMessages(['employment_ends_on' => 'Employment end must be on or after employment start.']);
             }
+            app(PayrollProfileHistoryService::class)->beforeSave($profile);
         });
     }
 
     protected function casts(): array
     {
         return [
-            'payroll_enabled' => 'boolean',
+            'payroll_enabled' => 'boolean', 'template_snapshot' => 'array', 'template_overrides' => 'array',
             'effective_from' => 'date', 'employment_starts_on' => 'date', 'employment_ends_on' => 'date',
         ];
     }

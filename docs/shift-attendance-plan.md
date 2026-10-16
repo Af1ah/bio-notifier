@@ -172,7 +172,7 @@ Keep subject employee, proposing actor, deciding actor and request source separa
 
 ## Recalculation
 
-Add Recalculate to Attendance: choose a bounded date range and employee/branch/department/group filters, preview the number of employee-days, and Submit. Display queued/running/completed/failed counts and the last calculated time. Normal page renders must not recalculate the whole report.
+Place Recalculate on Recalculation runs: choose a bounded date range and employee/branch/department/group filters, preview the number of employee-days, and Submit. Display queued/running/completed/failed counts and the last calculated time. Normal page renders must not recalculate the whole report.
 
 Queue bounded chunks, with tenant-specific deduplication and overlap locks. Jobs carry explicit tenant and run IDs, initialise tenancy before reading models, and end it in `finally`. Retry failed chunks safely without duplicating daily results. Use the same calculation service for manual recalculation and incremental updates after new punches.
 

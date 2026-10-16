@@ -168,6 +168,9 @@ class ScheduleForm
                 Section::make('Overtime')
                     ->description('Define when additional worked time becomes eligible for approval.')
                     ->schema([
+                        Toggle::make('rules.overtime_enabled')->label('Allow overtime')->default(true)->live(),
+                        TextInput::make('rules.overtime_hourly_rate_minor')->label('Overtime hourly rate')->helperText('Leave blank to use the employee rate. Zero explicitly means no overtime payment.')->numeric()->minValue(0)->step(0.01)->formatStateUsing(fn ($state) => $state === null ? null : number_format((int) $state / 100, 2, '.', ''))->dehydrateStateUsing(fn ($state) => blank($state) ? null : (int) round((float) $state * 100))->visible(fn ($get) => $get('rules.overtime_enabled')),
+                        TextInput::make('rules.overtime_currency')->label('Overtime currency')->default('INR')->length(3)->required()->visible(fn ($get) => $get('rules.overtime_enabled'))->dehydrateStateUsing(fn ($state) => strtoupper(trim($state))),
                         Select::make('rules.overtime_basis')
                             ->label('Calculate overtime')
                             ->options([

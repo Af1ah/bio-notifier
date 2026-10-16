@@ -18,7 +18,10 @@ class AttendanceEntryService
     public function add(User $actor, array $data): AttendanceDay
     {
         abort_unless($actor->privilege === 14, 403);
-        $data = Validator::make($data, ['user_id' => 'required|integer|exists:users,id', 'schedule_id' => 'required|integer|exists:schedules,id', 'work_date' => 'required|date', 'in_at' => 'required|date', 'out_at' => 'required|date|after:in_at', 'reason' => 'required|string|max:2000'])->validate();
+        // Retain the service contract for imports and existing integrations while the UI submits one work date plus two times.
+        $data['in_time'] ??= isset($data['in_at']) ? Carbon::parse($data['in_at'])->format('H:i') : null;
+        $data['out_time'] ??= isset($data['out_at']) ? Carbon::parse($data['out_at'])->format('H:i') : null;
+        $data = Validator::make($data, ['user_id' => 'required|integer|exists:users,id', 'schedule_id' => 'required|integer|exists:schedules,id', 'work_date' => 'required|date', 'in_time' => 'required|date_format:H:i', 'out_time' => 'required|date_format:H:i', 'reason' => 'required|string|max:2000'])->validate();
 
         return DB::transaction(function () use ($actor, $data) {
             $user = User::employees()->lockForUpdate()->findOrFail($data['user_id']);
@@ -28,18 +31,23 @@ class AttendanceEntryService
             if (! $rule) {
                 throw ValidationException::withMessages(['schedule_id' => 'This shift has no rule revision for the selected date.']);
             }
+            $in = Carbon::parse($date->toDateString().' '.$data['in_time']);
+            $out = Carbon::parse($date->toDateString().' '.$data['out_time']);
+            $overnight = (int) $rule->end_day_offset > 0 || $rule->end_time <= $rule->start_time;
+            if ($out->lte($in) && $overnight) $out->addDay();
+            if ($out->lte($in)) throw ValidationException::withMessages(['out_time' => 'Checkout must be after check-in. Choose a night shift when checkout is on the next day.']);
             $start = Carbon::parse($date->toDateString().' '.$rule->start_time)->subMinutes($rule->earliest_arrival_minutes);
-            $end = Carbon::parse($date->toDateString().' '.$rule->end_time)->addDays($rule->end_day_offset)->addMinutes($rule->checkout_cutoff_minutes);
-            if (Carbon::parse($data['in_at'])->lt($start) || Carbon::parse($data['out_at'])->gt($end)) {
-                throw ValidationException::withMessages(['in_at' => 'Times must fit the selected shift attendance window, including overnight dates.']);
+            $end = Carbon::parse($date->toDateString().' '.$rule->end_time)->addDays($overnight ? 1 : 0)->addMinutes($rule->checkout_cutoff_minutes);
+            if ($in->lt($start) || $out->gt($end)) {
+                throw ValidationException::withMessages(['in_time' => 'The time range must fit the selected '.($overnight ? 'night' : 'day').' shift window.']);
             }
-            if (ManualAttendanceEntry::where('user_id', $user->id)->whereDate('work_date', $date)->where('schedule_id', '!=', $shift->id)->where('in_at', '<', $data['out_at'])->where('out_at', '>', $data['in_at'])->exists()) {
+            if (ManualAttendanceEntry::where('user_id', $user->id)->whereDate('work_date', $date)->where('schedule_id', '!=', $shift->id)->where('in_at', '<', $out)->where('out_at', '>', $in)->exists()) {
                 throw ValidationException::withMessages(['schedule_id' => 'This interval overlaps a manual entry for another shift.']);
             }
-            if (ManualAttendanceEntry::where('user_id', $user->id)->where('schedule_id', $shift->id)->where('in_at', Carbon::parse($data['in_at'])->toDateTimeString())->where('out_at', Carbon::parse($data['out_at'])->toDateTimeString())->exists()) {
+            if (ManualAttendanceEntry::where('user_id', $user->id)->where('schedule_id', $shift->id)->where('in_at', $in->toDateTimeString())->where('out_at', $out->toDateTimeString())->exists()) {
                 throw ValidationException::withMessages(['in_at' => 'An identical manual entry already exists. Use Correct to propose an edit.']);
             }
-            ManualAttendanceEntry::create($data + ['shift_rule_revision_id' => $rule->id, 'created_by_user_id' => $actor->id]);
+            ManualAttendanceEntry::create(collect($data)->except(['in_time', 'out_time'])->all() + ['in_at' => $in, 'out_at' => $out, 'shift_rule_revision_id' => $rule->id, 'created_by_user_id' => $actor->id]);
 
             return app(AttendanceCalculationService::class)->calculate($user, $date);
         });

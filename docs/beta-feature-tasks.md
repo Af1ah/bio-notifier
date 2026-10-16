@@ -4,6 +4,10 @@ Updated: 14 October 2026
 
 Only unfinished code, product decisions and verification belong here. Completed local fixes have been removed. Deployment instructions and evidence are in [Beta verification and recovery](beta-verification.md). Local fixes are not yet deployed.
 
+## 0.2 business-feature implementation
+
+The six organisation-scenario feature gaps are implemented locally. See [0.2 business rules](beta-02-business-features.md). Broader UI refinement and release verification remain separate; 0.1 online is unchanged.
+
 ## Remaining code and logical gaps
 
 Attendance/payroll follow-up implementation is recorded in [Attendance and payroll design](attendance-payroll-design.md). CALC-04, CALC-05, CALC-06, CALC-07 and PAY-02 now have implemented workflows and regression coverage. Historical records still need real HR evidence review where applicable; that is not an automatic data rewrite.

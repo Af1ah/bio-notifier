@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — 0.2 beta preparation
+
+- Added recurring leave resets, work-month compensatory expiry and atomic leave-range requests.
+- Added explicit overtime eligibility, shift-specific approval rate snapshots and matching payslip/PDF/CSV breakdowns.
+- Added dated holiday eligibility groups and bulk payroll templates that preserve employee overrides.
+- Existing credits and finalized payslips retain their saved evidence. Local implementation only; UI refinement and deployment remain separate steps.
+- See [0.2 business rules](docs/beta-02-business-features.md) for setup and additive tenant migrations.
+
 ## 2026-10-13 — eBio integration merged into main
 
 This entry covers the existing eBio branch changes merged into `main` and the corrections made during integration. Matrix bridge changes were excluded.

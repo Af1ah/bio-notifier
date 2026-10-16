@@ -13,6 +13,11 @@ class LeaveCreditLot extends Model
         return ['available_on' => 'date', 'expires_on' => 'date', 'evidence' => 'array'];
     }
 
+    public function policyRevision()
+    {
+        return $this->belongsTo(LeavePolicyRevision::class, 'leave_policy_revision_id');
+    }
+
     public function user()
     {
         return $this->belongsTo(User::class);

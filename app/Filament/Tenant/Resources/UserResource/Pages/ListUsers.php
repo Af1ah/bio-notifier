@@ -5,6 +5,7 @@ namespace App\Filament\Tenant\Resources\UserResource\Pages;
 use App\Filament\Tenant\Resources\UserResource;
 use App\Jobs\SyncEbioUsersJob;
 use App\Models\DeviceCommand;
+use App\Services\Devices\DeviceIntegration;
 use App\Services\Imports\UserCsvImportService;
 use Filament\Actions;
 use Filament\Forms\Components\Checkbox;
@@ -35,7 +36,7 @@ class ListUsers extends ListRecords
         return [
             Actions\CreateAction::make(),
             Actions\Action::make('syncEbioUsers')
-                ->authorize(fn (): bool => \App\Services\Devices\DeviceIntegration::usesEbio())
+                ->authorize(fn (): bool => DeviceIntegration::usesEbio())
                 ->label('Sync employees')->icon('heroicon-o-arrow-path')->color('warning')
                 ->requiresConfirmation()->modalHeading('Sync employees')
                 ->modalDescription('Import registered employees from the device connection. This may take a few moments.')
@@ -44,15 +45,15 @@ class ListUsers extends ListRecords
                     try {
                         $command = DeviceCommand::create(['device_id' => null, 'command_type' => 'sync_users', 'command_content' => 'eBioServer SOAP Command: sync users', 'status' => 'pending']);
                         SyncEbioUsersJob::dispatch(tenancy()->tenant, $command->id);
-                        Notification::make()->title('Sync Queued')->body('User synchronization is tracked on the Device Commands page.')->success()->send();
+                        Notification::make()->title('Sync Queued')->body('Employee synchronization is tracked on the Device Commands page.')->success()->send();
                     } catch (\Exception $e) {
                         $command?->markAsFailed($e->getMessage());
                         Notification::make()->title('Sync Failed')->body('Employee synchronization failed. Contact your administrator.')->danger()->send();
                     }
                 }),
             Actions\Action::make('importUsers')
-                ->label('Import Users')->icon('heroicon-o-arrow-up-tray')->color('info')
-                ->modalHeading('Import Users')->modalSubmitActionLabel('Import employees')
+                ->label('Import employees')->icon('heroicon-o-arrow-up-tray')->color('info')
+                ->modalHeading('Import employees')->modalSubmitActionLabel('Import employees')
                 ->modalDescription(function (): HtmlString {
                     $service = app(UserCsvImportService::class);
                     $basic = base64_encode($service->template(false));

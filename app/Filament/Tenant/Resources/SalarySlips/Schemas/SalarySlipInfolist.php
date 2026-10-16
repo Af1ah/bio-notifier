@@ -12,21 +12,20 @@ class SalarySlipInfolist
     {
         return $schema
             ->components([
-                Section::make('Employee and period')
+                Section::make('Payslip summary')
                     ->schema([
                         TextEntry::make('user.name')->label('Employee'),
-                        TextEntry::make('user.pin')->label('Employee PIN'),
-                        TextEntry::make('designation')->placeholder('Not assigned'),
                         TextEntry::make('period_start')->label('Payroll month')->date('F Y'),
-                        TextEntry::make('calculation_snapshot.eligible_start')->label('Eligible pay from')->date('d M Y')->placeholder('Not recorded'),
-                        TextEntry::make('calculation_snapshot.eligible_end')->label('Eligible pay through')->date('d M Y')->placeholder('Not recorded'),
-                        TextEntry::make('calculation_snapshot.eligible_days')->label('Eligible calendar days')->placeholder('Not recorded'),
                         TextEntry::make('status')->badge()->color(fn ($state): string => match ($state) {
                             'paid', 'approved' => 'success',
                             'reviewed' => 'warning',
                             default => 'gray',
                         }),
-                        TextEntry::make('calculated_at')->dateTime('d M Y, h:i A'),
+                        self::money('gross_pay_minor', 'Gross pay')->weight('bold'),
+                        self::money('total_deduction_minor', 'Total deduction'),
+                        self::money('net_pay_minor', 'Net pay')->weight('bold')->color('success'),
+                        TextEntry::make('scheduled_days')->label('Working days'),
+                        TextEntry::make('total_worked_hours')->label('Work time')->placeholder('Not recorded'),
                         TextEntry::make('calculation_snapshot.recalculation_reason')
                             ->label('Attendance changes')->color('warning')
                             ->visible(fn ($record): bool => (bool) ($record->calculation_snapshot['needs_recalculation'] ?? false)),
@@ -44,26 +43,22 @@ class SalarySlipInfolist
                         self::money('basic_salary_minor', 'Base pay'),
                         self::money('housing_allowance_minor', 'Housing allowance'),
                         self::money('transport_allowance_minor', 'Transport allowance'),
-                        self::money('other_allowance_minor', 'Other earnings (includes leave/work rewards)'),
-                        self::money('calculation_snapshot.compensatory_payment_minor', 'Holiday/off-day reward included')->visible(fn ($record) => ($record->calculation_snapshot['compensatory_payment_minor'] ?? 0) > 0),
+                        self::money('other_allowance_minor', 'Additional earnings'),
+                        self::money('calculation_snapshot.compensatory_payment_minor', 'Holiday/off-day work credit')->visible(fn ($record) => ($record->calculation_snapshot['compensatory_payment_minor'] ?? 0) > 0),
                         self::money('calculation_snapshot.paid_leave_pay_minor', 'Paid leave earnings included')->visible(fn ($record) => ($record->calculation_snapshot['paid_leave_pay_minor'] ?? 0) > 0),
                         self::money('overtime_pay_minor', 'Overtime pay'),
-                        self::money('gross_pay_minor', 'Gross pay')->weight('bold'),
+                        TextEntry::make('overtime_breakdown_display')->label('Overtime calculation')->columnSpanFull()->visible(fn ($record) => ! empty($record->calculation_snapshot['overtime_breakdown'])),
                     ])
                     ->columns(['default' => 1, 'md' => 2, 'xl' => 3]),
                 Section::make('Deductions and net pay')
                     ->schema([
-                        TextEntry::make('calculation_snapshot.calendar_day_divisor')->label('Monthly deduction divisor')->suffix(' days')->placeholder('Not recorded'),
                         self::money('attendance_deduction_minor', 'Attendance deduction'),
                         self::money('leave_deduction_minor', 'Leave deduction'),
                         self::money('fixed_deduction_minor', 'Fixed deduction'),
-                        self::money('total_deduction_minor', 'Total deduction')->weight('bold'),
-                        self::money('net_pay_minor', 'Net pay')->weight('bold')->color('success'),
                     ])
                     ->columns(['default' => 1, 'md' => 2, 'xl' => 3]),
                 Section::make('Attendance summary')
                     ->schema([
-                        TextEntry::make('scheduled_days')->label('Scheduled days'),
                         TextEntry::make('full_days')->label('Full days'),
                         TextEntry::make('half_days')->label('Half days'),
                         TextEntry::make('absent_days')->label('Absent days')->formatStateUsing(fn ($state, $record) => $state + (($record->calculation_snapshot['leave_other_half_absent_days'] ?? 0) / 2)),
@@ -72,6 +67,20 @@ class SalarySlipInfolist
                         TextEntry::make('approved_overtime_minutes')->label('Approved overtime')->suffix(' minutes'),
                     ])
                     ->columns(['default' => 2, 'md' => 4]),
+                Section::make('Calculation details')
+                    ->schema([
+                        TextEntry::make('user.pin')->label('Employee PIN'),
+                        TextEntry::make('designation')->placeholder('Not assigned'),
+                        TextEntry::make('calculation_snapshot.eligible_start')->label('Eligible pay from')->date('d M Y')->placeholder('Not recorded'),
+                        TextEntry::make('calculation_snapshot.eligible_end')->label('Eligible pay through')->date('d M Y')->placeholder('Not recorded'),
+                        TextEntry::make('calculation_snapshot.eligible_days')->label('Eligible calendar days')->placeholder('Not recorded'),
+                        TextEntry::make('per_day_salary_display')->label('Per day salary'),
+                        TextEntry::make('calculation_snapshot.calendar_day_divisor')->label('Monthly deduction divisor')->suffix(' days')->placeholder('Not recorded'),
+                        TextEntry::make('calculated_at')->label('Calculated at')->dateTime('d M Y, h:i A'),
+                        TextEntry::make('calculation_snapshot.pay_basis')->label('Pay basis')->formatStateUsing(fn ($state): string => match ($state) { 'daily' => 'Daily rate', 'hourly' => 'Hourly rate', default => 'Monthly salary' }),
+                    ])
+                    ->columns(['default' => 1, 'md' => 2, 'xl' => 3])
+                    ->collapsed(),
                 Section::make('Approval trail')
                     ->schema([
                         TextEntry::make('reviewedBy.name')->label('Reviewed by')->placeholder('Not reviewed'),

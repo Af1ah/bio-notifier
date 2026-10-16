@@ -29,12 +29,23 @@ class AttendanceDaysTable
     public static function configure(Table $table): Table
     {
         return $table->modifyQueryUsing(fn ($query) => $query->with(['user', 'compensatoryAward']))->columns([
-            TextColumn::make('user.name')->label('Employee')->searchable(), TextColumn::make('work_date')->date()->sortable(),
-            TextColumn::make('occurrences.schedule.name')->label('Shifts')->badge(),
-            ...CompensatoryAttendanceActions::columns(),
-            TextColumn::make('source')->label('Source')->badge(), TextColumn::make('status')->badge(),
-            TextColumn::make('candidate_worked_minutes')->label('Calculated minutes')->sortable(),
-            TextColumn::make('approved_worked_minutes')->label('Approved minutes'), TextColumn::make('candidate_overtime_minutes')->label('OT minutes'), TextColumn::make('calculated_at')->since(),
+            TextColumn::make('user.name')->label('Employee')->searchable(),
+            TextColumn::make('work_date')->label('Date')->date()->sortable(),
+            TextColumn::make('occurrences.schedule.name')->label('Shift')->badge(),
+            TextColumn::make('status')->label('Attendance')->badge()->formatStateUsing(fn (string $state): string => match ($state) {
+                'present' => 'Present', 'half_day' => 'Half day', 'absent' => 'Absent', 'off' => 'Off', 'holiday' => 'Holiday', 'pending', 'pending_approval' => 'Needs review', 'no_shift' => 'No shift', default => str($state)->replace('_', ' ')->title(),
+            })->color(fn (string $state): string => match ($state) {
+                'present' => 'success', 'half_day', 'pending', 'pending_approval' => 'warning', 'absent' => 'danger', default => 'gray',
+            }),
+            TextColumn::make('worked_time')->label('Worked time')->state(function (AttendanceDay $record): string {
+                $minutes = $record->approved_worked_minutes ?: $record->candidate_worked_minutes;
+                return intdiv((int) $minutes, 60).'h '.((int) $minutes % 60).'m';
+            }),
+            TextColumn::make('candidate_overtime_minutes')->label('Overtime')->formatStateUsing(fn ($state) => intdiv((int) $state, 60).'h '.((int) $state % 60).'m')->toggleable(isToggledHiddenByDefault: true),
+            TextColumn::make('source')->label('Source')->badge()->toggleable(isToggledHiddenByDefault: true),
+            TextColumn::make('approved_worked_minutes')->label('Payroll-approved minutes')->toggleable(isToggledHiddenByDefault: true),
+            TextColumn::make('candidate_worked_minutes')->label('Calculated minutes')->toggleable(isToggledHiddenByDefault: true),
+            TextColumn::make('calculated_at')->label('Last calculated')->since()->toggleable(isToggledHiddenByDefault: true),
         ])->filters([
             Filter::make('work_date')->schema([DatePicker::make('from')->label('From date'), DatePicker::make('to')->label('To date')->afterOrEqual('from')])
                 ->query(fn ($query, array $data) => $query->when($data['from'] ?? null, fn ($q, $v) => $q->whereDate('work_date', '>=', $v))->when($data['to'] ?? null, fn ($q, $v) => $q->whereDate('work_date', '<=', $v))),

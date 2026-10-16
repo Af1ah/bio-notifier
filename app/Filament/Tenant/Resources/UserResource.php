@@ -12,7 +12,9 @@ use App\Models\Department;
 use App\Models\Device;
 use App\Models\Schedule;
 use App\Models\TaskGroup;
+use App\Models\PayrollTemplate;
 use App\Models\User;
+use App\Services\Payroll\EmployeePayrollEditorService;
 use App\Services\Attendance\ShiftAssignmentResolver;
 use App\Services\Attendance\ShiftAssignmentService;
 use App\Services\Devices\DeviceIntegration;
@@ -49,7 +51,7 @@ class UserResource extends Resource
 
     protected static ?int $navigationSort = 4;
 
-    protected static ?string $modelLabel = 'User';
+    protected static ?string $modelLabel = 'Employee';
 
     protected static ?string $recordTitleAttribute = 'name';
 
@@ -68,7 +70,7 @@ class UserResource extends Resource
         return 'heroicon-o-user';
     }
 
-    protected static ?string $pluralModelLabel = 'Users';
+    protected static ?string $pluralModelLabel = 'Employees';
 
     public static function getNavigationGroup(): ?string
     {
@@ -78,10 +80,10 @@ class UserResource extends Resource
     public static function form(Schema $schema): Schema
     {
         return $schema->components([
-            Section::make('User Information')
+            Section::make('Employee Information')
                 ->schema([
                     TextInput::make('pin')
-                        ->label('User ID (PIN)')
+                        ->label('Employee ID (PIN)')
                         ->required()
                         ->unique(ignoreRecord: true)
                         ->autocomplete('off'),
@@ -100,14 +102,6 @@ class UserResource extends Resource
                     TextInput::make('card_number')
                         ->label('Card Number')
                         ->autocomplete('off'),
-                    Select::make('privilege')
-                        ->label('Application Access')
-                        ->options([
-                            0 => 'User',
-                            14 => 'Admin',
-                        ])
-                        ->default(0)
-                        ->helperText('Controls access to Secumax. Device sync never changes this field.'),
                     Select::make('device_privilege')
                         ->visible(fn (): bool => DeviceIntegration::usesEbio())
                         ->label('Device privilege')
@@ -162,6 +156,7 @@ class UserResource extends Resource
                         ])
                         ->createOptionUsing(fn (array $data) => $data['name'])
                         ->nullable(),
+                    TextInput::make('religion')->maxLength(80)->helperText('Optional. Used only for holiday eligibility filters.'),
                     Select::make('taskGroups')
                         ->relationship('taskGroups', 'name')
                         ->label('Task Groups')
@@ -178,14 +173,31 @@ class UserResource extends Resource
                 ->columnSpanFull()
                 ->collapsed(),
             Section::make('Payroll')
-                ->description('Choose how this employee earns pay, then set the matching monthly, daily, or hourly base rate.')
+                ->description('Enable payroll only when this employee should receive salary slips. Disabled employees do not get a payroll profile or default pay values.')
                 ->relationship('payrollProfile')
+                ->saveRelationshipsBeforeChildrenUsing(function (Section $component): void {
+                    $employee = $component->getRecord();
+                    app(EmployeePayrollEditorService::class)->save($employee, $component->getChildSchema()->getState(shouldCallHooksBefore: false), auth()->user());
+                    $component->cachedExistingRecord($employee->payrollProfile()->first());
+                })
                 ->schema([
                     Toggle::make('payroll_enabled')
                         ->label('Include in payroll')
                         ->helperText('Only enabled employees are included when salary slips are generated.')
                         ->default(false)
                         ->live(),
+                    Select::make('payroll_template_id')
+                        ->label('Payroll template')
+                        ->options(fn () => PayrollTemplate::query()->orderBy('name')->pluck('name', 'id'))
+                        ->searchable()
+                        ->placeholder('Individual pay settings')
+                        ->live()
+                        ->visible(fn ($get) => (bool) $get('payroll_enabled')),
+                    Select::make('template_overrides')
+                        ->label('Keep this employee’s own amounts')
+                        ->multiple()
+                        ->options(['basic_salary_minor' => 'Base pay', 'housing_allowance_minor' => 'Housing allowance', 'transport_allowance_minor' => 'Transport allowance', 'other_allowance_minor' => 'Other allowance', 'fixed_deduction_minor' => 'Fixed deduction', 'overtime_hourly_rate_minor' => 'Overtime hourly rate'])
+                        ->visible(fn ($get) => (bool) $get('payroll_enabled') && filled($get('payroll_template_id'))),
                     Select::make('pay_basis')
                         ->label('Pay basis')
                         ->options([
@@ -196,32 +208,36 @@ class UserResource extends Resource
                         ->default('monthly')
                         ->helperText('Monthly salary does not deduct holidays or weekly-offs. Daily and hourly employees are paid only for approved attendance.')
                         ->live()
-                        ->required(),
+                        ->required(fn ($get) => (bool) $get('payroll_enabled'))
+                        ->visible(fn ($get) => (bool) $get('payroll_enabled')),
                     Select::make('currency')
                         ->options(['INR' => 'INR'])
                         ->default('INR')
-                        ->required(),
+                        ->required(fn ($get) => (bool) $get('payroll_enabled'))
+                        ->visible(fn ($get) => (bool) $get('payroll_enabled')),
                     DatePicker::make('effective_from')
                         ->label('Salary effective from')
                         ->native(false)
-                        ->default(today()),
-                    DatePicker::make('employment_starts_on')->label('Employment starts on')->native(false),
-                    DatePicker::make('employment_ends_on')->label('Employment ends on')->native(false)->afterOrEqual('employment_starts_on')->helperText('Monthly salary and recurring amounts are prorated by eligible calendar days.'),
+                        ->default(today())
+                        ->visible(fn ($get) => (bool) $get('payroll_enabled')),
+                    DatePicker::make('employment_starts_on')->label('Employment starts on')->native(false)->visible(fn ($get) => (bool) $get('payroll_enabled')),
+                    DatePicker::make('employment_ends_on')->label('Employment ends on')->native(false)->afterOrEqual('employment_starts_on')->helperText('Monthly salary and recurring amounts are prorated by eligible calendar days.')->visible(fn ($get) => (bool) $get('payroll_enabled')),
                     self::moneyInput('basic_salary_minor', fn ($get): string => match ($get('pay_basis') ?? 'monthly') {
                         'daily' => 'Daily rate',
                         'hourly' => 'Hourly rate',
                         default => 'Basic monthly salary',
-                    })->required(),
+                    })->required(fn ($get) => (bool) $get('payroll_enabled'))->visible(fn ($get) => (bool) $get('payroll_enabled')),
                     self::moneyInput('housing_allowance_minor', 'Housing allowance')
-                        ->visible(fn ($get): bool => ($get('pay_basis') ?? 'monthly') === 'monthly'),
+                        ->visible(fn ($get): bool => (bool) $get('payroll_enabled') && ($get('pay_basis') ?? 'monthly') === 'monthly'),
                     self::moneyInput('transport_allowance_minor', 'Transport allowance')
-                        ->visible(fn ($get): bool => ($get('pay_basis') ?? 'monthly') === 'monthly'),
+                        ->visible(fn ($get): bool => (bool) $get('payroll_enabled') && ($get('pay_basis') ?? 'monthly') === 'monthly'),
                     self::moneyInput('other_allowance_minor', 'Other allowance')
-                        ->visible(fn ($get): bool => ($get('pay_basis') ?? 'monthly') === 'monthly'),
+                        ->visible(fn ($get): bool => (bool) $get('payroll_enabled') && ($get('pay_basis') ?? 'monthly') === 'monthly'),
                     self::moneyInput('fixed_deduction_minor', 'Fixed monthly deduction')
-                        ->visible(fn ($get): bool => ($get('pay_basis') ?? 'monthly') === 'monthly'),
+                        ->visible(fn ($get): bool => (bool) $get('payroll_enabled') && ($get('pay_basis') ?? 'monthly') === 'monthly'),
                     self::moneyInput('overtime_hourly_rate_minor', 'Overtime hourly rate')
-                        ->helperText('For hourly employees, leave this at 0 to pay approved overtime at the regular hourly rate.'),
+                        ->helperText('For hourly employees, leave this at 0 to pay approved overtime at the regular hourly rate.')
+                        ->visible(fn ($get) => (bool) $get('payroll_enabled')),
                 ])
                 ->columns([
                     'default' => 1,
@@ -238,7 +254,7 @@ class UserResource extends Resource
         return $schema
             ->components([
                 Group::make([
-                    Section::make('User Details')
+                    Section::make('Employee Details')
                         ->schema([
                             TextEntry::make('name')
                                 ->label('Name')
@@ -410,12 +426,6 @@ class UserResource extends Resource
                     ->sortable()
                     ->searchable()
                     ->toggleable(isToggledHiddenByDefault: true),
-                Tables\Columns\TextColumn::make('privilege')
-                    ->label('Application Access')
-                    ->badge()
-                    ->formatStateUsing(fn ($state) => $state === 14 ? 'Admin' : 'User')
-                    ->color(fn ($state): string => $state === 14 ? 'primary' : 'gray')
-                    ->visibleFrom('md'),
                 Tables\Columns\TextColumn::make('device_privilege')
                     ->visible(fn (): bool => DeviceIntegration::usesEbio())
                     ->label('Device Privilege')
@@ -434,12 +444,6 @@ class UserResource extends Resource
                     ->visibleFrom('md'),
             ])
             ->filters([
-                Tables\Filters\SelectFilter::make('privilege')
-                    ->label('Application Access')
-                    ->options([
-                        0 => 'User',
-                        14 => 'Admin',
-                    ]),
                 Tables\Filters\SelectFilter::make('device_privilege')
                     ->visible(fn (): bool => DeviceIntegration::usesEbio())
                     ->label('Device Privilege')
@@ -523,7 +527,7 @@ class UserResource extends Resource
                     DeleteBulkAction::make(),
                     BulkAction::make('enableUsers')
                         ->authorize(fn (): bool => DeviceIntegration::usesEbio())
-                        ->label('Unblock user from door')
+                        ->label('Unblock employee from door')
                         ->icon('heroicon-o-check-circle')
                         ->color('success')
                         ->form([
@@ -550,14 +554,14 @@ class UserResource extends Resource
                             }
                             Notification::make()
                                 ->title('Unblocked and Queued')
-                                ->body("{$count} user(s) unblocked and queued for sync.")
+                                ->body("{$count} employee(s) unblocked and queued for sync.")
                                 ->success()
                                 ->send();
                         })
                         ->deselectRecordsAfterCompletion(),
                     BulkAction::make('disableUsers')
                         ->authorize(fn (): bool => DeviceIntegration::usesEbio())
-                        ->label('Block user from door')
+                        ->label('Block employee from door')
                         ->icon('heroicon-o-x-circle')
                         ->color('warning')
                         ->form([
@@ -584,7 +588,7 @@ class UserResource extends Resource
                             }
                             Notification::make()
                                 ->title('Blocked and Queued')
-                                ->body("{$count} user(s) blocked and queued for sync.")
+                                ->body("{$count} employee(s) blocked and queued for sync.")
                                 ->success()
                                 ->send();
                         })
@@ -630,7 +634,7 @@ class UserResource extends Resource
 
                             Notification::make()
                                 ->title('Sync Queued')
-                                ->body("{$count} user(s) queued for device synchronization.")
+                                ->body("{$count} employee(s) queued for device synchronization.")
                                 ->success()
                                 ->send();
                         })
@@ -677,7 +681,7 @@ class UserResource extends Resource
 
                             Notification::make()
                                 ->title('Deletion Queued')
-                                ->body("{$count} user deletions queued.")
+                                ->body("{$count} employee deletions queued.")
                                 ->success()
                                 ->send();
                         })
@@ -745,7 +749,7 @@ class UserResource extends Resource
 
                             Notification::make()
                                 ->title('Assignment saved')
-                                ->body("Selected users were assigned to the {$label}.")
+                                ->body("Selected employees were assigned to the {$label}.")
                                 ->success()
                                 ->send();
                         })

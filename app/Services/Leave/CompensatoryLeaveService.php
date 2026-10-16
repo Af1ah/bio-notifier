@@ -5,6 +5,7 @@ namespace App\Services\Leave;
 use App\Models\AttendanceDay;
 use App\Models\CompensatoryAward;
 use App\Models\LeaveCreditLot;
+use App\Models\ShiftRuleRevision;
 use App\Models\User;
 use App\Services\Attendance\AttendanceCalculationService;
 use App\Services\Attendance\ShiftAssignmentResolver;
@@ -93,7 +94,22 @@ class CompensatoryLeaveService
             if ($day->approved_overtime_minutes > 0 && ! ($r['comp_allow_overtime'] ?? false)) {
                 throw ValidationException::withMessages(['reward' => 'Overtime is already approved. This policy does not permit an additional holiday/off-day reward.']);
             }
-            $units = $day->approved_worked_minutes >= $r['comp_full_minutes'] ? 2 : ($day->approved_worked_minutes >= $r['comp_half_minutes'] ? 1 : 0);
+            $rule = ShiftRuleRevision::find($day->explanation['daily_policy_rule_revision_id'] ?? null);
+            if (! $rule) {
+                $set = app(ShiftAssignmentResolver::class)->resolve($user, $day->work_date);
+                $rule = $set?->dailyPolicyRuleRevision?->schedule?->activeRuleRevision($day->work_date);
+                if (! $rule) {
+                    $ruleIds = $day->occurrences()->pluck('shift_rule_revision_id')->filter()->unique();
+                    $rule = $ruleIds->count() === 1 ? ShiftRuleRevision::find($ruleIds->first()) : null;
+                }
+            }
+            if (! $rule) {
+                throw ValidationException::withMessages(['reward' => 'Review attendance with an effective daily shift rule before awarding a reward.']);
+            }
+            $units = $day->approved_worked_minutes >= $rule->full_day_minutes ? 2 : ($day->approved_worked_minutes >= $rule->half_day_minutes ? 1 : 0);
+            $evidence['reward_shift_rule_id'] = $rule->id;
+            $evidence['reward_half_minutes'] = $rule->half_day_minutes;
+            $evidence['reward_full_minutes'] = $rule->full_day_minutes;
             if (! $units) {
                 throw ValidationException::withMessages(['reward' => 'Approved net work does not meet the half-day credit threshold.']);
             }
@@ -117,8 +133,12 @@ class CompensatoryLeaveService
             }
             if (in_array($reward, ['leave', 'both'])) {
                 $available = $day->work_date->copy()->addDays($r['comp_same_day'] ? 0 : 1);
+                $expiry = ($r['comp_expiry_mode'] ?? 'days') === 'work_month_end' ? $day->work_date->copy()->endOfMonth()->startOfDay() : $available->copy()->addDays($r['comp_expiry_days']);
+                if ($available->gt($expiry)) {
+                    throw ValidationException::withMessages(['reward' => 'This work-month reward has no usable leave date before month-end. It cannot carry into the next month.']);
+                }
                 $lot = LeaveCreditLot::create(['user_id' => $user->id, 'leave_type_id' => $typeId, 'leave_policy_revision_id' => $revision->id, 'granted_half_units' => $units,
-                    'available_on' => $available, 'expires_on' => $available->copy()->addDays($r['comp_expiry_days']), 'source_kind' => 'compensatory',
+                    'available_on' => $available, 'expires_on' => $expiry, 'source_kind' => 'compensatory',
                     'source_key' => 'award:'.$award->id.':'.($award->evidence['decision_number'] ?? 1), 'evidence' => ['award_id' => $award->id, 'attendance_signature' => $signature]]);
                 app(LeaveBalanceService::class)->entry($lot, 'grant', $units, $available, $lot->source_key, $reason, $actor);
                 $award->update(['leave_credit_lot_id' => $lot->id]);
@@ -163,7 +183,13 @@ class CompensatoryLeaveService
 
     public function payrollPayment(User $user, Carbon $start, Carbon $end): int
     {
-        $awards = CompensatoryAward::where('user_id', $user->id)->whereDate('work_date', '>=', $start)->whereDate('work_date', '<=', $end)->where('state', '!=', 'reversed')->get();
+        $awards = CompensatoryAward::where('user_id', $user->id)->whereDate('work_date', '>=', $start)->whereDate('work_date', '<=', $end)->where('state', '!=', 'reversed')
+            ->where(fn ($q) => $q->whereExists(fn ($r) => $r->selectRaw('1')->from('leave_policy_revisions')
+                ->whereColumn('leave_policy_revisions.id', 'compensatory_awards.leave_policy_revision_id')->whereNotNull('leave_policy_id'))
+                ->orWhereExists(fn ($s) => $s->selectRaw('1')->from('salary_slips')
+                    ->whereColumn('salary_slips.user_id', 'compensatory_awards.user_id')->whereIn('status', ['reviewed', 'approved', 'paid'])
+                    ->whereColumn('period_start', '<=', 'compensatory_awards.work_date')->whereColumn('period_end', '>=', 'compensatory_awards.work_date')))
+            ->get();
         foreach ($awards as $award) {
             $this->assertCurrent($award);
         }

@@ -38,6 +38,7 @@
             <p>Branch: {{ $slip->user?->branch?->name ?? 'Not assigned' }} · Department: {{ $slip->user?->department?->name ?? 'Not assigned' }}</p>
             <p>Task groups: {{ $slip->user?->taskGroups->pluck('name')->implode(', ') ?: 'Not assigned' }}</p>
             <p>Status: {{ ucfirst($slip->status) }} · Calculated: {{ $slip->calculated_at?->format('d M Y H:i') }}</p>
+            <p>Per day salary: {{ $slip->per_day_salary_display }} · Total worked hours: {{ $slip->total_worked_hours ?? 'Not recorded' }}</p>
             @if ($slip->calculation_snapshot['needs_recalculation'] ?? false)
                 <p><strong>Attendance has changed. This slip requires payroll review.</strong></p>
             @endif
@@ -61,12 +62,15 @@
             @if (isset($slip->calculation_snapshot['eligible_start']))
                 <p>Eligible pay dates: {{ $slip->calculation_snapshot['eligible_start'] }}–{{ $slip->calculation_snapshot['eligible_end'] }} · {{ $slip->calculation_snapshot['eligible_days'] }} calendar days@if (($slip->calculation_snapshot['pay_basis'] ?? 'monthly') === 'monthly') of {{ $slip->calculation_snapshot['calendar_day_divisor'] }} in this month@endif</p>
             @endif
-            <p>Scheduled days: {{ $slip->scheduled_days }} · Full days: {{ $slip->full_days }} · Half days: {{ $slip->half_days }} · Absent days: {{ $slip->absent_days + (($slip->calculation_snapshot['leave_other_half_absent_days'] ?? 0) / 2) }}</p>
+            <p>Working days: {{ $slip->scheduled_days }} · Full days: {{ $slip->full_days }} · Half days: {{ $slip->half_days }} · Absent days: {{ $slip->absent_days + (($slip->calculation_snapshot['leave_other_half_absent_days'] ?? 0) / 2) }}</p>
             @if (($slip->calculation_snapshot['compensatory_payment_minor'] ?? 0) > 0)
                 <p>Included in other earnings: holiday/off-day reward {{ $slip->currency }} {{ number_format($slip->calculation_snapshot['compensatory_payment_minor'] / 100, 2) }}</p>
             @endif
             @if (($slip->calculation_snapshot['paid_leave_pay_minor'] ?? 0) > 0)
                 <p>Included in other earnings: paid leave earnings {{ $slip->currency }} {{ number_format($slip->calculation_snapshot['paid_leave_pay_minor'] / 100, 2) }}</p>
+            @endif
+            @if (! empty($slip->calculation_snapshot['overtime_breakdown']))
+                <p>Overtime calculation: {{ $slip->overtime_breakdown_display }}</p>
             @endif
             <p>Paid leave: {{ $slip->paid_leave_half_units / 2 }} days · Unpaid leave: {{ $slip->unpaid_leave_half_units / 2 }} days · Approved overtime: {{ $slip->approved_overtime_minutes }} minutes</p>
         </section>

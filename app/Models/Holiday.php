@@ -2,8 +2,8 @@
 
 namespace App\Models;
 
-use App\Services\Attendance\HolidayOccurrenceService;
 use App\Services\Attendance\HolidayAttendanceService;
+use App\Services\Attendance\HolidayOccurrenceService;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 

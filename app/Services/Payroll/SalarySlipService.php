@@ -10,6 +10,7 @@ use App\Models\User;
 use App\Services\Attendance\ShiftAssignmentResolver;
 use App\Services\Leave\CompensatoryLeaveService;
 use App\Services\Leave\LeaveBalanceService;
+use App\Services\Leave\LeavePolicyService;
 use Carbon\Carbon;
 use Carbon\CarbonPeriod;
 use Illuminate\Support\Collection;
@@ -28,7 +29,7 @@ class SalarySlipService
         $start = $period->copy()->startOfMonth();
         $end = $period->copy()->endOfMonth();
         [$start,$end] = app(ManualPayrollReviewService::class)->bounds($user, $period);
-        $profile = $user->payrollProfile;
+        $profile = app(PayrollProfileHistoryService::class)->forDate($user, $start);
         $issues = [];
         if ($end->lt($start)) {
             return ['The employee has no eligible employment dates in this month.'];
@@ -124,7 +125,8 @@ class SalarySlipService
 
         return DB::transaction(function () use ($user, $start, $end, $periodStart, $periodEnd) {
             $user = User::whereKey($user->id)->lockForUpdate()->firstOrFail();
-            $profile = $user->payrollProfile()->lockForUpdate()->first();
+            $user->payrollProfile()->lockForUpdate()->first();
+            $profile = app(PayrollProfileHistoryService::class)->forDate($user, $periodStart);
             $user->setRelation('payrollProfile', $profile);
             [$start,$end] = app(ManualPayrollReviewService::class)->bounds($user, $periodStart);
             if ($end->lt($start)) {
@@ -223,7 +225,8 @@ class SalarySlipService
             if ($payBasis === 'hourly' && $overtimeRate === 0) {
                 $overtimeRate = $baseRate;
             }
-            $overtimePay = $this->minutesMoney($overtimeRate, $overtimeMinutes);
+            $overtimeResult = app(OvertimePayService::class)->calculate($days, $profile);
+            $overtimePay = $overtimeResult['amount_minor'];
             $housing = $payBasis === 'monthly' ? $this->divideMoney((int) $profile->housing_allowance_minor * $eligibleDays, $calendarDivisor) : 0;
             $transport = $payBasis === 'monthly' ? $this->divideMoney((int) $profile->transport_allowance_minor * $eligibleDays, $calendarDivisor) : 0;
             $other = $payBasis === 'monthly' ? $this->divideMoney((int) $profile->other_allowance_minor * $eligibleDays, $calendarDivisor) : 0;
@@ -292,6 +295,7 @@ class SalarySlipService
                     'leaves' => $leaveSnapshot,
                     'compensatory_payment_minor' => $compensatoryPayment,
                     'paid_leave_pay_minor' => $paidLeavePay,
+                    'overtime_breakdown' => $overtimeResult['rows'],
                     'leave_balance_evidence' => app(LeaveBalanceService::class)->payrollEvidence($user, $start, $end),
                     'attendance_absent_half_units' => $attendance['absent_half_units'],
                     'leave_other_half_absent_days' => $attendance['leave_other_half_absent_days'],
@@ -452,8 +456,21 @@ class SalarySlipService
             $unpaid += $deductible;
             $amount = $applyLeavePolicy ? $leave->deduction_override_minor : 0;
             if ($amount === null && $applyLeavePolicy) {
-                $amount = match ($type->deduction_method) {
-                    'fixed_amount' => $this->halfUnitsMoney((int) $type->deduction_amount_minor, $deductible),
+                $method = $type->is_paid ? null : $type->deduction_method;
+                $fixed = (int) $type->deduction_amount_minor;
+                if ($type->is_paid && $deductible > 0) {
+                    $rules = app(LeavePolicyService::class)->resolve($user, $type->id, $leave->leave_date)?->rules;
+                    if (! $rules || ! $leave->balance_managed) {
+                        throw ValidationException::withMessages(['leave' => 'Reconcile legacy uncovered paid-category leave using an unpaid category before recalculating payroll.']);
+                    }
+                    $method = $rules['unpaid_excess_deduction_method'] ?? null;
+                    $fixed = (int) ($rules['unpaid_excess_deduction_minor'] ?? 0);
+                    if (! in_array($method, ['salary_day_rate', 'basic_salary_31_day_rate', 'fixed_amount']) || ($method === 'fixed_amount' && $fixed <= 0)) {
+                        throw ValidationException::withMessages(['leave' => 'Configure an unpaid-excess deduction in the applicable leave policy before payroll.']);
+                    }
+                }
+                $amount = match ($method) {
+                    'fixed_amount' => $this->halfUnitsMoney($fixed, $deductible),
                     'salary_day_rate' => $this->halfUnitsMoney($dayRate, $deductible),
                     // Keep the stored option key compatible with existing leave policies.
                     'basic_salary_31_day_rate' => $this->divideMoney($basicSalary * $deductible, $calendarDivisor * 2),

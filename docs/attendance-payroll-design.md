@@ -104,3 +104,7 @@ Production deployment, live eBio communication, full browser isolation and concu
 ## Leave carry-forward extension
 
 Tenant Leave Settings, balance ledgers and attendance-linked compensatory awards are now implemented. Payroll uses approved credit allocations for enrolled policies and records paid-leave/work-reward earnings. See [Leave carry-forward design and tenant setup](developer/leave-system.md) for defaults, migration and company-specific enrolment.
+
+## Start an attendance recalculation
+
+Open **Organisation Management → Recalculation runs** and choose **Recalculate**. Select the date range and employees, then choose **Queue calculation**. The same page displays queued/running/completed results. Date-range, workload and active-run limits remain in place. Attendance Days retains Add manual attendance; its Recalculate button has moved to Recalculation runs.

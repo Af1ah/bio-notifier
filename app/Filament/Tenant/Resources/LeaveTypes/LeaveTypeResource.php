@@ -26,11 +26,13 @@ class LeaveTypeResource extends Resource
 
     protected static ?int $navigationSort = 2;
 
-    protected static ?string $navigationLabel = 'Leave types';
+    protected static ?string $navigationLabel = 'Leave categories';
 
-    protected static ?string $modelLabel = 'Leave type';
+    protected static bool $shouldRegisterNavigation = true;
 
-    protected static ?string $pluralModelLabel = 'Leave types';
+    protected static ?string $modelLabel = 'Leave category';
+
+    protected static ?string $pluralModelLabel = 'Leave categories';
 
     protected static ?string $recordTitleAttribute = 'name';
 

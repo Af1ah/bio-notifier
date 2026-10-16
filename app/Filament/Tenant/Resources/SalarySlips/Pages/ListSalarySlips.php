@@ -21,6 +21,8 @@ use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\ListRecords;
+use Filament\Schemas\Components\Group;
+use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Components\Utilities\Set;
 use Filament\Schemas\Schema;
@@ -31,6 +33,17 @@ use Illuminate\Validation\ValidationException;
 class ListSalarySlips extends ListRecords
 {
     protected static string $resource = SalarySlipResource::class;
+
+    public function updatedTableFilters(): void
+    {
+        parent::updatedTableFilters();
+
+        $this->tableGrouping = match ($this->tableFilters['display_group']['value'] ?? 'none') {
+            'branch' => 'user.branch.name:asc',
+            'department' => 'user.department.name:asc',
+            default => null,
+        };
+    }
 
     protected function getHeaderActions(): array
     {
@@ -54,7 +67,8 @@ class ListSalarySlips extends ListRecords
                         }
                         $evidence = app(ManualPayrollReviewService::class)->evidence($user, Carbon::parse($get('period')));
 
-                        return 'Eligible: '.$evidence['eligible_start'].'–'.$evidence['eligible_end'].' · Recorded days: '.count($evidence['days']).' · Statuses: '.collect($evidence['days'])->countBy('status')->map(fn ($n, $s) => $s.': '.$n)->implode(', ').' · Approved worked minutes: '.collect($evidence['days'])->sum('approved_minutes');
+                        $minutes = (int) collect($evidence['days'])->sum('approved_minutes');
+                        return 'Eligible: '.$evidence['eligible_start'].'–'.$evidence['eligible_end'].' · Recorded days: '.count($evidence['days']).' · Work time: '.intdiv($minutes, 60).'h '.($minutes % 60).'m';
                     }),
                     Hidden::make('evidence_signature')->default('')->dehydrated(),
                     Toggle::make('confirmed')->label('I reviewed attendance, leave, salary and employment dates')->rule('accepted')->required(),
@@ -77,7 +91,8 @@ class ListSalarySlips extends ListRecords
                 ->label('Generate salary slips')
                 ->icon('heroicon-o-calculator')
                 ->visible(fn (): bool => (int) auth()->user()?->privilege === 14)
-                ->modalDescription('Before generating, enable payroll and complete salary details for employees, calculate attendance for the selected month, and resolve pending attendance approvals.')
+                ->modalWidth('lg')
+                ->modalDescription('Choose the month and employees. Payroll-disabled employees are excluded. Resolve any attendance issues before generating drafts.')
                 ->modalSubmitActionLabel('Check and generate')
                 ->beforeFormFilled(function (Action $action): void {
                     $this->authorizePayrollManagement();
@@ -98,13 +113,7 @@ class ListSalarySlips extends ListRecords
 
                     $action->halt();
                 })
-                ->schema([
-                    Select::make('month')->label('Payroll month')
-                        ->options(collect(range(1, 12))->mapWithKeys(fn (int $month): array => [$month => Carbon::create(2000, $month, 1)->format('F')])->all())
-                        ->default(now()->month)->required(),
-                    TextInput::make('year')->label('Year')->integer()->minValue(1)->maxValue(9999)->default(now()->year)->required(),
-                    ...PayrollSelectionFields::make(true),
-                ])
+                ->schema(fn (): array => $this->generationSchema())
                 ->action(function (array $data): void {
                     $this->authorizePayrollManagement();
                     $period = Carbon::create((int) $data['year'], (int) $data['month'], 1)->startOfMonth();
@@ -155,6 +164,27 @@ class ListSalarySlips extends ListRecords
     protected function authorizePayrollManagement(): void
     {
         abort_unless((int) auth()->user()?->privilege === 14, 403);
+    }
+
+    protected function generationSchema(): array
+    {
+        $selection = PayrollSelectionFields::make(true);
+
+        return [
+            Group::make([
+                Select::make('month')->label('Payroll month')
+                    ->options(collect(range(1, 12))->mapWithKeys(fn (int $month): array => [$month => Carbon::create(2000, $month, 1)->format('F')])->all())
+                    ->default(now()->month)->required(),
+                TextInput::make('year')->label('Year')->integer()->minValue(1)->maxValue(9999)->default(now()->year)->required(),
+                $selection[3]->label('Employees')->columnSpanFull()->helperText('Leave blank to generate for all payroll-enabled employees.'),
+                Section::make('Narrow the employee list')
+                    ->description('Use these only when you need a branch, department, or task group subset.')
+                    ->schema([$selection[0], $selection[1], $selection[2]])
+                    ->columns(2)
+                    ->collapsed()
+                    ->columnSpanFull(),
+            ])->columns(2),
+        ];
     }
 
     public function exportQuery(array $data): Builder

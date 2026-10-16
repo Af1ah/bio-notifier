@@ -102,3 +102,17 @@ HR discovers that a rewarded full day's work should have been only a half day. C
 | Draft marked for recalculation | Resolve the underlying changes, complete any required manual-period review, then regenerate the draft. |
 
 For configuration details, see [Configure leave policies](leave-settings.md). For daily operations, see [Record leave and work rewards](leave-workflows.md).
+
+### Financial-year end and carried-credit expiry
+
+A 1 April 2026–31 March 2027 leave period defines when regular grants can be issued. A separate annual cutoff can expire the eligible remaining credit on 31 March, or permit use until a later cutoff such as 30 June. Neither setting adds work minutes or changes attendance status. Existing payslip amounts and already issued credit expiry are retained when HR saves a new policy revision.
+
+### Payslip worked hours and per-day salary
+
+The payslip details and PDF show **Working days** (previously Scheduled days), **Total worked hours**, and **Per day salary**. Working days counts the scheduled working dates used by the saved payroll calculation; it is not the employee's Present-day count. Total worked hours uses saved approved work minutes, includes overtime and excludes paid-leave hours. It is displayed as hours/minutes.
+
+For monthly pay, per-day salary is the saved base-salary rate divided by actual calendar days, matching the monthly attendance-deduction basis. For daily pay, it is the saved configured daily base rate. Hourly pay has no fixed daily salary. Historical slips without the saved value show Not recorded; the app does not reconstruct it from current attendance or salary profiles. Displaying these fields does not change payslip amounts or saved payroll evidence.
+
+## Overtime rate evidence
+
+New overtime approvals capture the applicable employee/shift rate and currency. Salary slip details, PDFs and payroll CSVs include the same rate breakdown from the saved calculation. Shift settings now have an explicit overtime enable switch; a zero hourly rate is a payment setting. See [0.2 business rules](../beta-02-business-features.md).

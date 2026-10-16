@@ -8,7 +8,10 @@ use App\Filament\Tenant\Resources\AttendanceDays\Pages\ListAttendanceDays;
 use App\Filament\Tenant\Resources\EmployeeLeaves\Pages\CreateEmployeeLeave;
 use App\Filament\Tenant\Resources\EmployeeLeaves\Pages\EditEmployeeLeave;
 use App\Filament\Tenant\Resources\LeavePolicies\Pages\CreateLeavePolicy;
+use App\Filament\Tenant\Resources\LeavePolicies\Pages\EditLeavePolicy;
 use App\Filament\Tenant\Resources\LeavePolicies\Pages\ListLeavePolicies;
+use App\Filament\Tenant\Resources\LeaveTypes\LeaveTypeResource;
+use App\Filament\Tenant\Resources\LeaveTypes\Pages\ListLeaveTypes;
 use App\Models\AttendanceDay;
 use App\Models\AttendanceLog;
 use App\Models\CompensatoryAward;
@@ -28,18 +31,22 @@ use App\Services\Attendance\ShiftRuleService;
 use App\Services\Leave\CompensatoryLeaveService;
 use App\Services\Leave\EmployeeLeaveService;
 use App\Services\Leave\LeaveBalanceService;
+use App\Services\Leave\LeavePolicyRemovalService;
 use App\Services\Leave\LeavePolicyService;
 use App\Services\Leave\LeaveSettingsService;
+use App\Services\Payroll\ManualPayrollReviewService;
 use App\Services\Payroll\SalarySlipService;
 use Carbon\Carbon;
 use Carbon\CarbonPeriod;
 use Filament\Facades\Filament;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Validation\ValidationException;
 use Livewire\Livewire;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 use Tests\TestCase;
 
@@ -81,19 +88,19 @@ class LeaveCarryForwardTest extends TestCase
         return app(EmployeeLeaveService::class)->save($existing, ['user_id' => $this->user->id, 'leave_type_id' => $this->type->id, 'leave_date' => $date, 'duration' => $duration, 'state' => $state], $this->actor);
     }
 
-    private function shift(): Schedule
+    private function shift(array $rules = []): Schedule
     {
         $shift = Schedule::create(['name' => 'Weekdays', 'type' => 'regular', 'valid_from' => '2026-08-01', 'status' => true,
-            'rules' => ['start_time' => '09:00', 'end_time' => '17:00', 'weekdays' => [1, 2, 3, 4, 5], 'full_day_minutes' => 480, 'half_day_minutes' => 240, 'punch_method' => 'device', 'overtime_basis' => 'after_required_hours', 'overtime_minimum_minutes' => 30]]);
+            'rules' => array_replace(['start_time' => '09:00', 'end_time' => '17:00', 'weekdays' => [1, 2, 3, 4, 5], 'full_day_minutes' => 480, 'half_day_minutes' => 240, 'punch_method' => 'device', 'overtime_basis' => 'after_required_hours', 'overtime_minimum_minutes' => 30], $rules)]);
         app(ShiftRuleService::class)->sync($shift);
         app(ShiftAssignmentService::class)->setDefault($shift, '2026-08-01');
 
         return $shift;
     }
 
-    private function holidayWork(): AttendanceDay
+    private function holidayWork(array $rules = []): AttendanceDay
     {
-        $this->shift();
+        $this->shift($rules);
         Holiday::create(['name' => 'Company holiday', 'starts_on' => '2026-08-03', 'ends_on' => '2026-08-03', 'recurrence' => 'none', 'active' => true]);
         $device = Device::create(['serial_number' => 'LEAVE']);
         AttendanceLog::create(['device_id' => $device->id, 'pin' => 'staff', 'punched_at' => '2026-08-03 09:00', 'status' => 0]);
@@ -503,7 +510,7 @@ class LeaveCarryForwardTest extends TestCase
 
     public function test_company_can_limit_carry_to_one_following_month(): void
     {
-        $this->policy(['carry_roll_again' => false]);
+        $this->policy(['expiry_months' => 1]);
         app(LeaveBalanceService::class)->ensureGrants($this->user, $this->type->id, Carbon::parse('2026-08-10'));
         $this->assertSame('2026-09-30', LeaveCreditLot::first()->expires_on->toDateString());
     }
@@ -551,5 +558,455 @@ class LeaveCarryForwardTest extends TestCase
     {
         $this->assertFalse(Route::has('filament.tenant.pages.compensatory-leave'));
         $this->assertTrue(Route::has('filament.tenant.resources.attendance-days.index'));
+    }
+
+    public function test_carry_limit_is_applied_before_end_of_period_grant_is_due(): void
+    {
+        $this->policy(['grant_timing' => 'end', 'carry_cap_half_units' => 2]);
+        $service = app(LeaveBalanceService::class);
+        $service->ensureGrants($this->user, $this->type->id, Carbon::parse('2026-08-31'));
+        $this->assertSame(4, $service->availableUnits($this->user, $this->type->id, Carbon::parse('2026-08-31')));
+        $service->ensureGrants($this->user, $this->type->id, Carbon::parse('2026-09-01'));
+        $this->assertSame(2, $service->availableUnits($this->user, $this->type->id, Carbon::parse('2026-09-01')));
+        $this->assertSame(1, LeaveCreditLot::count());
+        $service->ensureGrants($this->user, $this->type->id, Carbon::parse('2026-09-01'));
+        $this->assertSame(2, $service->availableUnits($this->user, $this->type->id, Carbon::parse('2026-09-01')));
+    }
+
+    public function test_opening_balance_does_not_reduce_regular_entitlement_grants(): void
+    {
+        $this->policy(['balance_cap_half_units' => 6]);
+        $service = app(LeaveBalanceService::class);
+        $service->opening($this->user, $this->type, 2, Carbon::parse('2026-08-01'), Carbon::parse('2026-12-31'), 'Reviewed opening', $this->actor, 'cap-opening');
+        $service->ensureGrants($this->user, $this->type->id, Carbon::parse('2026-09-01'));
+        $this->assertSame(6, LeaveCreditLot::where('source_kind', 'entitlement')->sum('granted_half_units'));
+        $this->assertSame(8, $service->availableUnits($this->user, $this->type->id, Carbon::parse('2026-09-01')));
+    }
+
+    public function test_annual_entitlement_is_not_carried_until_its_grant_period_ends(): void
+    {
+        $this->policy(['mode' => 'annual', 'grant_half_units' => 24], '2026-01-01');
+        $service = app(LeaveBalanceService::class);
+        $this->assertSame(0, $service->balance($this->user, $this->type->id, Carbon::parse('2026-02-01'))['carried_half_units']);
+        Carbon::setTestNow('2027-01-01 12:00:00');
+        $balance = $service->balance($this->user, $this->type->id, Carbon::parse('2027-01-01'));
+        $this->assertSame(12, $balance['carried_half_units']);
+    }
+
+    public function test_rewards_inherit_the_daily_shift_rule_instead_of_leave_thresholds(): void
+    {
+        $this->policy(['mode' => 'compensatory', 'comp_half_minutes' => 1, 'comp_full_minutes' => 2]);
+        $day = $this->holidayWork(['half_day_minutes' => 300, 'full_day_minutes' => 600]);
+        $award = $this->award($day);
+        $this->assertSame(1, $award->half_units);
+        $this->assertSame(600, $award->evidence['reward_full_minutes']);
+        $this->assertArrayNotHasKey('comp_full_minutes', $award->evidence['policy_rules']);
+    }
+
+    public function test_new_paid_leave_requires_an_entitlement_policy(): void
+    {
+        $this->type->update(['annual_allowance_half_units' => 24]);
+        $this->rejects(fn () => $this->leave('2026-08-05'), 'Configure an applicable entitlement policy');
+        $this->assertSame(0, EmployeeLeave::count());
+    }
+
+    public function test_paid_category_stores_no_deduction_and_unpaid_excess_uses_policy_settings(): void
+    {
+        $this->type->update(['deduction_method' => 'fixed_amount', 'deduction_amount_minor' => 50000]);
+        $this->assertNull($this->type->fresh()->deduction_method);
+        $this->assertNull($this->type->fresh()->deduction_amount_minor);
+        $this->rejects(fn () => $this->policy(['allow_unpaid_excess' => true, 'unpaid_excess_deduction_method' => 'fixed_amount']), 'positive deduction');
+        $policy = $this->policy(['allow_unpaid_excess' => true, 'unpaid_excess_deduction_method' => 'fixed_amount', 'unpaid_excess_deduction_minor' => 50000]);
+        $this->assertSame(50000, $policy->revisions()->first()->rules['unpaid_excess_deduction_minor']);
+    }
+
+    public function test_unrelated_category_leave_does_not_block_policy_creation(): void
+    {
+        $other = LeaveType::create(['name' => 'Unpaid', 'code' => 'UNRELATED', 'is_paid' => false]);
+        EmployeeLeave::create(['user_id' => $this->user->id, 'leave_type_id' => $other->id, 'leave_date' => '2026-08-05', 'duration' => 'full', 'state' => 'approved']);
+        $policy = $this->policy();
+        $this->assertNotNull($policy->id);
+    }
+
+    public function test_assigned_policy_revision_is_not_blocked_by_an_unassigned_employee_leave(): void
+    {
+        $policy = $this->policy(default: false);
+        app(LeavePolicyService::class)->assign($policy, [$this->user->id], Carbon::parse('2026-08-01'), null, $this->actor);
+        $other = User::create(['name' => 'Other', 'pin' => 'other']);
+        EmployeeLeave::create(['user_id' => $other->id, 'leave_type_id' => $this->type->id, 'leave_date' => '2026-11-05', 'duration' => 'full', 'state' => 'approved']);
+        app(LeavePolicyService::class)->save($policy, ['name' => 'Revision', 'leave_type_id' => $this->type->id, 'tenant_default' => false, 'effective_from' => '2026-11-01', 'reason' => 'Reviewed change', 'rules' => LeavePolicyService::defaults()], $this->actor);
+        $this->assertSame(2, $policy->revisions()->count());
+        EmployeeLeave::create(['user_id' => $this->user->id, 'leave_type_id' => $this->type->id, 'leave_date' => '2026-12-05', 'duration' => 'full', 'state' => 'approved']);
+        $this->rejects(fn () => app(LeavePolicyService::class)->save($policy, ['name' => 'Revision', 'leave_type_id' => $this->type->id, 'tenant_default' => false, 'effective_from' => '2026-12-01', 'reason' => 'Reviewed change', 'rules' => LeavePolicyService::defaults()], $this->actor), 'Reconcile affected');
+    }
+
+    public function test_policy_form_hides_inapplicable_controls_and_saves_compensatory_mode(): void
+    {
+        Livewire::test(CreateLeavePolicy::class)
+            ->fillForm(['rules.mode' => 'compensatory'])
+            ->assertFormFieldIsHidden('rules.grant_half_units')
+            ->assertFormFieldIsHidden('rules.carry_enabled')
+            ->assertFormFieldIsHidden('rules.comp_enabled')
+            ->assertFormFieldIsVisible('rules.comp_reward')
+            ->fillForm(['name' => 'Work rewards', 'leave_type_id' => $this->type->id, 'tenant_default' => true,
+                'effective_from' => '2026-08-01', 'reason' => 'Reviewed reward policy', 'rules.comp_reward' => 'leave'])
+            ->assertFormFieldIsHidden('rules.comp_payment_full_minor')
+            ->call('create')->assertHasNoFormErrors();
+        $rules = LeavePolicy::first()->revisions()->first()->rules;
+        $this->assertTrue($rules['comp_enabled']);
+        $this->assertSame(0, $rules['grant_half_units']);
+        $this->assertFalse($rules['carry_enabled']);
+    }
+
+    public function test_paid_category_can_be_created_inside_the_policy_form(): void
+    {
+        Livewire::test(CreateLeavePolicy::class)
+            ->callFormComponentAction('leave_type_id', 'createOption', data: ['name' => 'Vacation', 'code' => 'VAC', 'deduction_method' => 'salary_day_rate', 'active' => true])
+            ->assertHasNoErrors()
+            ->fillForm(['name' => 'Vacation policy', 'tenant_default' => true, 'effective_from' => '2026-08-01', 'reason' => 'Reviewed vacation entitlement'])
+            ->call('create')->assertHasNoFormErrors();
+        $category = LeaveType::where('code', 'VAC')->firstOrFail();
+        $this->assertTrue($category->is_paid);
+        $this->assertSame(0, $category->annual_allowance_half_units);
+        $this->assertSame($category->id, LeavePolicy::first()->leave_type_id);
+        $this->assertTrue(LeaveTypeResource::shouldRegisterNavigation());
+    }
+
+    public function test_relative_expiry_choice_clears_the_previous_fixed_cutoff(): void
+    {
+        $policy = $this->policy(['fixed_expiry_month' => 3, 'fixed_expiry_day' => 31]);
+        Livewire::test(EditLeavePolicy::class, ['record' => $policy->id])
+            ->fillForm(['rules.expiry_method' => 'relative', 'rules.expiry_months' => 2, 'reason' => 'Use a relative expiry'])
+            ->assertFormFieldIsHidden('rules.annual_cutoff_date')
+            ->call('save')->assertHasNoFormErrors();
+        $rules = $policy->revisions()->orderByDesc('effective_from')->first()->rules;
+        $this->assertNull($rules['fixed_expiry_month']);
+        $this->assertSame(2, $rules['expiry_months']);
+        $this->assertArrayNotHasKey('carry_roll_again', $rules);
+    }
+
+    private function removalSlip(User $user, string $status = 'draft', string $month = '2026-08'): SalarySlip
+    {
+        $date = Carbon::parse($month.'-01');
+
+        return SalarySlip::create(['user_id' => $user->id, 'period_start' => $date, 'period_end' => $date->copy()->endOfMonth(),
+            'status' => $status, 'calculation_snapshot' => ['preserve' => true], 'calculated_at' => now(), 'net_pay_minor' => 123456]);
+    }
+
+    private function removePolicy(LeavePolicy $policy): void
+    {
+        $service = app(LeavePolicyRemovalService::class);
+        $preview = $service->preview($policy, $this->actor);
+        $service->remove($policy, $this->actor, $policy->name, 'HR approved removal', $preview['signature']);
+    }
+
+    public function test_policy_removal_cleans_unprocessed_dependencies_and_preserves_unrelated_data(): void
+    {
+        $policy = $this->policy(['comp_enabled' => true]);
+        $leave = $this->leave('2026-08-05', 'pending');
+        $award = $this->award($this->holidayWork());
+        $draft = $this->removalSlip($this->user);
+        $other = User::create(['name' => 'Unaffected', 'pin' => 'unaffected']);
+        $unrelatedDraft = $this->removalSlip($other);
+        $opening = app(LeaveBalanceService::class)->opening($this->user, $this->type, 2, Carbon::parse('2026-08-01'), Carbon::parse('2026-12-31'), 'Independent reviewed balance', $this->actor, 'independent');
+        $raw = AttendanceLog::count();
+        $days = AttendanceDay::count();
+        $this->removePolicy($policy);
+        $this->assertDatabaseMissing('leave_policies', ['id' => $policy->id]);
+        $this->assertDatabaseMissing('employee_leaves', ['id' => $leave->id]);
+        $this->assertDatabaseMissing('compensatory_awards', ['id' => $award->id]);
+        $this->assertDatabaseMissing('salary_slips', ['id' => $draft->id]);
+        $this->assertDatabaseHas('salary_slips', ['id' => $unrelatedDraft->id]);
+        $this->assertDatabaseHas('leave_credit_lots', ['id' => $opening->id]);
+        $this->assertDatabaseHas('leave_types', ['id' => $this->type->id]);
+        $this->assertSame(0, DB::table('leave_allocations')->count());
+        $this->assertSame($raw, AttendanceLog::count());
+        $this->assertSame($days, AttendanceDay::count());
+        $archive = DB::table('leave_policy_removals')->first();
+        $this->assertSame($policy->id, $archive->original_policy_id);
+        $this->assertCount(1, json_decode($archive->snapshot, true)['leaves']);
+    }
+
+    public static function processedSlipStates(): array
+    {
+        return [['reviewed'], ['approved'], ['paid']];
+    }
+
+    #[DataProvider('processedSlipStates')]
+    public function test_removal_preserves_processed_slips_and_their_payroll_evidence(string $status): void
+    {
+        $policy = $this->policy(['prorate_join_exit' => false]);
+        $this->shift();
+        $this->user->payrollProfile()->create(['payroll_enabled' => true, 'basic_salary_minor' => 310000, 'effective_from' => '2026-08-01',
+            'employment_starts_on' => '2026-08-05', 'employment_ends_on' => '2026-08-05']);
+        app(AttendanceCalculationService::class)->calculate($this->user, Carbon::parse('2026-08-05'));
+        $leave = $this->leave('2026-08-05');
+        $payroll = app(SalarySlipService::class);
+        $slip = $payroll->generate($this->user->fresh(), Carbon::parse('2026-08-01'));
+        $payroll->transition($slip, $this->actor, 'reviewed');
+        if (in_array($status, ['approved', 'paid'])) {
+            $payroll->transition($slip->fresh(), $this->actor, 'approved');
+        }
+        if ($status === 'paid') {
+            $payroll->transition($slip->fresh(), $this->actor, 'paid');
+        }
+        $before = $slip->fresh()->getAttributes();
+        $signature = app(ManualPayrollReviewService::class)->signature($this->user->fresh(), Carbon::parse('2026-08-01'));
+        $this->removePolicy($policy);
+        $this->assertSame($before, $slip->fresh()->getAttributes());
+        $this->assertSame($signature, app(ManualPayrollReviewService::class)->signature($this->user->fresh(), Carbon::parse('2026-08-01')));
+        $this->assertSame(2, app(LeaveBalanceService::class)->payrollCoverage($leave->fresh()));
+        $this->assertSame(0, app(LeaveBalanceService::class)->availableUnits($this->user, $this->type->id, Carbon::parse('2026-08-06')));
+        $this->assertDatabaseMissing('leave_policies', ['id' => $policy->id]);
+        $this->assertDatabaseHas('leave_policy_revisions', ['leave_policy_id' => null]);
+        if ($status === 'reviewed') {
+            $this->assertSame('approved', $payroll->transition($slip->fresh(), $this->actor, 'approved')->status);
+        }
+    }
+
+    public function test_removal_rejects_stale_preview_and_non_admin_without_partial_deletion(): void
+    {
+        $policy = $this->policy();
+        $service = app(LeavePolicyRemovalService::class);
+        $preview = $service->preview($policy, $this->actor);
+        $this->leave('2026-08-05', 'pending');
+        $this->rejects(fn () => $service->remove($policy, $this->actor, $policy->name, 'Remove', $preview['signature']), 'changed during review');
+        $this->assertDatabaseHas('leave_policies', ['id' => $policy->id]);
+        $this->assertSame(0, DB::table('leave_policy_removals')->count());
+        try {
+            $service->remove($policy, $this->user, $policy->name, 'Remove', $preview['signature']);
+            $this->fail('Expected authorization failure');
+        } catch (HttpException $exception) {
+            $this->assertSame(403, $exception->getStatusCode());
+        }
+    }
+
+    public function test_removal_action_shows_preview_and_removes_the_selected_policy(): void
+    {
+        $policy = $this->policy();
+        Livewire::test(ListLeavePolicies::class)->mountTableAction('removePolicy', $policy)
+            ->assertTableActionDataSet(['removal_summary' => app(LeavePolicyRemovalService::class)->preview($policy, $this->actor)['summary']])
+            ->setTableActionData(['confirmation' => $policy->name, 'reason' => 'HR reviewed removal'])
+            ->callMountedTableAction()->assertHasNoTableActionErrors();
+        $this->assertDatabaseMissing('leave_policies', ['id' => $policy->id]);
+    }
+
+    public function test_removal_retains_cross_month_consumed_reward_but_stops_unprocessed_payment(): void
+    {
+        $policy = $this->policy(['mode' => 'compensatory', 'comp_reward' => 'both', 'comp_payment_full_minor' => 50000]);
+        $this->user->payrollProfile()->create(['payroll_enabled' => true, 'currency' => 'INR', 'effective_from' => '2026-08-01']);
+        $award = $this->award($this->holidayWork(), 'both');
+        $leave = $this->leave('2026-09-02');
+        $processed = $this->removalSlip($this->user, 'paid', '2026-09');
+        $draft = $this->removalSlip($this->user);
+        $before = $processed->fresh()->getAttributes();
+        $this->removePolicy($policy);
+        $this->assertSame($before, $processed->fresh()->getAttributes());
+        $this->assertDatabaseMissing('salary_slips', ['id' => $draft->id]);
+        $this->assertDatabaseHas('compensatory_awards', ['id' => $award->id]);
+        $this->assertSame(2, app(LeaveBalanceService::class)->payrollCoverage($leave->fresh()));
+        $this->assertSame(0, app(CompensatoryLeaveService::class)->payrollPayment($this->user, Carbon::parse('2026-08-01'), Carbon::parse('2026-08-31')));
+    }
+
+    public function test_removal_failure_rolls_back_archive_and_dependency_changes(): void
+    {
+        $policy = $this->policy();
+        $leave = $this->leave('2026-08-05', 'pending');
+        DB::statement("CREATE TRIGGER reject_policy_removal BEFORE DELETE ON leave_policies BEGIN SELECT RAISE(ABORT, 'simulated write failure'); END");
+        try {
+            $this->removePolicy($policy);
+            $this->fail('Expected database failure');
+        } catch (QueryException $exception) {
+            $this->assertStringContainsString('simulated write failure', $exception->getMessage());
+        }
+        $this->assertDatabaseHas('leave_policies', ['id' => $policy->id]);
+        $this->assertDatabaseHas('employee_leaves', ['id' => $leave->id, 'state' => 'pending']);
+        $this->assertDatabaseHas('leave_allocations', ['employee_leave_id' => $leave->id, 'state' => 'reserved']);
+        $this->assertSame(0, DB::table('leave_policy_removals')->count());
+        $this->assertSame(0, DB::table('leave_ledger_entries')->where('kind', 'release')->count());
+    }
+
+    public function test_removal_preserves_closed_source_reward_payment_and_stops_new_credit_use(): void
+    {
+        $policy = $this->policy(['mode' => 'compensatory', 'comp_reward' => 'both', 'comp_payment_full_minor' => 50000]);
+        $this->user->payrollProfile()->create(['payroll_enabled' => true, 'currency' => 'INR', 'effective_from' => '2026-08-01']);
+        $award = $this->award($this->holidayWork(), 'both');
+        $processed = $this->removalSlip($this->user, 'approved');
+        $awardBefore = $award->fresh()->getAttributes();
+        $slipBefore = $processed->fresh()->getAttributes();
+        $this->removePolicy($policy);
+        $this->assertSame($awardBefore, $award->fresh()->getAttributes());
+        $this->assertSame($slipBefore, $processed->fresh()->getAttributes());
+        $this->assertSame(50000, app(CompensatoryLeaveService::class)->payrollPayment($this->user, Carbon::parse('2026-08-01'), Carbon::parse('2026-08-31')));
+        $this->assertSame(0, app(LeaveBalanceService::class)->availableUnits($this->user, $this->type->id, Carbon::parse('2026-08-05')));
+    }
+
+    public function test_removing_assigned_policy_does_not_remove_other_policy_employee_leave(): void
+    {
+        $policy = $this->policy(default: false);
+        app(LeavePolicyService::class)->assign($policy, [$this->user->id], Carbon::parse('2026-08-01'), null, $this->actor);
+        $default = $this->policy();
+        $this->leave('2026-08-05', 'pending');
+        $other = User::create(['name' => 'Other employee', 'pin' => 'other-default']);
+        $leave = app(EmployeeLeaveService::class)->save(null, ['user_id' => $other->id, 'leave_type_id' => $this->type->id, 'leave_date' => '2026-08-05', 'duration' => 'full', 'state' => 'pending'], $this->actor);
+        $this->removePolicy($policy);
+        $this->assertDatabaseHas('leave_policies', ['id' => $default->id]);
+        $this->assertDatabaseHas('employee_leaves', ['id' => $leave->id]);
+        $this->assertSame(0, DB::table('employee_leave_policy_assignments')->where('leave_policy_id', $policy->id)->count());
+        $this->assertSame(1, EmployeeLeave::count());
+    }
+
+    public function test_financial_year_grants_once_and_preserves_separate_annual_expiry(): void
+    {
+        $policy = $this->policy(['mode' => 'annual', 'grant_half_units' => 24, 'leave_period_from' => '2026-04-01',
+            'leave_period_to' => '2027-03-31', 'annual_cutoff_date' => '2027-06-30', 'expiry_method' => 'fixed'], '2026-04-01');
+        $service = app(LeaveBalanceService::class);
+        $service->ensureGrants($this->user, $this->type->id, Carbon::parse('2026-10-01'));
+        $lot = LeaveCreditLot::first();
+        $this->assertSame(1, LeaveCreditLot::count());
+        $this->assertSame(24, $lot->granted_half_units);
+        $this->assertSame('2026-04-01', $lot->evidence['period_start']);
+        $this->assertSame('2027-03-31', $lot->evidence['period_end']);
+        $this->assertSame('2027-06-30', $lot->expires_on->toDateString());
+        Carbon::setTestNow('2027-04-15 12:00:00');
+        $service->ensureGrants($this->user, $this->type->id, Carbon::parse('2027-04-15'));
+        $this->assertSame(1, LeaveCreditLot::count());
+        $this->assertSame(24, $service->availableUnits($this->user, $this->type->id, Carbon::parse('2027-04-15')));
+        $this->assertSame(0, $service->availableUnits($this->user, $this->type->id, Carbon::parse('2027-07-01')));
+        $this->assertArrayNotHasKey('annual_cutoff_date', $policy->revisions()->first()->rules);
+    }
+
+    public function test_monthly_grants_respect_period_dates_and_prorate_a_partial_final_month(): void
+    {
+        $this->policy(['leave_period_from' => '2026-08-10', 'leave_period_to' => '2026-09-15', 'carry_enabled' => false]);
+        $service = app(LeaveBalanceService::class);
+        $service->ensureGrants($this->user, $this->type->id, Carbon::parse('2026-10-01'));
+        $lots = LeaveCreditLot::orderBy('available_on')->get();
+        $this->assertCount(2, $lots);
+        $this->assertSame(2, $lots[0]->granted_half_units);
+        $this->assertSame('2026-08-10', $lots[0]->available_on->toDateString());
+        $this->assertSame(2, $lots[1]->granted_half_units);
+        $this->assertSame('2026-09-15', $lots[1]->expires_on->toDateString());
+        $this->assertSame('2026-09-15', $lots[1]->evidence['period_end']);
+    }
+
+    public function test_period_dates_and_cutoff_are_saved_from_the_policy_form(): void
+    {
+        Livewire::test(CreateLeavePolicy::class)->fillForm(['name' => 'Financial-year leave', 'leave_type_id' => $this->type->id,
+            'tenant_default' => true, 'effective_from' => '2026-04-01', 'reason' => 'Reviewed financial-year cycle',
+            'rules.mode' => 'annual', 'rules.leave_period_from' => '2026-04-01', 'rules.leave_period_to' => '2027-03-31',
+            'rules.expiry_method' => 'fixed', 'rules.annual_cutoff_date' => '2027-03-31'])
+            ->assertFormFieldIsHidden('rules.expiry_months')->call('create')->assertHasNoFormErrors();
+        $rules = LeavePolicy::first()->revisions()->first()->rules;
+        $this->assertSame('2027-03-31', $rules['leave_period_to']);
+        $this->assertSame(3, $rules['fixed_expiry_month']);
+        $this->assertSame(31, $rules['fixed_expiry_day']);
+    }
+
+    public function test_annual_financial_year_revision_and_assignment_use_configured_boundaries(): void
+    {
+        $policy = $this->policy(['mode' => 'annual', 'leave_period_from' => '2026-04-01', 'leave_period_to' => '2027-03-31'], '2026-04-01', false);
+        app(LeavePolicyService::class)->assign($policy, [$this->user->id], Carbon::parse('2026-04-01'), null, $this->actor);
+        $this->assertDatabaseHas('employee_leave_policy_assignments', ['user_id' => $this->user->id, 'ends_on' => '2027-03-31']);
+        Livewire::test(EditLeavePolicy::class, ['record' => $policy->id])
+            ->assertFormSet(['effective_from' => '2027-04-01', 'rules.leave_period_from' => '2027-04-01', 'rules.leave_period_to' => '2028-03-31'])
+            ->fillForm(['reason' => 'Next financial year'])->call('save')->assertHasNoFormErrors();
+        $this->assertSame(2, $policy->revisions()->count());
+    }
+
+    public function test_invalid_period_dates_are_rejected_and_old_grants_keep_their_expiry(): void
+    {
+        $this->rejects(fn () => $this->policy(['leave_period_from' => '2026-04-01']), 'required');
+        $this->rejects(fn () => $this->policy(['leave_period_from' => '2026-04-01', 'leave_period_to' => '2026-03-31']), 'after');
+        $policy = $this->policy(['annual_cutoff_date' => '2027-03-31', 'expiry_method' => 'fixed']);
+        app(LeaveBalanceService::class)->ensureGrants($this->user, $this->type->id, Carbon::parse('2026-08-01'));
+        $lot = LeaveCreditLot::first();
+        app(LeavePolicyService::class)->save($policy, ['name' => 'Revised cutoff', 'leave_type_id' => $this->type->id, 'tenant_default' => true,
+            'effective_from' => '2026-11-01', 'reason' => 'Reviewed new cutoff', 'rules' => array_replace(LeavePolicyService::defaults(), ['annual_cutoff_date' => '2027-06-30', 'expiry_method' => 'fixed'])], $this->actor);
+        $this->assertSame('2027-03-31', $lot->fresh()->expires_on->toDateString());
+    }
+
+    public function test_editing_legacy_february_cutoff_preserves_leap_day_semantics(): void
+    {
+        $policy = $this->policy(['fixed_expiry_month' => 2, 'fixed_expiry_day' => 31]);
+        Livewire::test(EditLeavePolicy::class, ['record' => $policy->id])->fillForm(['reason' => 'Keep February month end'])->call('save')->assertHasNoFormErrors();
+        $rules = $policy->revisions()->orderByDesc('effective_from')->first()->rules;
+        $this->assertSame(2, $rules['fixed_expiry_month']);
+        $this->assertSame(29, $rules['fixed_expiry_day']);
+    }
+
+    public function test_overdue_period_revision_proposals_keep_financial_year_alignment(): void
+    {
+        $policy = $this->policy(['mode' => 'annual', 'leave_period_from' => '2025-04-01', 'leave_period_to' => '2026-03-31'], '2025-04-01');
+        Livewire::test(EditLeavePolicy::class, ['record' => $policy->id])->assertFormSet([
+            'effective_from' => '2027-04-01', 'rules.leave_period_from' => '2027-04-01', 'rules.leave_period_to' => '2028-03-31']);
+        $monthlyType = LeaveType::create(['name' => 'Monthly cycle', 'code' => 'PERIOD', 'is_paid' => true, 'active' => true]);
+        $monthly = app(LeavePolicyService::class)->save(null, ['name' => 'Monthly cycle', 'leave_type_id' => $monthlyType->id, 'tenant_default' => true,
+            'effective_from' => '2025-04-01', 'reason' => 'Reviewed company cycle', 'rules' => array_replace(LeavePolicyService::defaults(), ['leave_period_from' => '2025-04-01', 'leave_period_to' => '2026-03-31'])], $this->actor);
+        Livewire::test(EditLeavePolicy::class, ['record' => $monthly->id])->assertFormSet([
+            'effective_from' => '2026-11-01', 'rules.leave_period_from' => '2026-04-01', 'rules.leave_period_to' => '2027-03-31']);
+    }
+
+    public function test_paid_category_deduction_cleanup_preserves_unpaid_data_and_processed_slips(): void
+    {
+        DB::table('leave_types')->where('id', $this->type->id)->update(['deduction_method' => 'fixed_amount', 'deduction_amount_minor' => 50000]);
+        $policy = $this->policy(['allow_unpaid_excess' => true]);
+        $revision = $policy->revisions()->first();
+        $oldRules = $revision->rules;
+        unset($oldRules['unpaid_excess_deduction_method'], $oldRules['unpaid_excess_deduction_minor']);
+        DB::table('leave_policy_revisions')->where('id', $revision->id)->update(['rules' => json_encode($oldRules)]);
+        $unpaid = LeaveType::create(['name' => 'Unpaid', 'code' => 'UNPAIDKEEP', 'is_paid' => false, 'deduction_method' => 'fixed_amount', 'deduction_amount_minor' => 20000]);
+        $slip = $this->removalSlip($this->user, 'paid');
+        $before = $slip->fresh()->getAttributes();
+        $migration = require database_path('migrations/tenant/2026_10_14_173000_remove_paid_leave_category_deductions.php');
+        $migration->up();
+        $this->assertNull($this->type->fresh()->deduction_method);
+        $this->assertNull($this->type->fresh()->deduction_amount_minor);
+        $this->assertSame('fixed_amount', $unpaid->fresh()->deduction_method);
+        $this->assertSame(20000, $unpaid->fresh()->deduction_amount_minor);
+        $this->assertSame($before, $slip->fresh()->getAttributes());
+        $this->assertSame(50000, $revision->fresh()->rules['unpaid_excess_deduction_minor']);
+        $this->assertSame('fixed_amount', $revision->fresh()->rules['unpaid_excess_deduction_method']);
+    }
+
+    public function test_unpaid_excess_is_deducted_by_policy_without_a_paid_category_rule(): void
+    {
+        $this->policy(['allow_unpaid_excess' => true, 'grant_half_units' => 1, 'prorate_join_exit' => false,
+            'unpaid_excess_deduction_method' => 'fixed_amount', 'unpaid_excess_deduction_minor' => 50000]);
+        $this->shift();
+        $this->user->payrollProfile()->create(['payroll_enabled' => true, 'basic_salary_minor' => 310000, 'effective_from' => '2026-08-01',
+            'employment_starts_on' => '2026-08-05', 'employment_ends_on' => '2026-08-05']);
+        app(AttendanceCalculationService::class)->calculate($this->user, Carbon::parse('2026-08-05'));
+        $this->leave('2026-08-05');
+        $slip = app(SalarySlipService::class)->generate($this->user->fresh(), Carbon::parse('2026-08-01'));
+        $this->assertSame(1, $slip->paid_leave_half_units);
+        $this->assertSame(1, $slip->unpaid_leave_half_units);
+        $this->assertSame(25000, $slip->leave_deduction_minor);
+        $this->assertNull($this->type->fresh()->deduction_method);
+    }
+
+    public function test_category_table_has_no_deduction_column(): void
+    {
+        Livewire::test(ListLeaveTypes::class)
+            ->assertTableColumnDoesNotExist('deduction_method');
+    }
+
+    public function test_old_manual_payroll_review_survives_paid_metadata_cleanup_only(): void
+    {
+        DB::table('leave_types')->where('id', $this->type->id)->update(['deduction_method' => 'salary_day_rate', 'deduction_amount_minor' => 0]);
+        $leave = EmployeeLeave::create(['user_id' => $this->user->id, 'leave_type_id' => $this->type->id, 'leave_date' => '2026-08-05', 'duration' => 'full', 'state' => 'approved']);
+        $service = app(ManualPayrollReviewService::class);
+        $period = Carbon::parse('2026-08-01');
+        $snapshot = $service->evidence($this->user->fresh(), $period);
+        DB::table('manual_payroll_reviews')->insert(['user_id' => $this->user->id, 'period_start' => '2026-08-01', 'period_end' => '2026-08-31',
+            'snapshot' => json_encode($snapshot, JSON_THROW_ON_ERROR), 'evidence_signature' => hash('sha256', json_encode($snapshot, JSON_THROW_ON_ERROR)),
+            'reason' => 'Previously reviewed period', 'reviewed_by_user_id' => $this->actor->id, 'reviewed_at' => now()]);
+        $before = (array) DB::table('manual_payroll_reviews')->first();
+        $migration = require database_path('migrations/tenant/2026_10_14_173000_remove_paid_leave_category_deductions.php');
+        $migration->up();
+        $this->assertTrue($service->approved($this->user->fresh(), $period));
+        $this->assertSame($before, (array) DB::table('manual_payroll_reviews')->first());
+        $leave->update(['duration' => 'half']);
+        $this->assertFalse($service->approved($this->user->fresh(), $period));
     }
 }

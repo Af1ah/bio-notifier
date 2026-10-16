@@ -49,11 +49,11 @@ class SalarySlipExportService
 
         return response()->streamDownload(function () use ($query): void {
             $stream = fopen('php://output', 'w');
-            fputcsv($stream, ['Payroll month', 'Employee PIN', 'Employee', 'Branch', 'Department', 'Task groups', 'Status', 'Currency', 'Gross pay', 'Total deduction', 'Net pay'], ',', '"', '');
+            fputcsv($stream, ['Payroll month', 'Employee PIN', 'Employee', 'Branch', 'Department', 'Task groups', 'Status', 'Currency', 'Gross pay', 'Total deduction', 'Net pay', 'Working days', 'Worked hours', 'Overtime calculation'], ',', '"', '');
             $totals = [];
             foreach ($query->lazy(250) as $slip) {
                 $row = [$slip->period_start->format('Y-m'), $slip->user?->pin, $slip->user?->name, $slip->user?->branch?->name, $slip->user?->department?->name, $slip->user?->taskGroups->pluck('name')->implode(', '), $slip->status, $slip->currency,
-                    number_format($slip->gross_pay_minor / 100, 2, '.', ''), number_format($slip->total_deduction_minor / 100, 2, '.', ''), number_format($slip->net_pay_minor / 100, 2, '.', '')];
+                    number_format($slip->gross_pay_minor / 100, 2, '.', ''), number_format($slip->total_deduction_minor / 100, 2, '.', ''), number_format($slip->net_pay_minor / 100, 2, '.', ''), $slip->scheduled_days, $slip->total_worked_hours, $slip->overtime_breakdown_display];
                 // Imported employee names and PINs must not execute spreadsheet formulas.
                 $row = array_map(fn ($value) => preg_match('/^[\s]*[=+\-@]/', (string) $value) ? "'".$value : $value, $row);
                 fputcsv($stream, $row, ',', '"', '');
@@ -62,7 +62,7 @@ class SalarySlipExportService
                 }
             }
             foreach ($totals as $currency => $amounts) {
-                fputcsv($stream, ['', '', 'TOTAL', '', '', '', '', $currency, ...array_map(fn ($minor) => number_format($minor / 100, 2, '.', ''), array_values($amounts))], ',', '"', '');
+                fputcsv($stream, ['', '', 'TOTAL', '', '', '', '', $currency, ...array_map(fn ($minor) => number_format($minor / 100, 2, '.', ''), array_values($amounts)), '', '', ''], ',', '"', '');
             }
             fclose($stream);
         }, 'payroll-'.$period->format('Y-m').'.csv', ['Content-Type' => 'text/csv; charset=UTF-8']);

@@ -2,6 +2,16 @@
 
 Status: implemented in the development checkout on 14 October 2026. The original approved plan is retained below; the implemented controls and rollout instructions follow it. Production migration and company policy enrolment remain operational steps.
 
+## Unified settings correction — 14 October 2026
+
+This correction supersedes the duplicate settings described in the original plan and earlier implementation notes below. Leave settings provides inline paid-category creation and a link to category management. Leave categories is also available directly under Payroll; it does not introduce a separate entitlement calculation. New paid requests require an applicable policy; the legacy annual allowance remains stored only for historical unenrolled payroll evidence and is no longer an editable grant configuration.
+
+Regular entitlement and unused-leave settings share one form section. New revisions have one explicit relative or fixed expiry rule, without a further-rollover flag. Previously issued credits retain their dates, and retained older revisions preserve their recorded expiry rules. Irrelevant form fields are hidden and normalized at the service boundary.
+
+Work rewards inherit the effective daily shift thresholds captured by attendance, including the selected multi-shift daily rule. New awards record the source rule and thresholds. Existing awards are retained. The entitlement balance cap excludes opening and compensatory credits; carry limits are applied at eligible period boundaries independently of grant timing. Carried totals use the captured grant-period end, so annual entitlement becomes carried only after its annual period ends. Grant date limiting compares tenant calendar dates instead of mixed timezone instants.
+
+Policies permitting unpaid excess require a category deduction rule, and category edits cannot remove that rule while an applicable revision permits unpaid excess. Policy conflicts are scoped to the affected category and employee assignments; assignment changes also check the selected employees' closed payroll periods. No historical credit migration or production deployment is implied by these source corrections.
+
 ## Before implementation
 
 Leave types hold an annual allowance in integer half-day units. Employee leave records are approved/cancelled dates. SalarySlipService computes paid coverage from annual allowance and earlier approved leave. There is no dated accrual ledger, expiry, monthly carry-forward or compensatory credit. These features require a shared leave balance service rather than a second allowance calculation inside payroll.
@@ -59,7 +69,7 @@ Client configuration and daily-use guides are kept in [docs/client](../client/RE
 
 ## Implemented tenant controls
 
-Use **Payroll → Leave settings**. Policies, calendar settings, balances, assignments and awards live in each tenant database; another company does not inherit changes. Administrators (privilege 14) can add starter policies, create additional policies, assign employees using the existing branch/department/group filters, save future revisions, and end assignments with an audit reason.
+Use **Payroll → Leave settings**. Scope displays Default or Assigned employees; row actions use a three-dot menu. Policies, calendar settings, balances, assignments and awards live in each tenant database; another company does not inherit changes. Administrators (privilege 14) can add starter policies, create additional policies, assign employees using the existing branch/department/group filters, save future revisions, and end assignments with an audit reason.
 
 **Leave calendar settings** supplies the tenant timezone and expiry-warning window. Defaults are the application's attendance timezone (Asia/Kolkata unless configured otherwise) and 30 days. These settings govern leave date boundaries; they do not change the existing attendance engine timezone.
 
@@ -73,18 +83,18 @@ Starter policies are explicit opt-in examples, not a claim of universal statutor
 | Maximum available entitlement balance | 12 days |
 | Relative entitlement expiry | End of the third month after the grant period |
 | Further carry-forward | Allowed within original expiry; never extends expiry |
-| Alternative cutoff | Optional month/day; day 29–31 clamps to a shorter month's end |
+| Alternative cutoff | Annual cutoff date picker; month/day repeat yearly and leap day clamps to February month end |
 | Excess leave | Reject; tenant may enable unpaid excess |
-| Compensatory threshold | 240 approved net minutes = 0.5 day; 480 = 1 day |
+| Compensatory threshold | Inherited from the effective daily shift rule captured by attendance |
 | Compensatory availability | Following date; same-date availability is configurable |
 | Compensatory expiry | 90 days after availability, inclusive through expiry date |
 | Compensatory reward | HR chooses leave or payment; both requires an explicit policy |
 | Additional overtime with reward | Disabled; configurable |
 | Monetary work reward | 0 until configured; policy currency defaults to INR and must match employee payroll currency |
 
-Monthly and compensatory starter policies are separate leave types. Monthly policies do not earn compensatory credits unless explicitly enabled. Annual policies are also supported, with the grant amount configured by the company; annual periods follow January–December. To allow only one following month, disable further rollovers. The balance cap limits newly issued entitlement; reviewed opening balances are explicit adjustments outside automatic entitlement grants.
+Monthly and compensatory starter policies are separate leave types. Monthly policies do not earn compensatory credits unless explicitly enabled. Annual policies are also supported, with the grant amount configured by the company; annual periods follow the configured From/To window, with January–December retained when no window is configured. To allow only one following month in a new revision, set additional months to 1. The balance cap limits newly issued regular entitlement and excludes reviewed opening balances and compensatory credits.
 
-Initial enrolment may start mid-period. Later monthly entitlement revisions start at a future month boundary; annual revisions start on a future 1 January. Compensatory-only revisions may start on another future date. Existing grants/awards keep their captured revision. A policy retains its leave type and default/assigned scope. Assignments are explicit snapshots of selected employees, not automatic rules for employees who subsequently join a branch/group. Monthly assignments start at month boundaries and end at month end; annual assignments follow calendar-year boundaries. Use End assignment before switching an employee to another policy. Future approved/reserved leave and issued credits must be reconciled before shortening an assignment or introducing a conflicting policy revision.
+Initial enrolment may start mid-period. Later monthly entitlement revisions start at a future month boundary; annual revisions start at the next configured annual-period start, or future 1 January without a configured period. Compensatory-only revisions may start on another future date. Existing grants/awards keep their captured revision. A policy retains its leave type and default/assigned scope. Assignments are explicit snapshots of selected employees, not automatic rules for employees who subsequently join a branch/group. Monthly assignments start at month boundaries and end at month end; annual assignments follow the configured period boundaries, with calendar-year boundaries as the fallback. Use End assignment before switching an employee to another policy. Future approved/reserved leave and issued credits must be reconciled before shortening an assignment or introducing a conflicting policy revision.
 
 ## Implemented evidence and flows
 
@@ -123,3 +133,35 @@ The final local suite passed **190 tests with 923 assertions**; 38 leave tests c
 Compensatory review is provided by `CompensatoryAttendanceActions` on the Attendance Days table. Day type is independent of worked status; work-reward amount/status and detail/reversal actions use the existing tenant award and credit records. The relation is eager-loaded with the attendance query. The separate page class/view and its discovered route have been removed. Existing reward services, unique work-date constraints and tenant schema remain unchanged by this UI move.
 
 Client guides are in `docs/client`; this developer document retains the original approved plan and migration/test details. Regression checks exercise awarding, viewing the actual modal content, reversing from the same row, hiding awards on working dates, removal of the old route, and the fact that credit/paid leave does not inflate attendance report minutes or rewrite raw work status.
+
+## Policy removal
+
+The explicit administrator-only Remove policy action is the exception to ordinary immutable-model deletion guards. `LeavePolicyRemovalService` creates a review signature, locks administrators followed by affected employees and the selected policy, rechecks current dependencies and performs cleanup in one tenant transaction. It records the original policy, revisions, assignments, lots, entries, allocations, leave, rewards and affected drafts in `leave_policy_removals` with actor/reason. Ordinary model mutation/deletion guards remain intact.
+
+Required processed-payroll evidence is retained, including approved leave history used by a later processed month's evidence signature and a work reward consumed as leave in a later processed month. Retained revision rows have a null parent policy; retained lots return zero availability. Historical awards continue to support closed-source payroll, but an archived award retained for later leave does not create payment again in an open source month. Category and attendance records are not removed. Unrelated employee/policy records and unimpacted drafts remain.
+
+Migration `2026_10_14_170000_add_leave_policy_removal_archive.php` adds the tenant audit table and makes the revision parent nullable while preserving its foreign key. Apply this migration before using removal. Rollback is allowed before any removal; after removal it requires explicit recovery of archived history rather than silently dropping evidence.
+
+The category form shows deduction controls only when Paid leave is disabled. Paid-category deduction values are cleared; unpaid-excess treatment belongs to policy revisions. The calendar form labels its timezone selector Select time zone. Policy sections span the content width with responsive field columns. The expiry warning is a display window, not a notification or expiry extension.
+
+## Leave periods and annual expiry cutoffs — 14 October 2026
+
+Optional `leave_period_from` / `leave_period_to` dates are stored in immutable policy revision rules. Both or neither must be supplied, dates must be ordered, and the revision effective date cannot follow the period end. Annual mode issues one grant for that explicit period; without the pair, the previous calendar-year behavior remains. Monthly grants are restricted to the configured window and partial months use the full calendar-month denominator for proration. Once the window ends, no further regular grants are created until an applicable next-period revision exists. Work rewards retain their separate work-date eligibility and credit expiry.
+
+The annual expiry DatePicker submits `annual_cutoff_date`, converted to the existing `fixed_expiry_month` and `fixed_expiry_day` rules at the service boundary. The selected year is intentionally not retained. Actual credit expiry is the first occurrence of that month/day on or after the grant-period end, inclusive. Relative `expiry_months` remains the alternative, and choosing it clears the fixed cutoff. Legacy month/day revisions still resolve; editing a February day 29–31 rule uses a leap-year picker date so future February month-end semantics are not silently shortened to day 28. Previously issued lots are not changed.
+
+Annual revision/assignment boundaries use configured period dates. A blank end on a bounded annual assignment is filled with the period end. The edit form proposes the next explicit period for review when the previous window has ended; it does not silently issue another annual grant. Existing assigned employees must be enrolled in the next annual window. No new tenant migration is required because rules remain revision JSON.
+
+Frappe HR reference: [Leave Period](https://docs.frappe.io/hr/leave-period) uses explicit From/To dates for a calendar or fiscal year. Its [Leave Type schema](https://github.com/frappe/hrms/blob/develop/hrms/hr/doctype/leave_type/leave_type.json) separately supports a carry maximum and expiry duration in days. Bio-Notifier retains its approved monthly expiry duration and adds the requested annual cutoff; these are project policy choices, not a claim that Frappe provides the same recurring-cutoff field.
+
+## Paid-category deduction cleanup — 14 October 2026
+
+`2026_10_14_173000_remove_paid_leave_category_deductions.php` makes category deduction columns nullable, transfers configured unpaid-excess treatment to `unpaid_excess_deduction_method` / `unpaid_excess_deduction_minor` in existing policy revisions and clears both paid-category values without changing category timestamps. Unpaid category rules remain. The LeaveType saving boundary always clears deduction values when paid; details hide paid deductions and the category table removes the column entirely. Apply this tenant migration with the updated code.
+
+Only unpaid-excess-enabled policies show the new controls. Payroll reads the applicable revision for the uncovered paid-category portion, while ordinary unpaid leave uses its category rule. A missing/invalid excess rule blocks calculation. Legacy uncovered paid-category leave without managed allocations requires explicit reconciliation before recalculation. Existing finalized financial snapshots are unchanged.
+
+Manual payroll review signatures exclude the removed deduction fields only inside paid leave category metadata. Older retained review snapshots are accepted through this normalization only after verifying their original stored evidence hash; no stored reviews are rewritten. Genuine leave/profile/attendance/unpaid-category changes still invalidate review. This retains approved historical review evidence across the cleanup without ignoring relevant payroll data.
+
+## 0.2 business rules
+
+Recurring `reset_dates` compute a credit expiry before the next reset after availability; grants on a reset date start a new cycle. `comp_expiry_mode=work_month_end` binds awards to their work month. `LeaveRangeService` previews in a rolled-back transaction and submits daily allocations atomically with a unique request key and coverage signature. Holiday eligibility is effective-dated in separate tenant membership tables. Shift overtime eligibility/rates remain in immutable rule snapshots; approval proposals capture payment rates. Payroll templates copy reviewed defaults only to missing/empty profiles and preserve provenance. See [0.2 business rules](../beta-02-business-features.md).
