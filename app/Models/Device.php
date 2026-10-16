@@ -67,7 +67,7 @@ class Device extends Model
 
         $threshold = 10;
 
-        return $this->last_activity_at->diffInMinutes(now()) < $threshold;
+        return $this->last_activity_at->between(now()->subMinutes($threshold), now());
     }
 
     public function markAsOnline(): void

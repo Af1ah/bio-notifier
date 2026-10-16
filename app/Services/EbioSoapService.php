@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Device;
+use App\Services\Leave\LeaveSettingsService;
 use App\Models\Organisation;
 use App\Models\User;
 use App\Services\Devices\DeviceIntegration;
@@ -253,7 +254,9 @@ class EbioSoapService
                         $pingStr = $pingMatches[1] ?? '';
                         if (! empty($pingStr) && $pingStr !== 'error') {
                             try {
-                                $device->last_activity_at = Carbon::parse($pingStr);
+                                // eBio reports a wall-clock value without an offset. Interpret it
+                                // using the tenant's configured timezone, then persist it as UTC.
+                                $device->last_activity_at = Carbon::parse($pingStr, LeaveSettingsService::timezone())->utc();
                             } catch (\Exception $e) {
                                 $device->last_activity_at = now();
                             }

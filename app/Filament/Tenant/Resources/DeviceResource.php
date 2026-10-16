@@ -15,6 +15,7 @@ use App\Filament\Tenant\Resources\DeviceResource\Pages;
 use App\Filament\Tenant\Resources\DeviceResource\RelationManagers;
 
 use App\Models\Device;
+use App\Services\Leave\LeaveSettingsService;
 
 class DeviceResource extends Resource
 {
@@ -76,6 +77,7 @@ class DeviceResource extends Resource
                 ->label('Location'),
             \Filament\Infolists\Components\TextEntry::make('last_activity_at')
                 ->label('Last connected')
+                ->timezone(LeaveSettingsService::timezone())
                 ->dateTime(),
         ]);
     }
@@ -111,14 +113,16 @@ class DeviceResource extends Resource
                     ->visibleFrom('md'),
                 Tables\Columns\TextColumn::make('last_activity_at')
                     ->label('Last connected')
+                    ->timezone(LeaveSettingsService::timezone())
                     ->date('M j, Y')
-                    ->description(fn (Device $record): ?string => $record->last_activity_at?->format('H:i:s'))
+                    ->description(fn (Device $record): ?string => $record->last_activity_at?->setTimezone(LeaveSettingsService::timezone())->format('H:i:s'))
                     ->sortable()
                     ->toggleable(),
                 Tables\Columns\TextColumn::make('last_sync_at')
                     ->label('Last Sync')
+                    ->timezone(LeaveSettingsService::timezone())
                     ->date('M j, Y')
-                    ->description(fn (Device $record): ?string => $record->last_sync_at?->format('H:i:s'))
+                    ->description(fn (Device $record): ?string => $record->last_sync_at?->setTimezone(LeaveSettingsService::timezone())->format('H:i:s'))
                     ->sortable()
                     ->toggleable()
                     ->visibleFrom('md'),

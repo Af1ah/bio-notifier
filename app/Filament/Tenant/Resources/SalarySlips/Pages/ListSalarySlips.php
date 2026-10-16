@@ -153,8 +153,12 @@ class ListSalarySlips extends ListRecords
                         return;
                     }
 
+                    // Show the period just prepared so the result is immediately visible,
+                    // even when the table was filtered to a different month.
+                    $this->tableFilters['payroll_month'] = ['value' => $period->format('Y-m')];
+
                     $notification = Notification::make()
-                        ->title("{$generated} salary slip(s) generated")
+                        ->title("{$generated} salary slip(s) ready for {$period->format('F Y')}")
                         ->body($errors ? count($errors).' employee(s) skipped. '.$errors[0] : 'Draft slips are ready for review.');
                     $errors ? $notification->warning()->persistent()->send() : $notification->success()->send();
                 }),
