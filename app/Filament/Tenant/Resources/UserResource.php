@@ -527,7 +527,11 @@ class UserResource extends Resource
                             $commands = app(\App\Services\Devices\DeviceCommandService::class);
                             abort_unless($commands->available($device, 'query_biodata'), 403);
                             $types = array_values(array_intersect(['finger', 'face'], $device->verificationFormats()));
-                            abort_if($types === [], 422, 'This device has no fingerprint or face template format enabled. Update its supported verification formats in Devices.');
+                            if ($types === []) {
+                                throw \Illuminate\Validation\ValidationException::withMessages([
+                                    'mountedActions.0.data.device_id' => 'This device is configured for RFID only. Enable Fingerprint or Face template in its device settings before fetching templates.',
+                                ]);
+                            }
                             foreach ($types as $type) {
                                 $commands->request($device, 'query_biodata', ['pin' => (string) $record->pin, 'type' => $type]);
                             }
