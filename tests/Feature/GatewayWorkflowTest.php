@@ -312,9 +312,10 @@ class GatewayWorkflowTest extends TestCase
         $admin = User::create(['name' => 'Company admin', 'pin' => '900', 'privilege' => 14, 'email' => 'tenant-admin@example.test', 'password' => 'password']);
         $this->actingAs($admin, 'web');
         Queue::fake();
+        $this->app['request']->server->set('REMOTE_ADDR', '8.8.8.8');
         $this->connection->update(['device_server_url' => 'http://192.168.50.10:8082']);
         $registration = app(TenantDeviceRegistration::class);
-        $device = $registration->register(['name' => 'Reception', 'serial_number' => 'TENANTNEW01', 'device_ip' => '192.168.50.20', 'gateway_source_cidr' => '8.8.8.8', 'location' => 'Reception', 'timezone' => 'Asia/Kolkata',
+        $device = $registration->register(['name' => 'Reception', 'serial_number' => 'TENANTNEW01', 'device_ip' => '192.168.50.20', 'location' => 'Reception', 'timezone' => 'Asia/Kolkata',
             'organisation_id' => 'forged-company', 'gateway_connection_id' => 999, 'capabilities' => ['reboot']]);
         $this->assertSame($company->id, tenant('id'));
         $binding = GatewayDeviceBinding::where('serial', 'TENANTNEW01')->firstOrFail();
@@ -367,9 +368,10 @@ class GatewayWorkflowTest extends TestCase
         Filament::setCurrentPanel(Filament::getPanel('tenant'));
         Filament::bootCurrentPanel();
         Queue::fake();
+        $this->app['request']->server->set('REMOTE_ADDR', '8.8.8.8');
         Livewire::test(ListDevices::class)
-            ->assertSee('Add device')->assertDontSee('Management token')->assertDontSee('Allowed source CIDR')
-            ->callAction('addConnectedDevice', data: ['name' => 'Reception', 'serial_number' => 'SCREENNEW01', 'device_ip' => '192.168.50.20', 'gateway_source_cidr' => '8.8.8.8', 'location' => 'Reception', 'timezone' => 'Asia/Kolkata'])
+            ->assertSee('Add device')->assertDontSee('Management token')->assertDontSee('Office public IP address')->assertDontSee('Allowed source CIDR')
+            ->callAction('addConnectedDevice', data: ['name' => 'Reception', 'serial_number' => 'SCREENNEW01', 'device_ip' => '192.168.50.20', 'location' => 'Reception', 'timezone' => 'Asia/Kolkata'])
             ->assertHasNoActionErrors();
         $this->assertSame($company->id, GatewayDeviceBinding::where('serial', 'SCREENNEW01')->value('organisation_id'));
     }

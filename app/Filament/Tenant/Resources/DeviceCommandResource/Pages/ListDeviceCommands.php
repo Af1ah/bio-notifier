@@ -37,7 +37,7 @@ class ListDeviceCommands extends ListRecords
                             $deviceId = $get('device_id');
                             $device = $deviceId ? \App\Models\Device::find($deviceId) : null;
                             if ($device && tenant()?->device_integration === \App\Services\Devices\DeviceIntegration::GATEWAY) {
-                                return collect(\App\Services\Devices\Gateway\GatewayCommands::OPERATIONS)
+                                return collect(\App\Services\Devices\Gateway\GatewayCommands::RUNNABLE_OPERATIONS)
                                     ->filter(fn ($label, $operation) => app(\App\Services\Devices\DeviceCommandService::class)->available($device, $operation))
                                     ->all();
                             }

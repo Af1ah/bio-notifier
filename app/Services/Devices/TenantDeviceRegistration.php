@@ -25,7 +25,6 @@ final class TenantDeviceRegistration
             'serial_number' => ['required', 'string', 'regex:/^[A-Za-z0-9_-]{1,64}$/'],
             'name' => ['required', 'string', 'max:255'],
             'device_ip' => ['nullable', 'ip'],
-            'gateway_source_cidr' => ['nullable', 'string', 'max:64'],
             'location' => ['nullable', 'string', 'max:255'],
             'timezone' => ['required', 'timezone'],
         ])->validate();
@@ -42,9 +41,9 @@ final class TenantDeviceRegistration
                 if ($existing && $existing->organisation_id !== $company->id) {
                     throw ValidationException::withMessages(['serial_number' => 'This serial number is already registered. Contact your administrator if it needs to be moved.']);
                 }
-                $sourceCidr = $company->gateway_source_cidr ?: $this->normaliseSourceCidr($data['gateway_source_cidr'] ?? null);
+                $sourceCidr = $company->gateway_source_cidr ?: $this->normaliseSourceCidr(request()->ip());
                 if (! $sourceCidr) {
-                    throw ValidationException::withMessages(['gateway_source_cidr' => 'Enter the public IP address used by this office. It is saved once and reused for future devices.']);
+                    throw ValidationException::withMessages(['serial_number' => 'We could not identify this office network. Contact support to connect the first device.']);
                 }
                 if (! $company->gateway_source_cidr) {
                     $company->update(['gateway_source_cidr' => $sourceCidr]);

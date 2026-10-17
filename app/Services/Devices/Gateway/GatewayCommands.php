@@ -29,6 +29,15 @@ final class GatewayCommands
         'update_biophoto' => 'Update User Photo',
     ];
 
+    // These commands need no additional tenant-entered data. Operations such
+    // as user/template updates stay unavailable until their typed form exists.
+    public const RUNNABLE_OPERATIONS = [
+        'info' => 'Device information',
+        'check' => 'Check connection',
+        'query_users' => 'Read device users',
+        'log' => 'Request device logs',
+    ];
+
     public function available(Device $device, string $operation): bool
     {
         if (! tenant() || tenant()->device_integration !== DeviceIntegration::GATEWAY) {
@@ -41,9 +50,7 @@ final class GatewayCommands
             return false;
         }
 
-        return empty($binding->capabilities)
-            || in_array($operation, $binding->capabilities, true)
-            || array_key_exists($operation, self::OPERATIONS);
+        return in_array($operation, $binding->capabilities ?? [], true);
     }
 
     public function request(Device $device, string $operation, array $parameters = []): DeviceCommand

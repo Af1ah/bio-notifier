@@ -24,10 +24,6 @@ class ListDevices extends ListRecords
                 ->schema([
                     \Filament\Forms\Components\TextInput::make('name')->label('Device name')->required()->maxLength(255),
                     \Filament\Forms\Components\TextInput::make('serial_number')->label('Serial number')->required()->regex('/^[A-Za-z0-9_-]{1,64}$/')->helperText('Find this in the device’s information menu.'),
-                    \Filament\Forms\Components\TextInput::make('gateway_source_cidr')
-                        ->label('Office public IP address')
-                        ->helperText('Needed only for the first device at this office. It protects every device on this company network and is reused automatically.')
-                        ->visible(fn (): bool => blank(tenant()?->gateway_source_cidr)),
                     \Filament\Forms\Components\TextInput::make('device_ip')->label('Device IP address')->ip()->helperText('Optional: the device’s local network address, kept for reference.'),
                     \Filament\Forms\Components\TextInput::make('location')->label('Location')->maxLength(255),
                     \Filament\Forms\Components\Select::make('timezone')->label('Time zone')->options(array_combine(timezone_identifiers_list(), timezone_identifiers_list()))->searchable()->default('Asia/Kolkata')->required(),
@@ -88,7 +84,7 @@ class ListDevices extends ListRecords
                             $deviceId = $get('device_id');
                             $device = $deviceId ? \App\Models\Device::find($deviceId) : null;
                             if ($device && tenant()?->device_integration === \App\Services\Devices\DeviceIntegration::GATEWAY) {
-                                return collect(\App\Services\Devices\Gateway\GatewayCommands::OPERATIONS)
+                                return collect(\App\Services\Devices\Gateway\GatewayCommands::RUNNABLE_OPERATIONS)
                                     ->filter(fn ($label, $operation) => app(\App\Services\Devices\DeviceCommandService::class)->available($device, $operation))
                                     ->all();
                             }
