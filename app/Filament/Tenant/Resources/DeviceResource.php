@@ -166,8 +166,21 @@ class DeviceResource extends Resource
                                 ->success()
                                 ->send();
                         }),
+                    \Filament\Actions\Action::make('queryUsers')
+                        ->authorize(fn (Device $record): bool => app(\App\Services\Devices\DeviceCommandService::class)->available($record, 'query_users'))
+                        ->label('Fetch Users')
+                        ->icon('heroicon-o-users')
+                        ->requiresConfirmation()
+                        ->action(function (Device $record) {
+                            app(\App\Services\Devices\DeviceCommandService::class)->request($record, 'query_users');
+                            \Filament\Notifications\Notification::make()
+                                ->title('Command Queued')
+                                ->body('Fetch users command queued. Device will push users on next poll.')
+                                ->success()
+                                ->send();
+                        }),
                     \Filament\Actions\Action::make('resetTransactionStamp')
-                        ->authorize(fn (): bool => \App\Services\Devices\DeviceIntegration::usesEbio())
+                        ->authorize(fn (Device $record): bool => app(\App\Services\Devices\DeviceCommandService::class)->available($record, 'reset_transaction_stamp'))
                         ->label('Reset Transaction Stamp')
                         ->icon('heroicon-o-arrow-down-tray')
                         ->requiresConfirmation()
@@ -180,7 +193,7 @@ class DeviceResource extends Resource
                                 ->send();
                         }),
                     \Filament\Actions\Action::make('resetOPStamp')
-                        ->authorize(fn (): bool => \App\Services\Devices\DeviceIntegration::usesEbio())
+                        ->authorize(fn (Device $record): bool => app(\App\Services\Devices\DeviceCommandService::class)->available($record, 'reset_op_stamp'))
                         ->label('Reset OP Stamp')
                         ->icon('heroicon-o-arrow-path')
                         ->requiresConfirmation()
@@ -193,7 +206,7 @@ class DeviceResource extends Resource
                                 ->send();
                         }),
                     \Filament\Actions\Action::make('unlockDoor')
-                        ->authorize(fn (): bool => \App\Services\Devices\DeviceIntegration::usesEbio())
+                        ->authorize(fn (Device $record): bool => app(\App\Services\Devices\DeviceCommandService::class)->available($record, 'unlock_door'))
                         ->label('Unlock Door')
                         ->icon('heroicon-o-lock-open')
                         ->requiresConfirmation()

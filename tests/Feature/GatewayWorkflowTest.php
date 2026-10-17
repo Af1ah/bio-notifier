@@ -314,14 +314,15 @@ class GatewayWorkflowTest extends TestCase
         Queue::fake();
         $this->connection->update(['device_server_url' => 'http://192.168.50.10:8082']);
         $registration = app(TenantDeviceRegistration::class);
-        $device = $registration->register(['name' => 'Reception', 'serial_number' => 'TENANTNEW01', 'device_ip' => '192.168.50.20', 'location' => 'Reception', 'timezone' => 'Asia/Kolkata',
+        $device = $registration->register(['name' => 'Reception', 'serial_number' => 'TENANTNEW01', 'device_ip' => '192.168.50.20', 'gateway_source_cidr' => '8.8.8.8', 'location' => 'Reception', 'timezone' => 'Asia/Kolkata',
             'organisation_id' => 'forged-company', 'gateway_connection_id' => 999, 'capabilities' => ['reboot']]);
         $this->assertSame($company->id, tenant('id'));
         $binding = GatewayDeviceBinding::where('serial', 'TENANTNEW01')->firstOrFail();
         $this->assertSame($company->id, $binding->organisation_id);
         $this->assertSame($this->connection->id, $binding->gateway_connection_id);
-        $this->assertSame(['info', 'check', 'query_users'], $binding->capabilities);
-        $this->assertSame('192.168.50.20/32', $binding->source_cidr);
+        $this->assertSame(array_keys(\App\Services\Devices\Gateway\GatewayCommands::OPERATIONS), $binding->capabilities);
+        $this->assertSame('8.8.8.8/32', $binding->source_cidr);
+        $this->assertSame('8.8.8.8/32', $company->fresh()->gateway_source_cidr);
         $this->assertSame('Reception', $device->options['location']);
         Queue::assertPushed(SyncGatewayBinding::class);
         $setup = $registration->setup($device);
@@ -368,7 +369,7 @@ class GatewayWorkflowTest extends TestCase
         Queue::fake();
         Livewire::test(ListDevices::class)
             ->assertSee('Add device')->assertDontSee('Management token')->assertDontSee('Allowed source CIDR')
-            ->callAction('addConnectedDevice', data: ['name' => 'Reception', 'serial_number' => 'SCREENNEW01', 'device_ip' => '192.168.50.20', 'location' => 'Reception', 'timezone' => 'Asia/Kolkata'])
+            ->callAction('addConnectedDevice', data: ['name' => 'Reception', 'serial_number' => 'SCREENNEW01', 'device_ip' => '192.168.50.20', 'gateway_source_cidr' => '8.8.8.8', 'location' => 'Reception', 'timezone' => 'Asia/Kolkata'])
             ->assertHasNoActionErrors();
         $this->assertSame($company->id, GatewayDeviceBinding::where('serial', 'SCREENNEW01')->value('organisation_id'));
     }

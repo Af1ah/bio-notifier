@@ -60,7 +60,7 @@ class SubmitGatewayCommand implements ShouldQueue
             }
             $result = $client->call(GatewayConnection::findOrFail($binding->gateway_connection_id), 'POST', '/v1/commands', [
                 'id' => $submission->id, 'serial' => $binding->serial, 'binding_version' => $binding->version,
-                'operation' => $submission->operation, 'expires_at' => $submission->expires_at->utc()->toIso8601String(),
+                'operation' => $submission->operation, 'parameters' => $submission->parameters ?? [], 'expires_at' => $submission->expires_at->utc()->toIso8601String(),
             ]);
             if (($result['id'] ?? null) !== $submission->id || ! isset($result['wire_id'], $result['state'])) {
                 throw new \RuntimeException('Invalid command acceptance.');

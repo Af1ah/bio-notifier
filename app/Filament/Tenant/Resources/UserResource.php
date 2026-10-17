@@ -467,7 +467,7 @@ class UserResource extends Resource
             ->recordActions([
                 ActionGroup::make([
                     Action::make('addBiometric')
-                        ->authorize(fn (): bool => DeviceIntegration::usesEbio())
+                        ->authorize(fn (): bool => in_array(tenant()?->device_integration, [DeviceIntegration::EBIO, DeviceIntegration::GATEWAY], true))
                         ->label('Add Biometric')
                         ->icon('heroicon-o-finger-print')
                         ->form([
@@ -483,8 +483,8 @@ class UserResource extends Resource
                             Select::make('type')
                                 ->label('Biometric Type')
                                 ->options([
-                                    'finger' => 'Fingerprint',
-                                    'face' => 'Face',
+                                    'finger' => 'Fingerprint (Template)',
+                                    'face' => 'Face (Photo / Template)',
                                 ])
                                 ->required()
                                 ->live(),
@@ -504,17 +504,48 @@ class UserResource extends Resource
                                 ])
                                 ->visible(fn ($get) => $get('type') === 'finger')
                                 ->required(fn ($get) => $get('type') === 'finger'),
+                            \Filament\Forms\Components\Textarea::make('template_data')
+                                ->label(fn ($get) => $get('type') === 'finger' ? 'Base64 Fingerprint Template' : 'Base64 Photo / Face Vector')
+                                ->helperText('Paste the Base64 template string or JPEG image data to sync to this terminal.')
+                                ->visible(fn () => tenant()?->device_integration === DeviceIntegration::GATEWAY)
+                                ->required(fn () => tenant()?->device_integration === DeviceIntegration::GATEWAY),
                         ])
                         ->action(function (User $record, array $data) {
-                            EnrollEbioBiometricJob::dispatch(
-                                tenancy()->tenant,
-                                $record->id,
-                                $data['device_id'],
-                                $data['type'],
-                                $data['finger_index'] ?? null
-                            );
+                            $device = Device::find($data['device_id']);
+                            if (! $device) {
+                                return;
+                            }
+
+                            if (DeviceIntegration::usesEbio()) {
+                                EnrollEbioBiometricJob::dispatch(
+                                    tenancy()->tenant,
+                                    $record->id,
+                                    $data['device_id'],
+                                    $data['type'],
+                                    $data['finger_index'] ?? null
+                                );
+                            } else {
+                                $commandService = app(\App\Services\Devices\DeviceCommandService::class);
+                                $content = trim((string) ($data['template_data'] ?? ''));
+                                if ($data['type'] === 'finger') {
+                                    $commandService->request($device, 'update_biodata', [
+                                        'pin' => (string) $record->pin,
+                                        'no' => (string) ($data['finger_index'] ?? 0),
+                                        'type' => '1',
+                                        'tmp' => $content,
+                                    ]);
+                                } else {
+                                    $commandService->request($device, 'update_biophoto', [
+                                        'pin' => (string) $record->pin,
+                                        'size' => (string) strlen($content),
+                                        'content' => $content,
+                                    ]);
+                                }
+                            }
+
                             Notification::make()
-                                ->title('Enrollment command queued')
+                                ->title('Biometric command queued')
+                                ->body('The biometric synchronization command has been queued for sync.')
                                 ->success()
                                 ->send();
                         }),
@@ -594,7 +625,7 @@ class UserResource extends Resource
                         })
                         ->deselectRecordsAfterCompletion(),
                     BulkAction::make('pushToDevice')
-                        ->authorize(fn (): bool => DeviceIntegration::usesEbio())
+                        ->authorize(fn (): bool => in_array(tenant()?->device_integration, [DeviceIntegration::EBIO, DeviceIntegration::GATEWAY], true))
                         ->icon('heroicon-o-arrow-up-on-square')
                         ->color('success')
                         ->label('Push to Device / Location')
@@ -605,11 +636,12 @@ class UserResource extends Resource
                                     $devices = Device::all();
                                     $options = [];
                                     foreach ($devices as $d) {
+                                        $label = $d->name ?: $d->serial_number;
                                         $loc = $d->options['location'] ?? null;
                                         if ($loc) {
-                                            $label = ($d->name ?: $d->serial_number)." (Location: $loc)";
-                                            $options[$loc] = $label;
+                                            $label .= " (Location: $loc)";
                                         }
+                                        $options[$d->id] = $label;
                                     }
 
                                     return $options;
@@ -619,28 +651,51 @@ class UserResource extends Resource
                                 ->placeholder('Leave blank for all devices'),
                         ])
                         ->action(function (Collection $records, array $data) {
-                            $location = '';
-                            if (! empty($data['location'])) {
-                                $location = is_array($data['location']) ? implode(',', $data['location']) : $data['location'];
-                            }
-
                             $organisation = tenancy()->tenant;
-                            $count = 0;
+                            $targetDeviceIds = ! empty($data['location']) ? (array) $data['location'] : [];
+                            $devices = Device::query()
+                                ->when(! empty($targetDeviceIds), fn ($q) => $q->whereIn('id', $targetDeviceIds))
+                                ->get();
 
-                            foreach ($records as $user) {
-                                PushEbioUserJob::dispatch($organisation, $user->id, $location);
-                                $count++;
+                            if (DeviceIntegration::usesEbio()) {
+                                $location = '';
+                                if (! empty($data['location'])) {
+                                    $location = is_array($data['location']) ? implode(',', $data['location']) : $data['location'];
+                                }
+                                $count = 0;
+                                foreach ($records as $user) {
+                                    PushEbioUserJob::dispatch($organisation, $user->id, $location);
+                                    $count++;
+                                }
+                            } else {
+                                $commandService = app(\App\Services\Devices\DeviceCommandService::class);
+                                $count = 0;
+                                foreach ($devices as $device) {
+                                    foreach ($records as $user) {
+                                        try {
+                                            $commandService->request($device, 'upsert_user', [
+                                                'pin' => (string) $user->pin,
+                                                'name' => (string) ($user->name ?: $user->pin),
+                                                'privilege' => (string) ($user->privilege ?? 0),
+                                                'card' => (string) ($user->rfid ?? ''),
+                                            ]);
+                                            $count++;
+                                        } catch (\Throwable $e) {
+                                            report($e);
+                                        }
+                                    }
+                                }
                             }
 
                             Notification::make()
                                 ->title('Sync Queued')
-                                ->body("{$count} employee(s) queued for device synchronization.")
+                                ->body("{$records->count()} employee(s) queued for device synchronization.")
                                 ->success()
                                 ->send();
                         })
                         ->deselectRecordsAfterCompletion(),
                     BulkAction::make('deleteFromDevice')
-                        ->authorize(fn (): bool => DeviceIntegration::usesEbio())
+                        ->authorize(fn (): bool => in_array(tenant()?->device_integration, [DeviceIntegration::EBIO, DeviceIntegration::GATEWAY], true))
                         ->icon('heroicon-o-trash')
                         ->color('danger')
                         ->label('Delete from Devices')
@@ -652,11 +707,12 @@ class UserResource extends Resource
                                     $devices = Device::all();
                                     $options = [];
                                     foreach ($devices as $d) {
+                                        $label = $d->name ?: $d->serial_number;
                                         $loc = $d->options['location'] ?? null;
                                         if ($loc) {
-                                            $label = ($d->name ?: $d->serial_number)." (Location: $loc)";
-                                            $options[$loc] = $label;
+                                            $label .= " (Location: $loc)";
                                         }
+                                        $options[$d->id] = $label;
                                     }
 
                                     return $options;
@@ -666,22 +722,40 @@ class UserResource extends Resource
                                 ->placeholder('Leave blank for all devices'),
                         ])
                         ->action(function (Collection $records, array $data) {
-                            $location = '';
-                            if (! empty($data['location'])) {
-                                $location = is_array($data['location']) ? implode(',', $data['location']) : $data['location'];
-                            }
-
                             $organisation = tenancy()->tenant;
-                            $count = 0;
+                            $targetDeviceIds = ! empty($data['location']) ? (array) $data['location'] : [];
+                            $devices = Device::query()
+                                ->when(! empty($targetDeviceIds), fn ($q) => $q->whereIn('id', $targetDeviceIds))
+                                ->get();
 
-                            foreach ($records as $record) {
-                                DeleteEbioUserJob::dispatch($organisation, $record->pin, $location);
-                                $count++;
+                            if (DeviceIntegration::usesEbio()) {
+                                $location = '';
+                                if (! empty($data['location'])) {
+                                    $location = is_array($data['location']) ? implode(',', $data['location']) : $data['location'];
+                                }
+                                $count = 0;
+                                foreach ($records as $record) {
+                                    DeleteEbioUserJob::dispatch($organisation, $record->pin, $location);
+                                    $count++;
+                                }
+                            } else {
+                                $commandService = app(\App\Services\Devices\DeviceCommandService::class);
+                                foreach ($devices as $device) {
+                                    foreach ($records as $record) {
+                                        try {
+                                            $commandService->request($device, 'delete_user', [
+                                                'pin' => (string) $record->pin,
+                                            ]);
+                                        } catch (\Throwable $e) {
+                                            report($e);
+                                        }
+                                    }
+                                }
                             }
 
                             Notification::make()
                                 ->title('Deletion Queued')
-                                ->body("{$count} employee deletions queued.")
+                                ->body("{$records->count()} employee deletions queued.")
                                 ->success()
                                 ->send();
                         })

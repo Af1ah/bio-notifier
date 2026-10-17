@@ -16,8 +16,8 @@ final class GatewayTransport implements DeviceTransport
         return $this->commands->available($device, $operation);
     }
 
-    public function request(Device $device, string $operation): DeviceCommand
+    public function request(Device $device, string $operation, array $parameters = []): DeviceCommand
     {
-        return $this->commands->request($device, $operation);
+        return $this->commands->request($device, $operation, $parameters);
     }
 }

@@ -14,7 +14,7 @@ class ListDeviceCommands extends ListRecords
     {
         return [
             Actions\Action::make('runCommand')
-                ->authorize(fn (): bool => \App\Services\Devices\DeviceIntegration::usesEbio())
+                ->authorize(fn (): bool => in_array(tenant()?->device_integration, [\App\Services\Devices\DeviceIntegration::EBIO, \App\Services\Devices\DeviceIntegration::GATEWAY], true))
                 ->label('Run Command')
                 ->icon('heroicon-o-command-line')
                 ->color('primary')
@@ -33,13 +33,22 @@ class ListDeviceCommands extends ListRecords
                         \Filament\Forms\Components\Select::make('command')
                         ->label('Select Command')
                         ->live()
-                        ->options([
-                            'reboot' => 'Reboot Device',
-                            'clear_logs' => 'CRITICAL: Clear Attendance Logs',
-                            'reset_transaction_stamp' => 'Reset Transaction Stamp',
-                            'reset_op_stamp' => 'Reset OP Stamp',
-                            'unlock_door' => 'Unlock Door',
-                        ])
+                        ->options(function (callable $get) {
+                            $deviceId = $get('device_id');
+                            $device = $deviceId ? \App\Models\Device::find($deviceId) : null;
+                            if ($device && tenant()?->device_integration === \App\Services\Devices\DeviceIntegration::GATEWAY) {
+                                return collect(\App\Services\Devices\Gateway\GatewayCommands::OPERATIONS)
+                                    ->filter(fn ($label, $operation) => app(\App\Services\Devices\DeviceCommandService::class)->available($device, $operation))
+                                    ->all();
+                            }
+                            return [
+                                'reboot' => 'Reboot Device',
+                                'clear_logs' => 'CRITICAL: Clear Attendance Logs',
+                                'reset_transaction_stamp' => 'Reset Transaction Stamp',
+                                'reset_op_stamp' => 'Reset OP Stamp',
+                                'unlock_door' => 'Unlock Door',
+                            ];
+                        })
                         ->required(),
                     \Filament\Forms\Components\TextInput::make('confirm')
                         ->label("Type 'CONFIRM' to execute this command")
@@ -57,14 +66,7 @@ class ListDeviceCommands extends ListRecords
                     $device = \App\Models\Device::find($data['device_id']);
                     if (!$device) return;
 
-                    $command = \App\Models\DeviceCommand::create([
-                        'device_id' => $device->id,
-                        'command_type' => $data['command'],
-                        'command_content' => "eBioServer SOAP Command: {$data['command']}",
-                        'status' => 'pending',
-                    ]);
-
-                    \App\Jobs\EbioDeviceCommandJob::dispatch(tenant(), $device->serial_number, $data['command'], $command->id);
+                    app(\App\Services\Devices\DeviceCommandService::class)->request($device, $data['command']);
                     
                     \Filament\Notifications\Notification::make()
                         ->title('Command Queued')

@@ -20,19 +20,23 @@ class ListDevices extends ListRecords
                 ->icon('heroicon-o-plus')
                 ->authorize(fn (): bool => tenant()?->device_integration === \App\Services\Devices\DeviceIntegration::GATEWAY && auth('web')->user()?->has_login)
                 ->modalHeading('Add attendance device')
-                ->modalDescription('Enter the details from your device. After saving, open connection setup to finish connecting it.')
+                ->modalDescription('Add the device once. The connection and available commands are set up automatically.')
                 ->schema([
                     \Filament\Forms\Components\TextInput::make('name')->label('Device name')->required()->maxLength(255),
                     \Filament\Forms\Components\TextInput::make('serial_number')->label('Serial number')->required()->regex('/^[A-Za-z0-9_-]{1,64}$/')->helperText('Find this in the device’s information menu.'),
-                    \Filament\Forms\Components\TextInput::make('device_ip')->label('Device IP address')->required()->ip()->helperText('Use the address from the device’s network settings.'),
+                    \Filament\Forms\Components\TextInput::make('gateway_source_cidr')
+                        ->label('Office public IP address')
+                        ->helperText('Needed only for the first device at this office. It protects every device on this company network and is reused automatically.')
+                        ->visible(fn (): bool => blank(tenant()?->gateway_source_cidr)),
+                    \Filament\Forms\Components\TextInput::make('device_ip')->label('Device IP address')->ip()->helperText('Optional: the device’s local network address, kept for reference.'),
                     \Filament\Forms\Components\TextInput::make('location')->label('Location')->maxLength(255),
                     \Filament\Forms\Components\Select::make('timezone')->label('Time zone')->options(array_combine(timezone_identifiers_list(), timezone_identifiers_list()))->searchable()->default('Asia/Kolkata')->required(),
                 ])
                 ->modalSubmitActionLabel('Add device')
                 ->action(function (array $data) {
                     $device = app(\App\Services\Devices\TenantDeviceRegistration::class)->register($data);
-                    \Filament\Notifications\Notification::make()->title('Device added')->body('Open connection setup to finish connecting your device.')->success()->send();
-                    $this->redirect(DeviceResource::getUrl('view', ['record' => $device]));
+                    \Filament\Notifications\Notification::make()->title('Device added')->body('Its gateway binding is being connected automatically. Configure the device to use the company gateway address, then it will appear online.')->success()->send();
+                    $this->redirect(DeviceResource::getUrl('index'));
                 }),
             Actions\Action::make('syncEbioDevices')
                 ->authorize(fn (): bool => \App\Services\Devices\DeviceIntegration::usesEbio())
@@ -60,7 +64,7 @@ class ListDevices extends ListRecords
                     }
                 }),
             Actions\Action::make('runCommand')
-                ->authorize(fn (): bool => \App\Services\Devices\DeviceIntegration::usesEbio())
+                ->authorize(fn (): bool => in_array(tenant()?->device_integration, [\App\Services\Devices\DeviceIntegration::EBIO, \App\Services\Devices\DeviceIntegration::GATEWAY], true))
                 ->label('Run Command')
                 ->icon('heroicon-o-command-line')
                 ->color('primary')
@@ -82,17 +86,21 @@ class ListDevices extends ListRecords
                         ->live()
                         ->options(function (callable $get) {
                             $deviceId = $get('device_id');
-                            $options = [
+                            $device = $deviceId ? \App\Models\Device::find($deviceId) : null;
+                            if ($device && tenant()?->device_integration === \App\Services\Devices\DeviceIntegration::GATEWAY) {
+                                return collect(\App\Services\Devices\Gateway\GatewayCommands::OPERATIONS)
+                                    ->filter(fn ($label, $operation) => app(\App\Services\Devices\DeviceCommandService::class)->available($device, $operation))
+                                    ->all();
+                            }
+                            return [
                                 'reboot' => 'Reboot Device',
                                 'clear_logs' => 'CRITICAL: Clear Attendance Logs',
                                 'reset_transaction_stamp' => 'Reset Transaction Stamp',
                                 'reset_op_stamp' => 'Reset OP Stamp',
                                 'unlock_door' => 'Unlock Door',
                             ];
-
-                            
-                            return $options;
-                        }),
+                        })
+                        ->required(),
                     \Filament\Forms\Components\TextInput::make('confirm')
                         ->label("Type 'CONFIRM' to execute this command")
 
@@ -110,14 +118,7 @@ class ListDevices extends ListRecords
                     $device = \App\Models\Device::find($data['device_id']);
                     if (!$device) return;
 
-                    $command = \App\Models\DeviceCommand::create([
-                        'device_id' => $device->id,
-                        'command_type' => $data['command'],
-                        'command_content' => "eBioServer SOAP Command: {$data['command']}",
-                        'status' => 'pending',
-                    ]);
-
-                    \App\Jobs\EbioDeviceCommandJob::dispatch(tenant(), $device->serial_number, $data['command'], $command->id);
+                    app(\App\Services\Devices\DeviceCommandService::class)->request($device, $data['command']);
                     
                     \Filament\Notifications\Notification::make()
                         ->title('Command Queued')

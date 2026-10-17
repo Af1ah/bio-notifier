@@ -9,5 +9,5 @@ interface DeviceTransport
 {
     public function supports(Device $device, string $operation): bool;
 
-    public function request(Device $device, string $operation): DeviceCommand;
+    public function request(Device $device, string $operation, array $parameters = []): DeviceCommand;
 }

@@ -123,17 +123,20 @@ class DeviceIntegrationTest extends TestCase
 
     public function test_company_choice_authorizes_the_matching_tenant_actions(): void
     {
-        foreach ([DeviceIntegration::EBIO => true, DeviceIntegration::GATEWAY => false] as $integration => $allowed) {
+        foreach ([DeviceIntegration::EBIO, DeviceIntegration::GATEWAY] as $integration) {
+            $ebioAllowed = $integration === DeviceIntegration::EBIO;
             tenancy()->tenant = new Organisation(['device_integration' => $integration]);
             foreach ([ListDevices::class, ListUsers::class, ListDeviceCommands::class] as $pageClass) {
                 $page = new $pageClass;
                 $method = new \ReflectionMethod($pageClass, 'getHeaderActions');
                 $actions = $method->invoke($page);
                 foreach ($actions as $action) {
-                    if (in_array($action->getName(), ['syncEbioDevices', 'syncEbioUsers', 'runCommand', 'create']) && $pageClass !== ListUsers::class) {
-                        $this->assertSame($allowed, $action->isAuthorized(), $pageClass.' '.$action->getName());
+                    if (in_array($action->getName(), ['syncEbioDevices', 'syncEbioUsers', 'create']) && $pageClass !== ListUsers::class) {
+                        $this->assertSame($ebioAllowed, $action->isAuthorized(), $pageClass.' '.$action->getName());
+                    } elseif ($action->getName() === 'runCommand') {
+                        $this->assertTrue($action->isAuthorized());
                     } elseif ($action->getName() === 'syncEbioUsers') {
-                        $this->assertSame($allowed, $action->isAuthorized());
+                        $this->assertSame($ebioAllowed, $action->isAuthorized());
                     }
                 }
             }

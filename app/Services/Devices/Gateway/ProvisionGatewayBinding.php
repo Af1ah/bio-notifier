@@ -31,7 +31,7 @@ final class ProvisionGatewayBinding
         ];
         if ($existing) {
             // A failed mirror update is retried with the same immutable version.
-            abort_unless($existing->synced_at, 409, 'Synchronize the pending binding before changing it again.');
+            abort_unless($existing->synced_at || $existing->last_error === 'binding_sync_failed', 409, 'This device is still being connected. Try again shortly.');
             $values['version'] = $existing->version + 1;
             $values['synced_at'] = null;
             $existing->update($values);

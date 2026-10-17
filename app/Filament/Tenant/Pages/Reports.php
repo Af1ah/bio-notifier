@@ -34,6 +34,26 @@ class Reports extends Page implements HasForms, HasTable
 
     protected static ?int $navigationSort = 3;
 
+    public static function getNavigationLabel(): string
+    {
+        return 'Reports';
+    }
+
+    public static function getNavigationBadge(): ?string
+    {
+        return 'Beta';
+    }
+
+    public static function getNavigationBadgeColor(): string|array|null
+    {
+        return 'warning';
+    }
+
+    public function getTitle(): string
+    {
+        return 'Reports (Beta)';
+    }
+
     protected string $view = 'filament.tenant.pages.reports';
 
     public $activeTab = 'daily';

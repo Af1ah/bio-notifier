@@ -12,6 +12,7 @@ use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Support\Str;
 
 final class TenantDeviceRegistration
 {
@@ -23,7 +24,8 @@ final class TenantDeviceRegistration
         $data = Validator::make($input, [
             'serial_number' => ['required', 'string', 'regex:/^[A-Za-z0-9_-]{1,64}$/'],
             'name' => ['required', 'string', 'max:255'],
-            'device_ip' => ['required', 'ip'],
+            'device_ip' => ['nullable', 'ip'],
+            'gateway_source_cidr' => ['nullable', 'string', 'max:64'],
             'location' => ['nullable', 'string', 'max:255'],
             'timezone' => ['required', 'timezone'],
         ])->validate();
@@ -35,16 +37,24 @@ final class TenantDeviceRegistration
         $central = DB::connection(config('tenancy.database.central_connection'));
         try {
             $binding = $central->transaction(function () use ($data, $company, $connections) {
-                Organisation::whereKey($company->id)->lockForUpdate()->firstOrFail();
-                if (GatewayDeviceBinding::where('serial', $data['serial_number'])->exists() || Device::where('serial_number', $data['serial_number'])->exists()) {
+                $company = Organisation::whereKey($company->id)->lockForUpdate()->firstOrFail();
+                $existing = GatewayDeviceBinding::where('serial', $data['serial_number'])->first();
+                if ($existing && $existing->organisation_id !== $company->id) {
                     throw ValidationException::withMessages(['serial_number' => 'This serial number is already registered. Contact your administrator if it needs to be moved.']);
+                }
+                $sourceCidr = $company->gateway_source_cidr ?: $this->normaliseSourceCidr($data['gateway_source_cidr'] ?? null);
+                if (! $sourceCidr) {
+                    throw ValidationException::withMessages(['gateway_source_cidr' => 'Enter the public IP address used by this office. It is saved once and reused for future devices.']);
+                }
+                if (! $company->gateway_source_cidr) {
+                    $company->update(['gateway_source_cidr' => $sourceCidr]);
                 }
 
                 return app(ProvisionGatewayBinding::class)->provision([
                     'gateway_connection_id' => $connections->first()->id, 'organisation_id' => $company->id,
                     'serial' => $data['serial_number'], 'device_name' => $data['name'],
-                    'source_cidr' => $data['device_ip'].(str_contains($data['device_ip'], ':') ? '/128' : '/32'),
-                    'timezone' => $data['timezone'], 'enabled' => true, 'capabilities' => ['info', 'check', 'query_users'],
+                    'source_cidr' => $sourceCidr,
+                    'timezone' => $data['timezone'], 'enabled' => true, 'capabilities' => array_keys(\App\Services\Devices\Gateway\GatewayCommands::OPERATIONS),
                 ]);
             });
         } catch (UniqueConstraintViolationException $exception) {
@@ -57,7 +67,7 @@ final class TenantDeviceRegistration
             }
         }
         $device = Device::findOrFail($binding->device_id);
-        $device->update(['ip_address' => $data['device_ip'], 'options' => array_merge($device->options ?? [], ['location' => $data['location'] ?? null, 'timezone' => $data['timezone']])]);
+        $device->update(['ip_address' => $data['device_ip'] ?? $device->ip_address, 'name' => $data['name'], 'options' => array_merge($device->options ?? [], ['location' => $data['location'] ?? null, 'timezone' => $data['timezone']])]);
         $central->table('gateway_audit_events')->insert([
             'action' => 'tenant_device_registered', 'subject' => $binding->serial,
             'metadata' => json_encode(['organisation_id' => $company->id, 'tenant_user_id' => $actorId]),
@@ -71,6 +81,29 @@ final class TenantDeviceRegistration
         }
 
         return $device;
+    }
+
+    private function normaliseSourceCidr(?string $value): ?string
+    {
+        $value = trim((string) $value);
+        if ($value === '') {
+            return null;
+        }
+        if (filter_var($value, FILTER_VALIDATE_IP)) {
+            return $value.(str_contains($value, ':') ? '/128' : '/32');
+        }
+        if (! Str::contains($value, '/')) {
+            throw ValidationException::withMessages(['gateway_source_cidr' => 'Enter a valid public IP address or CIDR range.']);
+        }
+        [$address, $prefix] = array_pad(explode('/', $value, 2), 2, null);
+        if (! filter_var($address, FILTER_VALIDATE_IP) || ! ctype_digit((string) $prefix)) {
+            throw ValidationException::withMessages(['gateway_source_cidr' => 'Enter a valid public IP address or CIDR range.']);
+        }
+        $maximum = str_contains($address, ':') ? 128 : 32;
+        if ((int) $prefix > $maximum) {
+            throw ValidationException::withMessages(['gateway_source_cidr' => 'Enter a valid public IP address or CIDR range.']);
+        }
+        return $address.'/'.$prefix;
     }
 
     public function setup(Device $device): array
