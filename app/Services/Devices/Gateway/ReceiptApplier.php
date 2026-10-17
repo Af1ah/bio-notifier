@@ -80,8 +80,25 @@ final class ReceiptApplier
                         ['device_id' => $device->id, 'pin' => $user['pin']],
                         ['name' => $user['name'] ?? null, 'card' => $user['card'] ?? null, 'receipt_id' => $receipt->id, 'created_at' => now(), 'updated_at' => now()]
                     );
+                    $pin = trim((string) $user['pin']);
+                    if ($pin === '') {
+                        continue;
+                    }
+                    $employee = User::firstOrNew(['pin' => $pin]);
+                    if (! $employee->exists) {
+                        $employee->privilege = 0;
+                        $employee->is_enabled = true;
+                    }
+                    $name = trim((string) ($user['name'] ?? ''));
+                    if ($name !== '') {
+                        $employee->name = $name;
+                    } elseif (! $employee->exists && blank($employee->name)) {
+                        $employee->name = "Employee {$pin}";
+                    }
+                    // Device imports only own PIN and display name. Payroll,
+                    // login access, branches and local employee settings remain local.
+                    $employee->save();
                 }
-                // Device roster evidence never silently creates payroll employees or changes their pay setup.
             } elseif ($receipt->kind === 'device_info') {
                 $device->update($payload['device_info']);
             } elseif ($receipt->kind === 'command_result') {

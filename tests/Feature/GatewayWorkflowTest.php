@@ -227,7 +227,7 @@ class GatewayWorkflowTest extends TestCase
         tenancy()->end();
     }
 
-    public function test_roster_evidence_does_not_create_or_overwrite_payroll_employees(): void
+    public function test_roster_evidence_creates_or_updates_employees_without_payroll_setup(): void
     {
         [$organisation] = $this->company('ROSTER01');
         $event = ['id' => (string) Str::uuid(), 'serial' => 'ROSTER01', 'binding_version' => 1, 'kind' => 'users', 'source_ip' => '192.168.10.5',
@@ -235,8 +235,10 @@ class GatewayWorkflowTest extends TestCase
         $this->deliver($event)->assertAccepted();
         (new ApplyGatewayReceipt($event['id']))->handle(app(ReceiptApplier::class));
         tenancy()->initialize($organisation);
-        $this->assertSame(1, User::employees()->count());
-        $this->assertSame('Payroll employee', User::where('pin', '0007')->firstOrFail()->name);
+        $this->assertSame(2, User::employees()->count());
+        $this->assertSame('Device name', User::where('pin', '0007')->firstOrFail()->name);
+        $this->assertSame('Unknown payroll employee', User::where('pin', '0008')->firstOrFail()->name);
+        $this->assertTrue(User::where('pin', '0008')->firstOrFail()->is_enabled);
         $this->assertSame(2, DB::table('gateway_device_users')->count());
         tenancy()->end();
         $event['id'] = (string) Str::uuid();

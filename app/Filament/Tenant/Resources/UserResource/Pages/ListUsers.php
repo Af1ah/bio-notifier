@@ -4,6 +4,7 @@ namespace App\Filament\Tenant\Resources\UserResource\Pages;
 
 use App\Filament\Tenant\Resources\UserResource;
 use App\Jobs\SyncEbioUsersJob;
+use App\Models\Device;
 use App\Models\DeviceCommand;
 use App\Services\Devices\DeviceIntegration;
 use App\Services\Imports\UserCsvImportService;
@@ -50,6 +51,22 @@ class ListUsers extends ListRecords
                         $command?->markAsFailed($e->getMessage());
                         Notification::make()->title('Sync Failed')->body('Employee synchronization failed. Contact your administrator.')->danger()->send();
                     }
+                }),
+            Actions\Action::make('readGatewayUsers')
+                ->authorize(fn (): bool => tenant()?->device_integration === DeviceIntegration::GATEWAY)
+                ->label('Read device users')->icon('heroicon-o-users')->color('warning')
+                ->modalHeading('Read device users')
+                ->modalDescription('The device sends its users on the next connection. New users are added as employees; existing employee names are updated. Payroll and login settings are not changed.')
+                ->form([
+                    Select::make('device_id')->label('Device')
+                        ->options(fn () => Device::query()->get()->filter(fn (Device $device) => app(\App\Services\Devices\DeviceCommandService::class)->available($device, 'query_users'))->mapWithKeys(fn (Device $device) => [$device->id => trim(($device->name ?: 'Unnamed device').' — '.$device->serial_number)])->all())
+                        ->searchable()->required(),
+                ])
+                ->action(function (array $data): void {
+                    $device = Device::findOrFail($data['device_id']);
+                    abort_unless(app(\App\Services\Devices\DeviceCommandService::class)->available($device, 'query_users'), 403);
+                    app(\App\Services\Devices\DeviceCommandService::class)->request($device, 'query_users');
+                    Notification::make()->title('Request sent')->body('Device users will be added or updated when the device responds. Track the request in Device Commands.')->success()->send();
                 }),
             Actions\Action::make('importUsers')
                 ->label('Import employees')->icon('heroicon-o-arrow-up-tray')->color('info')
