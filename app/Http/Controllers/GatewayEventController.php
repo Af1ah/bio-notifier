@@ -59,6 +59,7 @@ final class GatewayEventController extends Controller
             'biometrics.*.valid' => ['nullable', 'string', 'max:32'],
             'biometrics.*.tmp' => ['required', 'string', 'max:1048576'],
             'command_id' => ['required_if:kind,command_result', 'uuid'],
+            'return_code' => ['exclude_unless:kind,command_result', 'nullable', 'integer'],
             'command_state' => ['required_if:kind,command_result', 'in:delivered,awaiting_data,acknowledged,failed,expired,outcome_unknown,cancelled'],
             'device_info' => ['exclude_unless:kind,device_info', 'required', 'array:firmware_version,model,device_type,push_version'],
             'device_info.*' => ['string', 'max:255'],
