@@ -230,20 +230,44 @@ class GatewayWorkflowTest extends TestCase
     public function test_gateway_user_mutation_commands_keep_their_typed_parameters(): void
     {
         [$organisation, $binding] = $this->company('REMOTEUSER01');
-        $binding->update(['capabilities' => ['info', 'check', 'query_users', 'upsert_user', 'delete_user', 'update_biodata']]);
+        $binding->update(['capabilities' => ['info', 'check', 'query_users', 'query_biodata', 'upsert_user', 'delete_user', 'update_biodata']]);
         tenancy()->initialize($organisation);
         $device = Device::firstOrFail();
         $commands = app(DeviceCommandService::class);
         $upsert = $commands->request($device, 'upsert_user', ['pin' => '0007', 'name' => 'Payroll employee', 'privilege' => '14', 'card' => '']);
         $delete = $commands->request($device, 'delete_user', ['pin' => '0007']);
         $biometric = $commands->request($device, 'update_biodata', ['pin' => '0007', 'no' => '4', 'type' => '1', 'tmp' => 'AwAAAAEAAABCAAA=']);
+        $fetch = $commands->request($device, 'query_biodata', ['pin' => '0007', 'type' => 'finger']);
         $upsertParameters = json_decode((string) DB::table('gateway_command_outbox')->where('id', $upsert->gateway_command_id)->value('parameters'), true);
         $deleteParameters = json_decode((string) DB::table('gateway_command_outbox')->where('id', $delete->gateway_command_id)->value('parameters'), true);
         $biometricParameters = json_decode((string) DB::table('gateway_command_outbox')->where('id', $biometric->gateway_command_id)->value('parameters'), true);
+        $fetchParameters = json_decode((string) DB::table('gateway_command_outbox')->where('id', $fetch->gateway_command_id)->value('parameters'), true);
         $this->assertSame(['pin' => '0007', 'name' => 'Payroll employee', 'privilege' => '14', 'card' => ''], $upsertParameters);
         $this->assertSame(['pin' => '0007'], $deleteParameters);
         $this->assertSame(['pin' => '0007', 'no' => '4', 'type' => '1', 'tmp' => 'AwAAAAEAAABCAAA='], $biometricParameters);
+        $this->assertSame(['pin' => '0007', 'type' => 'finger'], $fetchParameters);
         $this->assertSame('Update Biometric Template (Employee: 0007)', $biometric->command_content);
+        tenancy()->end();
+    }
+
+    public function test_gateway_biometric_receipt_stores_raw_templates_for_the_matching_employee(): void
+    {
+        [$organisation] = $this->company('BIODATA01');
+        tenancy()->initialize($organisation);
+        $employee = User::create(['pin' => '0007', 'name' => 'Template employee', 'is_enabled' => true]);
+        tenancy()->end();
+        $event = ['id' => (string) Str::uuid(), 'serial' => 'BIODATA01', 'binding_version' => 1, 'kind' => 'biometrics', 'source_ip' => '192.168.10.5',
+            'received_at' => now()->toIso8601String(), 'biometrics' => [
+                ['pin' => '0007', 'type' => 'finger', 'slot' => '4', 'size' => '16', 'valid' => '1', 'tmp' => 'AwAAAAEAAABCAAA='],
+                ['pin' => '0007', 'type' => 'face', 'slot' => '0', 'tmp' => 'face-template'],
+            ]];
+        $this->deliver($event)->assertAccepted();
+        (new ApplyGatewayReceipt($event['id']))->handle(app(ReceiptApplier::class));
+        tenancy()->initialize($organisation);
+        $employee->refresh();
+        $this->assertSame('AwAAAAEAAABCAAA=', $employee->fingerprints['4']['tmp']);
+        $this->assertSame('face-template', $employee->face_templates['0']['tmp']);
+        $this->assertTrue($employee->face_enrolled);
         tenancy()->end();
     }
 

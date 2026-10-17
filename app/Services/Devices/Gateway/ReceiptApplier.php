@@ -99,6 +99,25 @@ final class ReceiptApplier
                     // login access, branches and local employee settings remain local.
                     $employee->save();
                 }
+            } elseif ($receipt->kind === 'biometrics') {
+                foreach ($payload['biometrics'] as $template) {
+                    $employee = User::where('pin', trim((string) $template['pin']))->lockForUpdate()->first();
+                    if (! $employee) {
+                        continue;
+                    }
+                    $column = $template['type'] === 'face' ? 'face_templates' : 'fingerprints';
+                    $templates = is_array($employee->{$column}) ? $employee->{$column} : [];
+                    $templates[(string) $template['slot']] = array_filter([
+                        'size' => $template['size'] ?? null,
+                        'valid' => $template['valid'] ?? null,
+                        'tmp' => $template['tmp'],
+                    ], fn ($value) => $value !== null);
+                    $employee->{$column} = $templates;
+                    if ($template['type'] === 'face') {
+                        $employee->face_enrolled = true;
+                    }
+                    $employee->save();
+                }
             } elseif ($receipt->kind === 'device_info') {
                 $device->update($payload['device_info']);
             } elseif ($receipt->kind === 'command_result') {

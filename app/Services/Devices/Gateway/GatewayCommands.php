@@ -17,6 +17,7 @@ final class GatewayCommands
         'info' => 'Device information',
         'check' => 'Check connection',
         'query_users' => 'Read device users',
+        'query_biodata' => 'Fetch biometric templates',
         'log' => 'Request device logs',
         'get_option' => 'Read device setting',
         'upsert_user' => 'Add or update device user',
@@ -65,7 +66,7 @@ final class GatewayCommands
         $parameters = array_filter($parameters, fn ($value) => $value !== null);
         $command = DB::transaction(function () use ($device, $binding, $operation, $parameters, $id, $expires) {
             $content = self::OPERATIONS[$operation];
-            if (in_array($operation, ['update_biodata', 'update_biophoto'], true) && isset($parameters['pin'])) {
+            if (in_array($operation, ['update_biodata', 'update_biophoto', 'query_biodata'], true) && isset($parameters['pin'])) {
                 $content .= ' (Employee: '.$parameters['pin'].')';
             }
             $command = DeviceCommand::create(['device_id' => $device->id, 'command_type' => $operation,
