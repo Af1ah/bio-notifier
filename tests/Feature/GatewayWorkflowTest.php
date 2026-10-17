@@ -254,7 +254,7 @@ class GatewayWorkflowTest extends TestCase
     {
         [$organisation] = $this->company('BIODATA01');
         tenancy()->initialize($organisation);
-        $employee = User::create(['pin' => '0007', 'name' => 'Template employee', 'is_enabled' => true]);
+        $employee = User::updateOrCreate(['pin' => '0007'], ['name' => 'Template employee', 'is_enabled' => true]);
         tenancy()->end();
         $event = ['id' => (string) Str::uuid(), 'serial' => 'BIODATA01', 'binding_version' => 1, 'kind' => 'biometrics', 'source_ip' => '192.168.10.5',
             'received_at' => now()->toIso8601String(), 'biometrics' => [
