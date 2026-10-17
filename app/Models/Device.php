@@ -26,6 +26,13 @@ use Illuminate\Support\Carbon;
  */
 class Device extends Model
 {
+    public const VERIFICATION_FORMAT_OPTIONS = [
+        'rfid' => 'RFID card',
+        'finger' => 'Fingerprint',
+        'face' => 'Face template',
+        'ai_face' => 'AI Face photo',
+    ];
+
     protected $guarded = [];
 
     protected $casts = [
@@ -68,6 +75,22 @@ class Device extends Model
         $threshold = 10;
 
         return $this->last_activity_at->between(now()->subMinutes($threshold), now());
+    }
+
+    /** @return list<string> */
+    public function verificationFormats(): array
+    {
+        $formats = $this->options['supported_verification_formats'] ?? ['rfid'];
+
+        return array_values(array_intersect(
+            is_array($formats) ? $formats : ['rfid'],
+            array_keys(self::VERIFICATION_FORMAT_OPTIONS),
+        ));
+    }
+
+    public function supportsVerificationFormat(string $format): bool
+    {
+        return in_array($format, $this->verificationFormats(), true);
     }
 
     public function markAsOnline(): void

@@ -5,6 +5,7 @@ namespace App\Filament\Tenant\Resources;
 use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteBulkAction;
 use Filament\Actions\ViewAction;
+use Filament\Forms\Components\CheckboxList;
 use Filament\Forms\Components\TextInput;
 use Filament\Resources\Resource;
 use Filament\Schemas\Components\Section;
@@ -61,6 +62,13 @@ class DeviceResource extends Resource
                     TextInput::make('options.location')
                         ->label('Location')
                         ->maxLength(255),
+                    CheckboxList::make('options.supported_verification_formats')
+                        ->label('Supported verification methods')
+                        ->options(Device::VERIFICATION_FORMAT_OPTIONS)
+                        ->default(['rfid'])
+                        ->afterStateHydrated(fn ($component, $state) => $component->state($state ?: ['rfid']))
+                        ->columns(2)
+                        ->helperText('Only compatible biometric data can be sent to this device. RFID card is selected by default.'),
                 ]),
         ]);
     }
@@ -75,6 +83,11 @@ class DeviceResource extends Resource
             \Filament\Infolists\Components\TextEntry::make('model')->label('Model')->placeholder('Not received yet'),
             \Filament\Infolists\Components\TextEntry::make('options.location')
                 ->label('Location'),
+            \Filament\Infolists\Components\TextEntry::make('verification_formats')
+                ->label('Supported verification methods')
+                ->state(fn (Device $record): string => collect($record->verificationFormats())
+                    ->map(fn (string $format): string => Device::VERIFICATION_FORMAT_OPTIONS[$format])
+                    ->join(', ')),
             \Filament\Infolists\Components\TextEntry::make('last_activity_at')
                 ->label('Last connected')
                 ->timezone(LeaveSettingsService::timezone())

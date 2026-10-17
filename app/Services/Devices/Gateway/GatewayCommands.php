@@ -64,8 +64,12 @@ final class GatewayCommands
         // remove only values that are truly absent.
         $parameters = array_filter($parameters, fn ($value) => $value !== null);
         $command = DB::transaction(function () use ($device, $binding, $operation, $parameters, $id, $expires) {
+            $content = self::OPERATIONS[$operation];
+            if (in_array($operation, ['update_biodata', 'update_biophoto'], true) && isset($parameters['pin'])) {
+                $content .= ' (Employee: '.$parameters['pin'].')';
+            }
             $command = DeviceCommand::create(['device_id' => $device->id, 'command_type' => $operation,
-                'command_content' => self::OPERATIONS[$operation], 'gateway_command_id' => $id, 'status' => 'pending']);
+                'command_content' => $content, 'gateway_command_id' => $id, 'status' => 'pending']);
             DB::table('gateway_command_outbox')->insert(['id' => $id, 'projection_id' => $command->id,
                 'binding_id' => $binding->id, 'binding_version' => $binding->version, 'operation' => $operation,
                 'parameters' => json_encode($parameters), 'expires_at' => $expires, 'created_at' => now(), 'updated_at' => now()]);
