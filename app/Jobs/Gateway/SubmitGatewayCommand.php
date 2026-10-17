@@ -60,7 +60,11 @@ class SubmitGatewayCommand implements ShouldQueue
             }
             $result = $client->call(GatewayConnection::findOrFail($binding->gateway_connection_id), 'POST', '/v1/commands', [
                 'id' => $submission->id, 'serial' => $binding->serial, 'binding_version' => $binding->version,
-                'operation' => $submission->operation, 'parameters' => $submission->parameters ?? [], 'expires_at' => $submission->expires_at->utc()->toIso8601String(),
+                'operation' => $submission->operation,
+                // Go decodes parameters as a map. An empty PHP array serializes
+                // to [], which is a JSON list and therefore invalid for it.
+                'parameters' => filled($submission->parameters) ? $submission->parameters : new \stdClass,
+                'expires_at' => $submission->expires_at->utc()->toIso8601String(),
             ]);
             if (($result['id'] ?? null) !== $submission->id || ! isset($result['wire_id'], $result['state'])) {
                 throw new \RuntimeException('Invalid command acceptance.');

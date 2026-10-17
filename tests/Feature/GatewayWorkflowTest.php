@@ -207,6 +207,7 @@ class GatewayWorkflowTest extends TestCase
         tenancy()->end();
         Http::fake(['*' => Http::response(['id' => $id, 'wire_id' => 7, 'state' => 'queued'])]);
         (new SubmitGatewayCommand($id))->handle(app(GatewayClient::class));
+        Http::assertSent(fn (\Illuminate\Http\Client\Request $request): bool => str_contains($request->body(), '"parameters":{}'));
         $this->assertSame('submitted', GatewayCommandSubmission::findOrFail($id)->state);
         tenancy()->initialize($organisation);
         $this->assertSame('pending', $command->fresh()->status);
