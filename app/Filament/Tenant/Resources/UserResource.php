@@ -466,6 +466,38 @@ class UserResource extends Resource
             ])
             ->recordActions([
                 ActionGroup::make([
+                    Action::make('pushToDevice')
+                        ->authorize(fn (): bool => tenant()?->device_integration === DeviceIntegration::GATEWAY)
+                        ->label('Push to device')
+                        ->icon('heroicon-o-arrow-up-on-square')
+                        ->color('success')
+                        ->modalHeading('Push employee to device')
+                        ->modalDescription('Add this employee to the selected device, or update the existing device user with the same PIN.')
+                        ->form([
+                            Select::make('device_id')
+                                ->label('Device')
+                                ->options(fn () => self::deviceOptions('upsert_user'))
+                                ->searchable()
+                                ->required(),
+                        ])
+                        ->action(function (User $record, array $data): void {
+                            $device = Device::findOrFail($data['device_id']);
+                            $commands = app(\App\Services\Devices\DeviceCommandService::class);
+                            abort_unless($commands->available($device, 'upsert_user'), 403);
+
+                            $commands->request($device, 'upsert_user', [
+                                'pin' => (string) $record->pin,
+                                'name' => (string) ($record->name ?: $record->pin),
+                                'privilege' => (string) ((int) $record->device_privilege === 14 ? 14 : 0),
+                                'card' => (string) ($record->card_number ?? ''),
+                            ]);
+
+                            Notification::make()
+                                ->title('Device update queued')
+                                ->body('The device will add or update this employee on its next connection. Track the result in Device Commands.')
+                                ->success()
+                                ->send();
+                        }),
                     Action::make('addBiometric')
                         ->authorize(fn (): bool => in_array(tenant()?->device_integration, [DeviceIntegration::EBIO, DeviceIntegration::GATEWAY], true))
                         ->label('Add Biometric')
