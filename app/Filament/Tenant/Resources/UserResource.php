@@ -103,7 +103,7 @@ class UserResource extends Resource
                         ->label('Card Number')
                         ->autocomplete('off'),
                     Select::make('device_privilege')
-                        ->visible(fn (): bool => DeviceIntegration::usesEbio())
+                        ->visible(fn (): bool => in_array(tenant()?->device_integration, [DeviceIntegration::EBIO, DeviceIntegration::GATEWAY], true))
                         ->label('Device privilege')
                         ->options([
                             0 => 'Normal User',
@@ -628,24 +628,14 @@ class UserResource extends Resource
                         ->authorize(fn (): bool => in_array(tenant()?->device_integration, [DeviceIntegration::EBIO, DeviceIntegration::GATEWAY], true))
                         ->icon('heroicon-o-arrow-up-on-square')
                         ->color('success')
-                        ->label('Push to Device / Location')
+                        ->label(fn (): string => DeviceIntegration::usesEbio() ? 'Push to Device / Location' : 'Add or update on device')
+                        ->modalDescription(fn (): string => DeviceIntegration::usesEbio()
+                            ? 'Send the selected employees to the selected eBio locations.'
+                            : 'Send the selected employees to the selected devices. Existing device users with the same PIN are updated.')
                         ->form([
                             Select::make('location')
                                 ->label('Select Device(s)')
-                                ->options(function () {
-                                    $devices = Device::all();
-                                    $options = [];
-                                    foreach ($devices as $d) {
-                                        $label = $d->name ?: $d->serial_number;
-                                        $loc = $d->options['location'] ?? null;
-                                        if ($loc) {
-                                            $label .= " (Location: $loc)";
-                                        }
-                                        $options[$d->id] = $label;
-                                    }
-
-                                    return $options;
-                                })
+                                ->options(fn () => self::deviceOptions(DeviceIntegration::usesEbio() ? null : 'upsert_user'))
                                 ->searchable()
                                 ->multiple()
                                 ->placeholder('Leave blank for all devices'),
@@ -669,22 +659,37 @@ class UserResource extends Resource
                                 }
                             } else {
                                 $commandService = app(\App\Services\Devices\DeviceCommandService::class);
+                                $devices = $devices->filter(fn (Device $device) => $commandService->available($device, 'upsert_user'));
                                 $count = 0;
+                                $skipped = 0;
                                 foreach ($devices as $device) {
                                     foreach ($records as $user) {
                                         try {
                                             $commandService->request($device, 'upsert_user', [
                                                 'pin' => (string) $user->pin,
                                                 'name' => (string) ($user->name ?: $user->pin),
-                                                'privilege' => (string) ($user->privilege ?? 0),
-                                                'card' => (string) ($user->rfid ?? ''),
+                                                'privilege' => (string) ((int) $user->device_privilege === 14 ? 14 : 0),
+                                                'card' => (string) ($user->card_number ?? ''),
                                             ]);
                                             $count++;
                                         } catch (\Throwable $e) {
                                             report($e);
+                                            $skipped++;
                                         }
                                     }
                                 }
+                                if ($count === 0) {
+                                    Notification::make()->title('No compatible device selected')->body('Select a connected device that supports adding or updating users.')->danger()->send();
+
+                                    return;
+                                }
+                                Notification::make()
+                                    ->title('Device updates queued')
+                                    ->body("{$count} device update(s) queued.".($skipped ? " {$skipped} could not be queued." : ''))
+                                    ->success()
+                                    ->send();
+
+                                return;
                             }
 
                             Notification::make()
@@ -698,25 +703,15 @@ class UserResource extends Resource
                         ->authorize(fn (): bool => in_array(tenant()?->device_integration, [DeviceIntegration::EBIO, DeviceIntegration::GATEWAY], true))
                         ->icon('heroicon-o-trash')
                         ->color('danger')
-                        ->label('Delete from Devices')
+                        ->label(fn (): string => DeviceIntegration::usesEbio() ? 'Delete from Devices' : 'Remove from device')
+                        ->modalDescription(fn (): string => DeviceIntegration::usesEbio()
+                            ? 'Remove the selected employees from the selected eBio locations.'
+                            : 'Remove the selected employees from the selected devices. Their employee records stay in Secumax.')
                         ->requiresConfirmation()
                         ->form([
                             Select::make('location')
                                 ->label('Select Device(s)')
-                                ->options(function () {
-                                    $devices = Device::all();
-                                    $options = [];
-                                    foreach ($devices as $d) {
-                                        $label = $d->name ?: $d->serial_number;
-                                        $loc = $d->options['location'] ?? null;
-                                        if ($loc) {
-                                            $label .= " (Location: $loc)";
-                                        }
-                                        $options[$d->id] = $label;
-                                    }
-
-                                    return $options;
-                                })
+                                ->options(fn () => self::deviceOptions(DeviceIntegration::usesEbio() ? null : 'delete_user'))
                                 ->searchable()
                                 ->multiple()
                                 ->placeholder('Leave blank for all devices'),
@@ -740,17 +735,34 @@ class UserResource extends Resource
                                 }
                             } else {
                                 $commandService = app(\App\Services\Devices\DeviceCommandService::class);
+                                $devices = $devices->filter(fn (Device $device) => $commandService->available($device, 'delete_user'));
+                                $count = 0;
+                                $skipped = 0;
                                 foreach ($devices as $device) {
                                     foreach ($records as $record) {
                                         try {
                                             $commandService->request($device, 'delete_user', [
                                                 'pin' => (string) $record->pin,
                                             ]);
+                                            $count++;
                                         } catch (\Throwable $e) {
                                             report($e);
+                                            $skipped++;
                                         }
                                     }
                                 }
+                                if ($count === 0) {
+                                    Notification::make()->title('No compatible device selected')->body('Select a connected device that supports removing users.')->danger()->send();
+
+                                    return;
+                                }
+                                Notification::make()
+                                    ->title('Device removals queued')
+                                    ->body("{$count} device removal(s) queued.".($skipped ? " {$skipped} could not be queued." : ''))
+                                    ->success()
+                                    ->send();
+
+                                return;
                             }
 
                             Notification::make()
@@ -840,5 +852,19 @@ class UserResource extends Resource
             'view' => Pages\ViewUser::route('/{record}'),
             'edit' => Pages\EditUser::route('/{record}/edit'),
         ];
+    }
+
+    private static function deviceOptions(?string $operation = null): array
+    {
+        $commands = app(\App\Services\Devices\DeviceCommandService::class);
+
+        return Device::query()->get()
+            ->filter(fn (Device $device): bool => $operation === null || $commands->available($device, $operation))
+            ->mapWithKeys(function (Device $device): array {
+                $label = $device->name ?: $device->serial_number;
+                $location = $device->options['location'] ?? null;
+
+                return [$device->id => $location ? "{$label} ({$location})" : $label];
+            })->all();
     }
 }

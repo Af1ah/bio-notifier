@@ -59,7 +59,10 @@ final class GatewayCommands
         $binding = GatewayDeviceBinding::where('organisation_id', tenant('id'))->where('device_id', $device->id)->firstOrFail();
         $id = (string) Str::uuid();
         $expires = now()->addMinutes(15);
-        $parameters = array_filter($parameters, fn ($value) => $value !== null && $value !== '');
+        // The ADMS user-update command requires an explicit Card field, even
+        // when the employee does not have a card. Preserve empty strings and
+        // remove only values that are truly absent.
+        $parameters = array_filter($parameters, fn ($value) => $value !== null);
         $command = DB::transaction(function () use ($device, $binding, $operation, $parameters, $id, $expires) {
             $command = DeviceCommand::create(['device_id' => $device->id, 'command_type' => $operation,
                 'command_content' => self::OPERATIONS[$operation], 'gateway_command_id' => $id, 'status' => 'pending']);

@@ -227,6 +227,22 @@ class GatewayWorkflowTest extends TestCase
         tenancy()->end();
     }
 
+    public function test_gateway_user_mutation_commands_keep_their_typed_parameters(): void
+    {
+        [$organisation, $binding] = $this->company('REMOTEUSER01');
+        $binding->update(['capabilities' => ['info', 'check', 'query_users', 'upsert_user', 'delete_user']]);
+        tenancy()->initialize($organisation);
+        $device = Device::firstOrFail();
+        $commands = app(DeviceCommandService::class);
+        $upsert = $commands->request($device, 'upsert_user', ['pin' => '0007', 'name' => 'Payroll employee', 'privilege' => '14', 'card' => '']);
+        $delete = $commands->request($device, 'delete_user', ['pin' => '0007']);
+        $upsertParameters = json_decode((string) DB::table('gateway_command_outbox')->where('id', $upsert->gateway_command_id)->value('parameters'), true);
+        $deleteParameters = json_decode((string) DB::table('gateway_command_outbox')->where('id', $delete->gateway_command_id)->value('parameters'), true);
+        $this->assertSame(['pin' => '0007', 'name' => 'Payroll employee', 'privilege' => '14', 'card' => ''], $upsertParameters);
+        $this->assertSame(['pin' => '0007'], $deleteParameters);
+        tenancy()->end();
+    }
+
     public function test_roster_evidence_creates_or_updates_employees_without_payroll_setup(): void
     {
         [$organisation] = $this->company('ROSTER01');
