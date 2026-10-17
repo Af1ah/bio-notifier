@@ -515,24 +515,22 @@ class UserResource extends Resource
                         ->color('gray')
                         ->modalDescription('Read the selected employee’s stored fingerprint or face templates from a compatible device.')
                         ->form([
-                            Select::make('type')
-                                ->label('Template type')
-                                ->options(['finger' => 'Fingerprint templates', 'face' => 'Face templates'])
-                                ->required()
-                                ->live(),
                             Select::make('device_id')
                                 ->label('Device')
-                                ->options(fn ($get): array => self::biometricFetchDeviceOptions((string) $get('type')))
-                                ->helperText('Only devices configured for the selected template type are listed.')
+                                ->options(fn (): array => self::biometricFetchDeviceOptions())
+                                ->helperText('Fetches the fingerprint and face templates supported by this device’s saved settings.')
                                 ->searchable()
                                 ->required(),
                         ])
                         ->action(function (User $record, array $data): void {
                             $device = Device::findOrFail($data['device_id']);
-                            $type = (string) $data['type'];
                             $commands = app(\App\Services\Devices\DeviceCommandService::class);
-                            abort_unless(in_array($type, ['finger', 'face'], true) && $device->supportsVerificationFormat($type) && $commands->available($device, 'query_biodata'), 403);
-                            $commands->request($device, 'query_biodata', ['pin' => (string) $record->pin, 'type' => $type]);
+                            abort_unless($commands->available($device, 'query_biodata'), 403);
+                            $types = array_values(array_intersect(['finger', 'face'], $device->verificationFormats()));
+                            abort_if($types === [], 422, 'This device has no fingerprint or face template format enabled. Update its supported verification formats in Devices.');
+                            foreach ($types as $type) {
+                                $commands->request($device, 'query_biodata', ['pin' => (string) $record->pin, 'type' => $type]);
+                            }
                             Notification::make()->title('Biometric fetch queued')->body('Templates are saved to this employee when the device responds.')->success()->send();
                         }),
                     Action::make('pushToDevice')
@@ -1071,15 +1069,12 @@ class UserResource extends Resource
     }
 
     /** @return array<int, string> */
-    private static function biometricFetchDeviceOptions(string $type): array
+    private static function biometricFetchDeviceOptions(): array
     {
-        if (! in_array($type, ['finger', 'face'], true)) {
-            return [];
-        }
         $commands = app(\App\Services\Devices\DeviceCommandService::class);
 
         return Device::query()->get()
-            ->filter(fn (Device $device): bool => $device->supportsVerificationFormat($type) && $commands->available($device, 'query_biodata'))
+            ->filter(fn (Device $device): bool => $commands->available($device, 'query_biodata'))
             ->mapWithKeys(fn (Device $device): array => [$device->id => $device->name ?: $device->serial_number])
             ->all();
     }
