@@ -205,6 +205,7 @@ class GatewayWorkflowTest extends TestCase
         $id = $command->gateway_command_id;
         $this->assertSame(1, DB::table('gateway_command_outbox')->count());
         tenancy()->end();
+        $this->assertSame([], GatewayCommandSubmission::findOrFail($id)->parameters);
         Http::fake(['*' => Http::response(['id' => $id, 'wire_id' => 7, 'state' => 'queued'])]);
         (new SubmitGatewayCommand($id))->handle(app(GatewayClient::class));
         Http::assertSent(fn (\Illuminate\Http\Client\Request $request): bool => str_contains($request->body(), '"parameters":{}'));

@@ -58,12 +58,19 @@ class SubmitGatewayCommand implements ShouldQueue
             if ($submission->expires_at->isPast()) {
                 throw new GatewayRequestException(410);
             }
+            $parameters = $submission->parameters;
+            if (is_string($parameters)) {
+                $parameters = json_decode($parameters, true, 512, JSON_THROW_ON_ERROR);
+            }
+            if (! is_array($parameters)) {
+                throw new \RuntimeException('Gateway command parameters must be an object.');
+            }
             $result = $client->call(GatewayConnection::findOrFail($binding->gateway_connection_id), 'POST', '/v1/commands', [
                 'id' => $submission->id, 'serial' => $binding->serial, 'binding_version' => $binding->version,
                 'operation' => $submission->operation,
                 // Go decodes parameters as a map. An empty PHP array serializes
                 // to [], which is a JSON list and therefore invalid for it.
-                'parameters' => filled($submission->parameters) ? $submission->parameters : new \stdClass,
+                'parameters' => $parameters === [] ? new \stdClass : $parameters,
                 'expires_at' => $submission->expires_at->utc()->toIso8601String(),
             ]);
             if (($result['id'] ?? null) !== $submission->id || ! isset($result['wire_id'], $result['state'])) {

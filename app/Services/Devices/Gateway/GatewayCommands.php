@@ -83,7 +83,7 @@ final class GatewayCommands
         $submission = GatewayCommandSubmission::firstOrCreate(['id' => $id], [
             'binding_id' => $row->binding_id, 'organisation_id' => $organisationId,
             'projection_id' => $row->projection_id, 'binding_version' => $row->binding_version,
-            'operation' => $row->operation, 'parameters' => $row->parameters, 'expires_at' => $row->expires_at, 'state' => 'pending',
+            'operation' => $row->operation, 'parameters' => json_decode($row->parameters, true) ?: [], 'expires_at' => $row->expires_at, 'state' => 'pending',
         ]);
         DB::table('gateway_command_outbox')->where('id', $id)->update(['relayed_at' => now()]);
         // The scheduler also submits pending central rows if queue insertion fails.
