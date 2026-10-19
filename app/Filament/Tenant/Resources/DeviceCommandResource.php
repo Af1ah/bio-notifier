@@ -220,6 +220,15 @@ class DeviceCommandResource extends Resource
             ->recordActions([
                 \Filament\Actions\ActionGroup::make([
                     ViewAction::make(),
+                    Action::make('cancelCommand')
+                        ->label(fn (DeviceCommand $record): string => $record->status === 'pending' ? 'Cancel command' : 'Stop waiting')
+                        ->icon('heroicon-o-stop-circle')
+                        ->color('danger')
+                        ->authorize(fn (DeviceCommand $record): bool => static::canEdit($record))
+                        ->visible(fn (DeviceCommand $record): bool => (tenant()?->device_integration === \App\Services\Devices\DeviceIntegration::GATEWAY) && filled($record->gateway_command_id) && in_array($record->status, ['pending', 'sent', 'outcome_unknown'], true))
+                        ->requiresConfirmation()
+                        ->modalDescription('Cancels queued work or stops waiting for a sent command. A command already sent may have executed; this does not undo changes on the device.')
+                        ->action(fn (DeviceCommand $record) => app(\App\Services\Devices\Gateway\GatewayCommands::class)->cancel($record)),
                     Action::make('retry')
                         ->authorize(fn (): bool => \App\Services\Devices\DeviceIntegration::usesEbio())
                         ->icon('heroicon-o-arrow-path')

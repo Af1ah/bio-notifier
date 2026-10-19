@@ -9,7 +9,7 @@
 <x-filament-infolists::entry-wrapper :entry="$entry">
     @if ($photo)
         <img src="{{ $photo }}" alt="Stored AI Face photo" style="max-height:240px;max-width:100%;border-radius:8px" />
-        <p class="mt-2 text-sm text-gray-500">Saved photo. Check Device Commands for transfer status.</p>
+        <p class="mt-2 text-sm text-gray-500">Saved JPEG photo. Fetching a face template does not refresh this image. The photo displayed on the device may be different.</p>
     @else
         <p class="text-sm text-gray-500">No face photo stored. Raw face templates cannot be displayed as a photograph.</p>
     @endif

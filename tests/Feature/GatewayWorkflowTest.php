@@ -228,6 +228,22 @@ class GatewayWorkflowTest extends TestCase
         tenancy()->end();
     }
 
+    public function test_cancel_before_submission_prevents_worker_delivery(): void
+    {
+        [$company] = $this->company('CANCEL01');
+        tenancy()->initialize($company);
+        Queue::fake();
+        $command = app(DeviceCommandService::class)->request(Device::firstOrFail(), 'info');
+        app(\App\Services\Devices\Gateway\GatewayCommands::class)->cancel($command);
+        $this->assertSame('cancelled', $command->fresh()->status);
+        $id = $command->gateway_command_id;
+        tenancy()->end();
+        Http::fake();
+        (new SubmitGatewayCommand($id))->handle(app(GatewayClient::class));
+        Http::assertNothingSent();
+        $this->assertSame('cancelled', GatewayCommandSubmission::findOrFail($id)->state);
+    }
+
     public function test_gateway_user_mutation_commands_keep_their_typed_parameters(): void
     {
         [$organisation, $binding] = $this->company('REMOTEUSER01');

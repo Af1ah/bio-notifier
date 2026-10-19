@@ -168,7 +168,7 @@ final class ReceiptApplier
                         default => $payload['command_state'],
                     };
                     // Terminal evidence cannot be overwritten by a delayed delivery event.
-                    if (! in_array($command->status, ['acknowledged', 'failed', 'expired'], true)) {
+                    if (! in_array($command->status, ['acknowledged', 'failed', 'expired', 'cancelled'], true)) {
                         $command->update(['status' => $status, 'gateway_result_at' => $received,
                             'sent_at' => $command->sent_at ?? $received,
                             'acknowledged_at' => $status === 'acknowledged' ? $received : null,

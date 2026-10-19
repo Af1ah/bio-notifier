@@ -87,6 +87,32 @@ final class GatewayCommands
         return $command;
     }
 
+    public function cancel(\App\Models\DeviceCommand $command): void
+    {
+        abort_unless(tenant() && tenant()->device_integration === DeviceIntegration::GATEWAY, 403);
+        abort_unless(in_array($command->status, ['pending', 'sent', 'outcome_unknown'], true) && $command->gateway_command_id, 409);
+        $submission = GatewayCommandSubmission::whereKey($command->gateway_command_id)
+            ->where('organisation_id', tenant('id'))->where('projection_id', $command->id)->firstOrFail();
+        $binding = GatewayDeviceBinding::whereKey($submission->binding_id)->where('organisation_id', tenant('id'))
+            ->where('device_id', $command->device_id)->where('version', $submission->binding_version)->firstOrFail();
+        // Fence the submission worker before changing the tenant projection. No network call under a DB lock.
+        $local = GatewayCommandSubmission::whereKey($submission->id)->where('state', 'pending')->where('attempts', 0)
+            ->whereNull('lease_token')->update(['state' => 'cancelled']);
+        if (! $local) {
+            $submission->refresh();
+            if (in_array($submission->state, ['submitting', 'retrying', 'parked'], true)) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['command' => 'Command submission is being reconciled. Try again after its submission status is resolved.']);
+            }
+            abort_unless($submission->state === 'submitted' || $submission->state === 'cancelled', 409);
+            if ($submission->state !== 'cancelled') {
+                app(GatewayClient::class)->call(\App\Models\GatewayConnection::findOrFail($binding->gateway_connection_id), 'POST', '/v1/commands/'.$submission->id.'/resolve');
+            }
+        }
+        DeviceCommand::whereKey($command->id)->where('gateway_command_id', $submission->id)
+            ->whereIn('status', ['pending', 'sent', 'outcome_unknown'])
+            ->update(['status' => 'cancelled', 'response' => 'Cancelled by operator. A command already sent may have executed.']);
+    }
+
     public function relay(string $organisationId, string $id): void
     {
         $row = DB::table('gateway_command_outbox')->where('id', $id)->first();
