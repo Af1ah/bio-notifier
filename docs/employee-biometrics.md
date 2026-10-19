@@ -8,7 +8,7 @@ Choose one input:
 
 - **Read from attendance device**: enroll the employee on the source terminal under the employee PIN, then select it here. The application requests its configured fingerprint and face templates and saves returned data to the employee. An acknowledged request without returned data is not a completed fetch.
 - **Raw fingerprint template**: choose the finger slot and paste the template from a compatible enrollment reader or its software. This stores the template; it does not send it to a terminal. Fingerprint photographs are not templates. Direct browser/USB-reader capture needs the reader manufacturer's SDK and is not implemented by this form.
-- **AI Face JPEG**: upload a valid JPEG up to 768 KB. It is stored privately for later transfer to AI Face terminals. A JPEG cannot be sent as a conventional face template.
+- **AI Face JPEG**: choose Upload photo or Take photo. Camera access uses the browser permission dialog; mobile browsers without live camera access may offer their native capture picker. The captured image is converted to JPEG, reduced to a maximum 1024-pixel edge and compressed to fit 768 KB. The server verifies the JPEG and size again. Upload accepts `.jpg` and `.jpeg` up to 768 KB. It is stored privately for later transfer to AI Face terminals. A JPEG cannot be sent as a conventional face template.
 
 Conventional face templates are read from terminals and can be sent only to devices configured for Face template. A matching verification format does not guarantee the same biometric algorithm across firmware models; verify actual recognition when piloting a new model.
 

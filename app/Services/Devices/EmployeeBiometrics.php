@@ -86,6 +86,29 @@ final class EmployeeBiometrics
         $employee->update(['ai_face_photo_path' => $path]);
     }
 
+    public function registerCameraPhoto(User $employee, string $data): void
+    {
+        $prefix = 'data:image/jpeg;base64,';
+        if (! str_starts_with($data, $prefix) || strlen($data) > 1048600) {
+            $this->invalid('camera_photo', 'Take a valid JPEG photo of 768 KB or smaller.');
+        }
+        $contents = base64_decode(substr($data, strlen($prefix)), true);
+        $image = $contents !== false ? @getimagesizefromstring($contents) : false;
+        if (! $contents || strlen($contents) > 786432 || ! is_array($image) || ($image['mime'] ?? null) !== 'image/jpeg') {
+            $this->invalid('camera_photo', 'Take a valid JPEG photo of 768 KB or smaller.');
+        }
+        $path = 'biometric-photos/'.\Illuminate\Support\Str::uuid().'.jpg';
+        if (! Storage::disk('local')->put($path, $contents, ['visibility' => 'private'])) {
+            $this->invalid('camera_photo', 'The photo could not be saved. Please try again.');
+        }
+        try {
+            $employee->update(['ai_face_photo_path' => $path]);
+        } catch (\Throwable $exception) {
+            Storage::disk('local')->delete($path);
+            throw $exception;
+        }
+    }
+
     public function fetch(User $employee, Device $device): void
     {
         abort_unless($this->commands->available($device, 'query_biodata'), 403);

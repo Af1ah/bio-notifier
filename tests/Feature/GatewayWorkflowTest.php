@@ -517,6 +517,26 @@ class GatewayWorkflowTest extends TestCase
             ->callTableAction('pushToDevice', $employee, data: ['device_id' => $device->id, 'formats' => ['rfid', 'finger']])
             ->assertHasNoActionErrors();
         $this->assertSame(2, DB::table('gateway_command_outbox')->count());
+        \Illuminate\Support\Facades\Storage::fake('local');
+        $image = imagecreatetruecolor(2, 2);
+        ob_start();
+        imagejpeg($image);
+        $jpeg = ob_get_clean();
+        imagedestroy($image);
+        Livewire::test(\App\Filament\Tenant\Resources\UserResource\Pages\ListUsers::class)
+            ->callTableAction('registerBiometric', $employee, data: ['source' => 'ai_face', 'photo_input' => 'camera', 'camera_photo' => 'data:image/jpeg;base64,'.base64_encode($jpeg)])
+            ->assertHasNoActionErrors();
+        $path = $employee->fresh()->ai_face_photo_path;
+        $this->assertStringStartsWith('biometric-photos/', $path);
+        $this->assertSame($jpeg, \Illuminate\Support\Facades\Storage::disk('local')->get($path));
+        foreach (['data:image/jpeg;base64,'.base64_encode('not an image'), 'data:image/jpeg;base64,'.base64_encode(str_repeat('x', 786433))] as $invalid) {
+            try {
+                app(\App\Services\Devices\EmployeeBiometrics::class)->registerCameraPhoto($employee, $invalid);
+                $this->fail('Invalid camera photo was accepted.');
+            } catch (ValidationException) {
+                $this->assertSame($path, $employee->fresh()->ai_face_photo_path);
+            }
+        }
     }
 
     public function test_company_device_screen_registers_a_device_without_showing_service_configuration(): void

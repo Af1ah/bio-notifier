@@ -30,6 +30,8 @@ use Filament\Actions\ViewAction;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\CheckboxList;
 use Filament\Forms\Components\FileUpload;
+use Filament\Forms\Components\Radio;
+use Filament\Forms\Components\ViewField;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
@@ -512,18 +514,27 @@ class UserResource extends Resource
                                 ->rows(4)->maxLength(8192)
                                 ->visible(fn ($get): bool => $get('source') === 'finger')
                                 ->required(fn ($get): bool => $get('source') === 'finger'),
+                            Radio::make('photo_input')->label('Photo source')
+                                ->options(['upload' => 'Upload photo', 'camera' => 'Take photo'])->default('upload')->inline()->live()
+                                ->visible(fn ($get): bool => $get('source') === 'ai_face'),
+                            ViewField::make('camera_photo')->label('Camera')
+                                ->view('filament.forms.ai-face-camera')->rules(['nullable', 'string', 'max:1048600'])
+                                ->visible(fn ($get): bool => $get('source') === 'ai_face' && $get('photo_input') === 'camera')
+                                ->required(fn ($get): bool => $get('source') === 'ai_face' && $get('photo_input') === 'camera'),
                             FileUpload::make('ai_face_photo_path')->label('AI Face JPEG')
                                 ->disk('local')->visibility('private')->directory('biometric-photos')
                                 ->acceptedFileTypes(['image/jpeg'])->maxSize(768)
-                                ->visible(fn ($get): bool => $get('source') === 'ai_face')
-                                ->required(fn ($get): bool => $get('source') === 'ai_face'),
+                                ->visible(fn ($get): bool => $get('source') === 'ai_face' && $get('photo_input') !== 'camera')
+                                ->required(fn ($get): bool => $get('source') === 'ai_face' && $get('photo_input') !== 'camera'),
                         ])
                         ->action(function (User $record, array $data): void {
                             $service = app(EmployeeBiometrics::class);
                             match ($data['source']) {
                                 'device' => $service->fetch($record, Device::findOrFail($data['device_id'])),
                                 'finger' => $service->registerFingerprint($record, (string) $data['finger_index'], (string) $data['template_data']),
-                                'ai_face' => $service->registerPhoto($record, (string) $data['ai_face_photo_path']),
+                                'ai_face' => ($data['photo_input'] ?? 'upload') === 'camera'
+                                    ? $service->registerCameraPhoto($record, (string) $data['camera_photo'])
+                                    : $service->registerPhoto($record, (string) $data['ai_face_photo_path']),
                                 default => throw \Illuminate\Validation\ValidationException::withMessages(['source' => 'Choose a supported input.']),
                             };
                             Notification::make()->title($data['source'] === 'device' ? 'Biometric read queued' : 'Biometric saved')
