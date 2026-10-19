@@ -294,6 +294,10 @@ class UserResource extends Resource
                                 ->visible(fn (): bool => tenant()?->device_integration === DeviceIntegration::GATEWAY)
                                 ->label('Stored AI Face JPEG')
                                 ->state(fn (User $record): string => $record->ai_face_photo_path && Storage::disk('local')->exists($record->ai_face_photo_path) ? 'Stored' : 'None stored'),
+                            ViewEntry::make('stored_face_photo')->label('Stored face photo')
+                                ->visible(fn (): bool => tenant()?->device_integration === DeviceIntegration::GATEWAY)
+                                ->view('filament.infolists.employee-face-photo')
+                                ->columnSpanFull(),
                             TextEntry::make('biometric_transfer_status')
                                 ->visible(fn (): bool => tenant()?->device_integration === DeviceIntegration::GATEWAY)
                                 ->label('Latest biometric transfer')

@@ -529,6 +529,9 @@ class GatewayWorkflowTest extends TestCase
         $path = $employee->fresh()->ai_face_photo_path;
         $this->assertStringStartsWith('biometric-photos/', $path);
         $this->assertSame($jpeg, \Illuminate\Support\Facades\Storage::disk('local')->get($path));
+        Livewire::test(\App\Filament\Tenant\Resources\UserResource\Pages\ViewUser::class, ['record' => $employee->getRouteKey()])
+            ->assertSee('Stored AI Face photo')
+            ->assertSee('data:image/jpeg;base64,'.base64_encode($jpeg), escape: false);
         foreach (['data:image/jpeg;base64,'.base64_encode('not an image'), 'data:image/jpeg;base64,'.base64_encode(str_repeat('x', 786433))] as $invalid) {
             try {
                 app(\App\Services\Devices\EmployeeBiometrics::class)->registerCameraPhoto($employee, $invalid);

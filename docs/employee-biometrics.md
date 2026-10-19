@@ -29,3 +29,7 @@ For a known employee with no stored fingerprint or conventional face template, t
 A persistent employee/format marker is saved in the same transaction as a recoverable background effect. It reuses the employee and device already loaded during attendance processing, with no extra lookup or cache request for each punch. Subsequent punches do not create discovery jobs or device queries. Stable command IDs prevent a retried background effect from queuing a second device command. Received templates are reused without polling.
 
 Manual Fetch can refresh templates or recover a failed or empty first fetch. Adding another finger after templates have already been stored requires this manual refresh; a punch does not report which slots changed. AI Face JPEGs are registered by upload; a face punch is not treated as an available JPEG download.
+
+## View the stored photo
+
+Open Employee → View to see the saved AI Face JPEG. The preview is rendered inside the authorized employee profile from private storage; it does not create a public photo URL. It confirms what is saved in the application, not whether a terminal has accepted the photo. Conventional face templates are binary credentials and cannot be rendered as a photograph.
