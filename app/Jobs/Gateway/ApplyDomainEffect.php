@@ -66,6 +66,18 @@ class ApplyDomainEffect implements ShouldQueue
                     $freshness->invalidate($user->id, Carbon::parse($date));
                     $calculator->calculate($user, Carbon::parse($date));
                 }
+            } elseif ($user && in_array($effect->type, ['biometric_finger', 'biometric_face'], true)) {
+                $format = substr($effect->type, strlen('biometric_'));
+                $templates = $format === 'finger' ? $user->fingerprints : $user->face_templates;
+                $stored = is_array($templates) && collect($templates)->contains(fn ($template) => is_array($template) && filled($template['tmp'] ?? null));
+                $request = ($user->biometric_fetch_requests ?? [])[$format] ?? null;
+                $device = $log->device;
+                if (! $stored && $request && $device && (int) $request['device_id'] === $device->id && $device->supportsVerificationFormat($format)) {
+                    $commands = app(\App\Services\Devices\Gateway\GatewayCommands::class);
+                    if ($commands->available($device, 'query_biodata')) {
+                        $commands->request($device, 'query_biodata', ['pin' => (string) $user->pin, 'type' => $format], $request['command_id']);
+                    }
+                }
             } elseif ($user?->whatsapp_number && $effect->type === 'notification' && config('services.whatsapp.api_key') && config('services.whatsapp.instance_name')) {
                 if (! $notifications->sendMessage($user->whatsapp_number, "Hello {$user->name}, your attendance punch ({$log->status_label}) at {$log->punched_at->format('Y-m-d H:i:s')} has been recorded.")) {
                     throw new \RuntimeException('Notification outcome unknown.');
@@ -76,7 +88,7 @@ class ApplyDomainEffect implements ShouldQueue
             if (isset($effect)) {
                 DB::table('gateway_domain_effects')->where('id', $effect->id)->where('lease_token', $token)->update([
                     'state' => $effect->type === 'notification' || $effect->attempts >= 2 ? 'parked' : 'pending',
-                    'lease_token' => null, 'leased_until' => null, 'error_code' => $effect->type === 'notification' ? 'notification_outcome_unknown' : 'calculation_failed',
+                    'lease_token' => null, 'leased_until' => null, 'error_code' => $effect->type === 'notification' ? 'notification_outcome_unknown' : (str_starts_with($effect->type, 'biometric_') ? 'biometric_fetch_failed' : 'calculation_failed'),
                 ]);
             }
             throw $exception;

@@ -54,15 +54,20 @@ final class GatewayCommands
         return in_array($operation, $binding->capabilities ?? [], true);
     }
 
-    public function request(Device $device, string $operation, array $parameters = []): DeviceCommand
+    public function request(Device $device, string $operation, array $parameters = [], ?string $requestId = null): DeviceCommand
     {
         abort_unless($this->available($device, $operation), 403);
         $binding = GatewayDeviceBinding::where('organisation_id', tenant('id'))->where('device_id', $device->id)->firstOrFail();
-        $id = (string) Str::uuid();
+        $id = $requestId ?? (string) Str::uuid();
+        if ($requestId && ($existing = DeviceCommand::where('gateway_command_id', $requestId)->first())) {
+            abort_unless($existing->device_id === $device->id && $existing->command_type === $operation, 409);
+            $this->relay((string) tenant('id'), $requestId);
+
+            return $existing;
+        }
         $expires = now()->addMinutes(15);
-        // The ADMS user-update command requires an explicit Card field, even
-        // when the employee does not have a card. Preserve empty strings and
-        // remove only values that are truly absent.
+        // An explicit empty Card clears it; an absent Card leaves it unchanged.
+        // Preserve intentional empty strings and remove only null values.
         $parameters = array_filter($parameters, fn ($value) => $value !== null);
         $command = DB::transaction(function () use ($device, $binding, $operation, $parameters, $id, $expires) {
             $content = self::OPERATIONS[$operation];

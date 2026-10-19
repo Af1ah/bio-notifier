@@ -272,6 +272,94 @@ class GatewayWorkflowTest extends TestCase
         tenancy()->end();
     }
 
+    public function test_first_fingerprint_punch_fetches_once_and_reuses_received_template(): void
+    {
+        [$company, $binding] = $this->company('AUTOBIO01');
+        $binding->update(['capabilities' => ['query_biodata']]);
+        tenancy()->initialize($company);
+        Device::firstOrFail()->update(['options' => ['supported_verification_formats' => ['rfid', 'finger']]]);
+        tenancy()->end();
+        for ($i = 0; $i < 2; $i++) {
+            $event = $this->event('AUTOBIO01');
+            $event['punches'][0]['verify'] = 1;
+            $event['punches'][0]['at'] = '2026-10-03T10:0'.$i.':00+05:30';
+            $this->deliver($event)->assertAccepted();
+            (new ApplyGatewayReceipt($event['id']))->handle(app(ReceiptApplier::class));
+        }
+        tenancy()->initialize($company);
+        $this->assertSame(1, DB::table('gateway_domain_effects')->where('type', 'biometric_finger')->count());
+        $effect = DB::table('gateway_domain_effects')->where('type', 'biometric_finger')->first();
+        $id = User::where('pin', '0007')->firstOrFail()->biometric_fetch_requests['finger']['command_id'];
+        tenancy()->end();
+        $job = new ApplyDomainEffect($company->id, $effect->id);
+        $job->handle(app(AttendanceCalculationService::class), app(PayrollFreshnessService::class), app(WhatsAppService::class));
+        tenancy()->initialize($company);
+        $this->assertSame(1, DB::table('gateway_command_outbox')->where('operation', 'query_biodata')->count());
+        $this->assertSame($id, DB::table('gateway_command_outbox')->value('id'));
+        // Simulate recovery after the command committed but before effect completion.
+        DB::table('gateway_domain_effects')->where('id', $effect->id)->update(['state' => 'pending']);
+        tenancy()->end();
+        $job->handle(app(AttendanceCalculationService::class), app(PayrollFreshnessService::class), app(WhatsAppService::class));
+        tenancy()->initialize($company);
+        $this->assertSame(1, DB::table('gateway_command_outbox')->count());
+        tenancy()->end();
+        $templates = ['id' => (string) Str::uuid(), 'serial' => 'AUTOBIO01', 'binding_version' => 1, 'kind' => 'biometrics', 'source_ip' => '192.168.10.5',
+            'received_at' => now()->toIso8601String(), 'biometrics' => [['pin' => '0007', 'type' => 'finger', 'slot' => '6', 'tmp' => 'AwAAAAEAAABCAAA=']]];
+        $this->deliver($templates)->assertAccepted();
+        (new ApplyGatewayReceipt($templates['id']))->handle(app(ReceiptApplier::class));
+        $later = $this->event('AUTOBIO01');
+        $later['punches'][0]['verify'] = 1;
+        $later['punches'][0]['at'] = '2026-10-03T11:00:00+05:30';
+        $this->deliver($later)->assertAccepted();
+        (new ApplyGatewayReceipt($later['id']))->handle(app(ReceiptApplier::class));
+        tenancy()->initialize($company);
+        $this->assertSame('AwAAAAEAAABCAAA=', User::where('pin', '0007')->firstOrFail()->fingerprints[6]['tmp']);
+        $this->assertSame(1, DB::table('gateway_domain_effects')->where('type', 'biometric_finger')->count());
+        $this->assertSame(1, DB::table('gateway_command_outbox')->count());
+        tenancy()->end();
+    }
+
+    public function test_combined_push_checks_formats_and_queues_user_before_templates(): void
+    {
+        [$organisation, $binding] = $this->company('PUSHBIO01');
+        $binding->update(['capabilities' => ['upsert_user', 'update_biodata', 'update_biophoto', 'query_biodata']]);
+        tenancy()->initialize($organisation);
+        $device = Device::firstOrFail();
+        $device->update(['options' => ['supported_verification_formats' => ['rfid', 'finger']]]);
+        $employee = User::where('pin', '0007')->firstOrFail();
+        $employee->update(['card_number' => '1234']);
+        $service = app(\App\Services\Devices\EmployeeBiometrics::class);
+        $this->assertSame(['rfid', 'finger'], array_keys($service->formats($device)));
+        $service->registerFingerprint($employee, '6', 'AwAAAAEAAABCAAA=');
+        $this->assertSame('AwAAAAEAAABCAAA=', $employee->fresh()->fingerprints[6]['tmp']);
+        $this->assertSame(0, DB::table('gateway_command_outbox')->count());
+        foreach ([['face'], ['ai_face']] as $unsupported) {
+            try {
+                $service->push($employee, $device, $unsupported);
+                $this->fail('Unsupported format was accepted.');
+            } catch (ValidationException) {
+                $this->assertSame(0, DB::table('gateway_command_outbox')->count());
+            }
+        }
+        $this->assertSame(2, $service->push($employee, $device, ['rfid', 'finger']));
+        $rows = DB::table('gateway_command_outbox')->orderBy('created_at')->get();
+        $this->assertSame(['upsert_user', 'update_biodata'], $rows->pluck('operation')->all());
+        $this->assertSame('1234', json_decode($rows[0]->parameters, true)['card']);
+        $this->assertSame('6', json_decode($rows[1]->parameters, true)['no']);
+        $this->assertSame(1, $service->push($employee, $device, []));
+        $last = DB::table('gateway_command_outbox')->whereNotIn('id', $rows->pluck('id')->all())->first();
+        $this->assertArrayNotHasKey('card', json_decode($last->parameters, true));
+        $device->update(['options' => ['supported_verification_formats' => ['rfid', 'finger', 'face']]]);
+        $this->assertSame(['rfid', 'finger', 'face'], array_keys($service->formats($device)));
+        try {
+            $service->push($employee, $device, ['face']);
+            $this->fail('Missing face data was accepted.');
+        } catch (ValidationException) {
+            $this->assertSame(3, DB::table('gateway_command_outbox')->count());
+        }
+        tenancy()->end();
+    }
+
     public function test_roster_evidence_creates_or_updates_employees_without_payroll_setup(): void
     {
         [$organisation] = $this->company('ROSTER01');
@@ -405,6 +493,30 @@ class GatewayWorkflowTest extends TestCase
         } catch (HttpException $exception) {
             $this->assertSame(403, $exception->getStatusCode());
         }
+    }
+
+    public function test_employee_biometric_actions_register_then_push_selected_formats(): void
+    {
+        [$company, $binding] = $this->company('BIOUI01');
+        $binding->update(['capabilities' => ['upsert_user', 'update_biodata', 'query_biodata']]);
+        tenancy()->initialize($company);
+        URL::defaults(['tenant' => $company->shortname]);
+        $admin = User::create(['name' => 'Company admin', 'pin' => '900', 'privilege' => 14, 'email' => 'bioui@example.test', 'password' => 'password']);
+        $this->actingAs($admin, 'web');
+        Filament::setCurrentPanel(Filament::getPanel('tenant'));
+        Filament::bootCurrentPanel();
+        Queue::fake();
+        $employee = User::where('pin', '0007')->firstOrFail();
+        $device = Device::firstOrFail();
+        $device->update(['options' => ['supported_verification_formats' => ['rfid', 'finger']]]);
+        Livewire::test(\App\Filament\Tenant\Resources\UserResource\Pages\ListUsers::class)
+            ->callTableAction('registerBiometric', $employee, data: ['source' => 'finger', 'finger_index' => '6', 'template_data' => 'AwAAAAEAAABCAAA='])
+            ->assertHasNoActionErrors();
+        $this->assertSame('AwAAAAEAAABCAAA=', $employee->fresh()->fingerprints[6]['tmp']);
+        Livewire::test(\App\Filament\Tenant\Resources\UserResource\Pages\ListUsers::class)
+            ->callTableAction('pushToDevice', $employee, data: ['device_id' => $device->id, 'formats' => ['rfid', 'finger']])
+            ->assertHasNoActionErrors();
+        $this->assertSame(2, DB::table('gateway_command_outbox')->count());
     }
 
     public function test_company_device_screen_registers_a_device_without_showing_service_configuration(): void

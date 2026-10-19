@@ -50,6 +50,19 @@ final class ReceiptApplier
                     if ($log->wasRecentlyCreated) {
                         $employee = $employees->get($punch['pin']);
                         if ($employee) {
+                            // Reuse the already-loaded employee/device; no extra lookup per punch.
+                            $format = match ((int) $punch['verify']) { 1 => 'finger', 15 => 'face', default => null };
+                            $templates = $format === 'finger' ? $employee->fingerprints : $employee->face_templates;
+                            $stored = is_array($templates) && collect($templates)->contains(fn ($template) => is_array($template) && filled($template['tmp'] ?? null));
+                            $requests = $employee->biometric_fetch_requests ?? [];
+                            if ($format && ! $stored && ! isset($requests[$format]) && $device->supportsVerificationFormat($format)) {
+                                $requests[$format] = ['command_id' => (string) \Illuminate\Support\Str::uuid(), 'device_id' => $device->id];
+                                $employee->update(['biometric_fetch_requests' => $requests]);
+                                DB::table('gateway_domain_effects')->insert([
+                                    'receipt_id' => $receipt->id, 'attendance_log_id' => $log->id,
+                                    'type' => 'biometric_'.$format, 'state' => 'pending', 'created_at' => now(), 'updated_at' => now(),
+                                ]);
+                            }
                             $dates = [$at->copy()->subDay()->toDateString(), $at->toDateString()];
                             $days = AttendanceDay::where('user_id', $employee->id)->where(function ($query) use ($dates, $at) {
                                 $query->where(function ($datesQuery) use ($dates) {

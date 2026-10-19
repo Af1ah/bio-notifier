@@ -19,6 +19,7 @@ use App\Services\Payroll\EmployeePayrollEditorService;
 use App\Services\Attendance\ShiftAssignmentResolver;
 use App\Services\Attendance\ShiftAssignmentService;
 use App\Services\Devices\DeviceIntegration;
+use App\Services\Devices\EmployeeBiometrics;
 use Filament\Actions\Action;
 use Filament\Actions\ActionGroup;
 use Filament\Actions\BulkAction;
@@ -27,6 +28,7 @@ use Filament\Actions\DeleteBulkAction;
 use Filament\Actions\EditAction;
 use Filament\Actions\ViewAction;
 use Filament\Forms\Components\DatePicker;
+use Filament\Forms\Components\CheckboxList;
 use Filament\Forms\Components\FileUpload;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
@@ -449,219 +451,103 @@ class UserResource extends Resource
             ])
             ->recordActions([
                 ActionGroup::make([
-                    Action::make('syncStoredBiometric')
-                        ->authorize(fn (): bool => tenant()?->device_integration === DeviceIntegration::GATEWAY)
-                        ->visible(fn (User $record): bool => self::hasStoredBiometric($record))
-                        ->label('Sync stored biometric')
-                        ->icon('heroicon-o-arrow-path')
-                        ->color('warning')
-                        ->modalDescription('Transfer a stored fingerprint, face template, or AI Face JPEG to a compatible device. The terminal applies it on its next connection.')
-                        ->form([
-                            Select::make('source')
-                                ->label('Stored biometric')
-                                ->options(fn (User $record): array => self::biometricSourceOptions($record))
-                                ->required()
-                                ->live(),
-                            Select::make('device_id')
-                                ->label('Compatible device')
-                                ->options(fn ($get): array => self::biometricDeviceOptions((string) $get('source')))
-                                ->helperText('Only devices configured for this biometric format are listed.')
-                                ->searchable()
-                                ->required(),
-                        ])
-                        ->action(function (User $record, array $data): void {
-                            [$kind, $slot] = array_pad(explode(':', (string) $data['source'], 2), 2, '');
-                            abort_unless(in_array($kind, ['finger', 'face', 'ai_face'], true), 422, 'Choose stored biometric data.');
-                            $device = Device::findOrFail($data['device_id']);
-                            $commands = app(\App\Services\Devices\DeviceCommandService::class);
-                            if ($kind === 'ai_face') {
-                                abort_unless($slot === 'photo' && $record->ai_face_photo_path && Storage::disk('local')->exists($record->ai_face_photo_path), 422, 'The stored AI Face JPEG is no longer available.');
-                                $photo = self::jpegContents($record->ai_face_photo_path);
-                                abort_unless($device->supportsVerificationFormat('ai_face') && $commands->available($device, 'update_biophoto'), 403);
-                                $commands->request($device, 'update_biophoto', [
-                                    'pin' => (string) $record->pin,
-                                    'size' => (string) strlen($photo),
-                                    'content' => base64_encode($photo),
-                                ]);
-                                Notification::make()->title('AI Face photo transfer queued')->body('Track the device response in Device Commands.')->success()->send();
-
-                                return;
-                            }
-                            abort_unless($slot !== '', 422, 'Choose a stored biometric template.');
-                            $templates = $kind === 'finger' ? $record->fingerprints : $record->face_templates;
-                            $template = is_array($templates) ? ($templates[$slot] ?? null) : null;
-                            $content = trim((string) (is_array($template) ? ($template['tmp'] ?? '') : ''));
-                            abort_if($content === '', 422, 'The selected biometric template is no longer stored.');
-
-                            $format = $kind === 'finger' ? 'finger' : 'face';
-                            abort_unless($device->supportsVerificationFormat($format) && $commands->available($device, 'update_biodata'), 403);
-                            $commands->request($device, 'update_biodata', [
-                                'pin' => (string) $record->pin,
-                                'no' => (string) $slot,
-                                'type' => $kind === 'finger' ? '1' : '9',
-                                'tmp' => $content,
-                            ]);
-
-                            Notification::make()
-                                ->title('Biometric transfer queued')
-                                ->body('Track the device response in Device Commands.')
-                                ->success()
-                                ->send();
-                        }),
-                    Action::make('fetchBiometric')
-                        ->authorize(fn (): bool => tenant()?->device_integration === DeviceIntegration::GATEWAY)
-                        ->label('Fetch biometric templates')
-                        ->icon('heroicon-o-arrow-down-tray')
-                        ->color('gray')
-                        ->modalDescription('Read the selected employee’s stored fingerprint or face templates from a compatible device.')
-                        ->form([
-                            Select::make('device_id')
-                                ->label('Device')
-                                ->options(fn (): array => self::biometricFetchDeviceOptions())
-                                ->helperText('Fetches the fingerprint and face templates supported by this device’s saved settings.')
-                                ->searchable()
-                                ->required(),
-                        ])
-                        ->action(function (User $record, array $data): void {
-                            $device = Device::findOrFail($data['device_id']);
-                            $commands = app(\App\Services\Devices\DeviceCommandService::class);
-                            abort_unless($commands->available($device, 'query_biodata'), 403);
-                            $types = array_values(array_intersect(['finger', 'face'], $device->verificationFormats()));
-                            if ($types === []) {
-                                throw \Illuminate\Validation\ValidationException::withMessages([
-                                    'mountedActions.0.data.device_id' => 'This device is configured for RFID only. Enable Fingerprint or Face template in its device settings before fetching templates.',
-                                ]);
-                            }
-                            foreach ($types as $type) {
-                                $commands->request($device, 'query_biodata', ['pin' => (string) $record->pin, 'type' => $type]);
-                            }
-                            Notification::make()->title('Biometric fetch queued')->body('Templates are saved to this employee when the device responds.')->success()->send();
-                        }),
                     Action::make('pushToDevice')
                         ->authorize(fn (): bool => tenant()?->device_integration === DeviceIntegration::GATEWAY)
                         ->label('Push to device')
                         ->icon('heroicon-o-arrow-up-on-square')
                         ->color('success')
-                        ->modalHeading('Push employee to device')
-                        ->modalDescription('Add this employee to the selected device, or update the existing device user with the same PIN.')
+                        ->modalWidth('lg')
+                        ->modalDescription('Send the employee and selected stored credentials. Available formats follow the device settings.')
                         ->form([
-                            Select::make('device_id')
-                                ->label('Device')
+                            Select::make('device_id')->label('Device')
                                 ->options(fn () => self::deviceOptions('upsert_user'))
-                                ->searchable()
-                                ->required(),
+                                ->searchable()->required()->live()
+                                ->afterStateUpdated(fn ($set, $state) => $set('formats', Device::find($state)?->supportsVerificationFormat('rfid') ? ['rfid'] : [])),
+                            CheckboxList::make('formats')->label('Include credentials')
+                                ->options(fn ($get): array => ($device = Device::find($get('device_id'))) ? app(EmployeeBiometrics::class)->formats($device) : [])
+                                ->default(['rfid'])
+                                ->helperText('Card is selected by default. Fingerprint sends all stored fingers; Face sends stored face templates; AI Face sends the stored JPEG. Unselected credentials are left unchanged.')
+                                ->visible(fn ($get): bool => filled($get('device_id'))),
                         ])
                         ->action(function (User $record, array $data): void {
-                            $device = Device::findOrFail($data['device_id']);
-                            $commands = app(\App\Services\Devices\DeviceCommandService::class);
-                            abort_unless($commands->available($device, 'upsert_user'), 403);
-
-                            $commands->request($device, 'upsert_user', [
-                                'pin' => (string) $record->pin,
-                                'name' => (string) ($record->name ?: $record->pin),
-                                'privilege' => (string) ((int) $record->device_privilege === 14 ? 14 : 0),
-                                'card' => (string) ($record->card_number ?? ''),
-                            ]);
-
-                            Notification::make()
-                                ->title('Device update queued')
-                                ->body('The device will add or update this employee on its next connection. Track the result in Device Commands.')
-                                ->success()
-                                ->send();
+                            $count = app(EmployeeBiometrics::class)->push($record, Device::findOrFail($data['device_id']), $data['formats'] ?? []);
+                            Notification::make()->title('Device update queued')
+                                ->body("{$count} command(s) queued. Track their results in Device Commands.")->success()->send();
+                        }),
+                    Action::make('fetchBiometric')
+                        ->authorize(fn (): bool => tenant()?->device_integration === DeviceIntegration::GATEWAY)
+                        ->label('Fetch biometric templates')
+                        ->icon('heroicon-o-arrow-down-tray')
+                        ->modalWidth('lg')
+                        ->modalDescription('Refresh the employee’s stored templates from a device. Missing templates are also fetched automatically after the first biometric punch.')
+                        ->form([
+                            Select::make('device_id')->label('Source device')
+                                ->options(fn (): array => self::biometricFetchDeviceOptions())->searchable()->required(),
+                        ])
+                        ->action(function (User $record, array $data): void {
+                            app(EmployeeBiometrics::class)->fetch($record, Device::findOrFail($data['device_id']));
+                            Notification::make()->title('Biometric read queued')->body('The profile updates when the device returns its templates.')->success()->send();
+                        }),
+                    Action::make('registerBiometric')
+                        ->authorize(fn (): bool => tenant()?->device_integration === DeviceIntegration::GATEWAY)
+                        ->label('Register biometric')
+                        ->icon('heroicon-o-finger-print')
+                        ->modalWidth('lg')
+                        ->modalDescription('Save biometric data to this employee, then use Push to device to transfer it.')
+                        ->form([
+                            Select::make('source')->label('Input')
+                                ->options(['device' => 'Read from attendance device', 'finger' => 'Raw fingerprint template', 'ai_face' => 'AI Face JPEG'])
+                                ->required()->live(),
+                            Select::make('device_id')->label('Source device')
+                                ->options(fn (): array => self::biometricFetchDeviceOptions())
+                                ->helperText('Enroll the employee on this device first. Reads its enabled fingerprint and face template formats.')
+                                ->visible(fn ($get): bool => $get('source') === 'device')
+                                ->required(fn ($get): bool => $get('source') === 'device')->searchable(),
+                            Select::make('finger_index')->label('Finger slot')
+                                ->options(collect(range(0, 9))->mapWithKeys(fn ($slot) => [$slot => self::fingerName((string) $slot)])->all())
+                                ->visible(fn ($get): bool => $get('source') === 'finger')
+                                ->required(fn ($get): bool => $get('source') === 'finger'),
+                            Textarea::make('template_data')->label('Raw fingerprint template')
+                                ->helperText('Paste the template produced by your compatible fingerprint reader or enrollment software. A fingerprint image cannot be used here.')
+                                ->rows(4)->maxLength(8192)
+                                ->visible(fn ($get): bool => $get('source') === 'finger')
+                                ->required(fn ($get): bool => $get('source') === 'finger'),
+                            FileUpload::make('ai_face_photo_path')->label('AI Face JPEG')
+                                ->disk('local')->visibility('private')->directory('biometric-photos')
+                                ->acceptedFileTypes(['image/jpeg'])->maxSize(768)
+                                ->visible(fn ($get): bool => $get('source') === 'ai_face')
+                                ->required(fn ($get): bool => $get('source') === 'ai_face'),
+                        ])
+                        ->action(function (User $record, array $data): void {
+                            $service = app(EmployeeBiometrics::class);
+                            match ($data['source']) {
+                                'device' => $service->fetch($record, Device::findOrFail($data['device_id'])),
+                                'finger' => $service->registerFingerprint($record, (string) $data['finger_index'], (string) $data['template_data']),
+                                'ai_face' => $service->registerPhoto($record, (string) $data['ai_face_photo_path']),
+                                default => throw \Illuminate\Validation\ValidationException::withMessages(['source' => 'Choose a supported input.']),
+                            };
+                            Notification::make()->title($data['source'] === 'device' ? 'Biometric read queued' : 'Biometric saved')
+                                ->body($data['source'] === 'device' ? 'The employee profile updates when the device returns its templates.' : 'Use Push to device to send the saved data to a compatible device.')
+                                ->success()->send();
                         }),
                     Action::make('addBiometric')
-                        ->authorize(fn (): bool => in_array(tenant()?->device_integration, [DeviceIntegration::EBIO, DeviceIntegration::GATEWAY], true))
-                        ->label('Add biometric')
+                        ->authorize(fn (): bool => DeviceIntegration::usesEbio())
+                        ->label('Register biometric')
                         ->icon('heroicon-o-finger-print')
                         ->form([
-                            Select::make('device_id')
-                                ->label('Select Device')
-                                ->options(fn ($get): array => DeviceIntegration::usesEbio()
-                                    ? Device::all()->mapWithKeys(fn (Device $device) => [$device->id => $device->name ?: $device->serial_number])->all()
-                                    : self::biometricDeviceOptions((string) $get('type')))
-                                ->required()
-                                ->searchable(),
-                            Select::make('type')
-                                ->label('Biometric type')
-                                ->options([
-                                    'finger' => 'Fingerprint template',
-                                    'ai_face' => 'AI Face JPEG',
-                                ])
-                                ->required()
-                                ->live(),
-                            Select::make('finger_index')
-                                ->label('Select Finger')
-                                ->options([
-                                    0 => '0 - Left Pinky',
-                                    1 => '1 - Left Ring',
-                                    2 => '2 - Left Middle',
-                                    3 => '3 - Left Index',
-                                    4 => '4 - Left Thumb',
-                                    5 => '5 - Right Thumb',
-                                    6 => '6 - Right Index',
-                                    7 => '7 - Right Middle',
-                                    8 => '8 - Right Ring',
-                                    9 => '9 - Right Pinky',
-                                ])
-                                ->visible(fn ($get) => $get('type') === 'finger')
-                                ->required(fn ($get) => $get('type') === 'finger'),
-                            Textarea::make('template_data')
-                                ->label('Raw fingerprint template')
-                                ->helperText('Paste the raw template only when the device supports fingerprints.')
-                                ->visible(fn ($get) => $get('type') === 'finger' && tenant()?->device_integration === DeviceIntegration::GATEWAY)
-                                ->required(fn ($get) => $get('type') === 'finger' && tenant()?->device_integration === DeviceIntegration::GATEWAY),
-                            FileUpload::make('ai_face_photo_path')
-                                ->label('AI Face JPEG')
-                                ->disk('local')
-                                ->directory('biometric-photos')
-                                ->acceptedFileTypes(['image/jpeg'])
-                                ->helperText('Upload a JPEG. It is stored privately and can later be transferred to another AI Face device.')
-                                ->visible(fn ($get) => $get('type') === 'ai_face' && tenant()?->device_integration === DeviceIntegration::GATEWAY)
-                                ->required(fn ($get) => $get('type') === 'ai_face' && tenant()?->device_integration === DeviceIntegration::GATEWAY),
+                            Select::make('device_id')->label('Device')
+                                ->options(fn () => Device::all()->mapWithKeys(fn (Device $device) => [$device->id => $device->name ?: $device->serial_number])->all())
+                                ->required()->searchable(),
+                            Select::make('type')->label('Biometric type')
+                                ->options(['finger' => 'Fingerprint', 'ai_face' => 'AI Face'])->required()->live(),
+                            Select::make('finger_index')->label('Finger slot')
+                                ->options(collect(range(0, 9))->mapWithKeys(fn ($slot) => [$slot => self::fingerName((string) $slot)])->all())
+                                ->visible(fn ($get): bool => $get('type') === 'finger')
+                                ->required(fn ($get): bool => $get('type') === 'finger'),
                         ])
-                        ->action(function (User $record, array $data) {
-                            $device = Device::find($data['device_id']);
-                            if (! $device) {
-                                return;
-                            }
-
-                            if (DeviceIntegration::usesEbio()) {
-                                EnrollEbioBiometricJob::dispatch(
-                                    tenancy()->tenant,
-                                    $record->id,
-                                    $data['device_id'],
-                                    $data['type'],
-                                    $data['finger_index'] ?? null
-                                );
-                            } else {
-                                $commandService = app(\App\Services\Devices\DeviceCommandService::class);
-                                $content = trim((string) ($data['template_data'] ?? ''));
-                                if ($data['type'] === 'finger') {
-                                    abort_unless($device->supportsVerificationFormat('finger') && $commandService->available($device, 'update_biodata'), 403);
-                                    $commandService->request($device, 'update_biodata', [
-                                        'pin' => (string) $record->pin,
-                                        'no' => (string) ($data['finger_index'] ?? 0),
-                                        'type' => '1',
-                                        'tmp' => $content,
-                                    ]);
-                                } else {
-                                    abort_unless($device->supportsVerificationFormat('ai_face') && $commandService->available($device, 'update_biophoto'), 403);
-                                    $path = (string) ($data['ai_face_photo_path'] ?? '');
-                                    $photo = self::jpegContents($path);
-                                    $record->update(['ai_face_photo_path' => $path]);
-                                    $commandService->request($device, 'update_biophoto', [
-                                        'pin' => (string) $record->pin,
-                                        'size' => (string) strlen($photo),
-                                        'content' => base64_encode($photo),
-                                    ]);
-                                }
-                            }
-
-                            Notification::make()
-                                ->title('Biometric command queued')
-                                ->body('The biometric synchronization command has been queued for sync.')
-                                ->success()
-                                ->send();
+                        ->action(function (User $record, array $data): void {
+                            EnrollEbioBiometricJob::dispatch(tenancy()->tenant, $record->id, $data['device_id'], $data['type'], $data['finger_index'] ?? null);
+                            Notification::make()->title('Biometric registration queued')->success()->send();
                         }),
                     ViewAction::make(),
                     EditAction::make(),
@@ -1028,51 +914,6 @@ class UserResource extends Resource
         return $names[(int) $slot] ?? "Finger {$slot}";
     }
 
-    private static function hasStoredBiometric(User $record): bool
-    {
-        return self::storedFingerprintTemplates($record) !== [] || self::storedFaceTemplates($record) !== [] || ($record->ai_face_photo_path && Storage::disk('local')->exists($record->ai_face_photo_path));
-    }
-
-    /** @return array<string, string> */
-    private static function biometricSourceOptions(User $record): array
-    {
-        $options = [];
-        foreach (array_keys(self::storedFingerprintTemplates($record)) as $slot) {
-            $options["finger:{$slot}"] = 'Fingerprint — '.self::fingerName($slot);
-        }
-        foreach (array_keys(self::storedFaceTemplates($record)) as $slot) {
-            $options["face:{$slot}"] = "Face template {$slot}";
-        }
-        if ($record->ai_face_photo_path && Storage::disk('local')->exists($record->ai_face_photo_path)) {
-            $options['ai_face:photo'] = 'AI Face JPEG';
-        }
-
-        return $options;
-    }
-
-    /** @return array<int, string> */
-    private static function biometricDeviceOptions(string $source): array
-    {
-        [$kind] = explode(':', $source, 2);
-        $format = match ($kind) {
-            'finger' => 'finger',
-            'face' => 'face',
-            'ai_face' => 'ai_face',
-            default => null,
-        };
-        $operation = $kind === 'ai_face' ? 'update_biophoto' : 'update_biodata';
-        if (! $format) {
-            return [];
-        }
-        $commands = app(\App\Services\Devices\DeviceCommandService::class);
-
-        return Device::query()->get()
-            ->filter(fn (Device $device): bool => $device->supportsVerificationFormat($format) && $commands->available($device, $operation))
-            ->mapWithKeys(fn (Device $device): array => [$device->id => $device->name ?: $device->serial_number])
-            ->all();
-    }
-
-    /** @return array<int, string> */
     private static function biometricFetchDeviceOptions(): array
     {
         $commands = app(\App\Services\Devices\DeviceCommandService::class);
@@ -1081,18 +922,6 @@ class UserResource extends Resource
             ->filter(fn (Device $device): bool => $commands->available($device, 'query_biodata'))
             ->mapWithKeys(fn (Device $device): array => [$device->id => $device->name ?: $device->serial_number])
             ->all();
-    }
-
-    private static function jpegContents(string $path): string
-    {
-        abort_unless($path !== '' && Storage::disk('local')->exists($path), 422, 'The AI Face JPEG is missing.');
-        $absolutePath = Storage::disk('local')->path($path);
-        $image = @getimagesize($absolutePath);
-        abort_unless(is_array($image) && ($image['mime'] ?? null) === 'image/jpeg', 422, 'Upload a valid JPEG image.');
-        $contents = Storage::disk('local')->get($path);
-        abort_unless($contents !== '' && strlen($contents) <= 786432, 422, 'The AI Face JPEG must be 768 KB or smaller.');
-
-        return $contents;
     }
 
     private static function latestBiometricTransfer(User $record): string

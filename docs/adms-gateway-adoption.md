@@ -58,6 +58,10 @@ Keep these product behaviours identical between eBio and gateway companies:
 | Attendance logs | Show received activity | Show applied gateway receipts and source device |
 | Users on device | Read device roster | Query users and show the projected roster |
 
+## Current employee biometric workflow
+
+See [Employee biometrics](employee-biometrics.md) for the implemented registration, combined push and automatic once-only fetch behavior. Device verification formats control available transfer checkboxes. Card is the only default selection.
+
 ## Upstream capabilities to adopt
 
 The upstream project supplies tested command formats for the following. Adopt them through named operations, never a free-text command box.

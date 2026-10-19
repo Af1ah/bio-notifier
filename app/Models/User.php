@@ -106,6 +106,7 @@ class User extends Authenticatable implements FilamentUser
             'is_enabled' => 'boolean',
             'is_system_account' => 'boolean',
             'fingerprints' => 'array',
+            'biometric_fetch_requests' => 'array',
             'face_templates' => 'array',
             'face_enrolled' => 'boolean',
             'requires_password_change' => 'boolean',
