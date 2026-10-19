@@ -62,6 +62,7 @@ final class GatewayEventController extends Controller
             'photos.*.pin' => ['required', 'string', 'max:64'],
             'photos.*.content' => ['required', 'string', 'max:1048576'],
             'command_id' => ['required_if:kind,command_result', 'uuid'],
+            'error_code' => ['exclude_unless:kind,command_result', 'nullable', 'string', 'max:64'],
             'return_code' => ['exclude_unless:kind,command_result', 'nullable', 'integer'],
             'command_state' => ['required_if:kind,command_result', 'in:delivered,awaiting_data,acknowledged,failed,expired,outcome_unknown,cancelled'],
             'device_info' => ['exclude_unless:kind,device_info', 'required', 'array:firmware_version,model,device_type,push_version'],

@@ -90,7 +90,7 @@ class DeviceResource extends Resource
                     ->join(', ')),
             \Filament\Infolists\Components\TextEntry::make('last_activity_at')
                 ->label('Last connected')
-                ->timezone(LeaveSettingsService::timezone())
+                ->timezone(\App\Services\Support\TenantTimezone::get())
                 ->dateTime(),
         ]);
     }
@@ -126,16 +126,16 @@ class DeviceResource extends Resource
                     ->visibleFrom('md'),
                 Tables\Columns\TextColumn::make('last_activity_at')
                     ->label('Last connected')
-                    ->timezone(LeaveSettingsService::timezone())
+                    ->timezone(\App\Services\Support\TenantTimezone::get())
                     ->date('M j, Y')
-                    ->description(fn (Device $record): ?string => $record->last_activity_at?->setTimezone(LeaveSettingsService::timezone())->format('H:i:s'))
+                    ->description(fn (Device $record): ?string => $record->last_activity_at?->setTimezone(\App\Services\Support\TenantTimezone::get())->format('H:i:s'))
                     ->sortable()
                     ->toggleable(),
                 Tables\Columns\TextColumn::make('last_sync_at')
                     ->label('Last Sync')
-                    ->timezone(LeaveSettingsService::timezone())
+                    ->timezone(\App\Services\Support\TenantTimezone::get())
                     ->date('M j, Y')
-                    ->description(fn (Device $record): ?string => $record->last_sync_at?->setTimezone(LeaveSettingsService::timezone())->format('H:i:s'))
+                    ->description(fn (Device $record): ?string => $record->last_sync_at?->setTimezone(\App\Services\Support\TenantTimezone::get())->format('H:i:s'))
                     ->sortable()
                     ->toggleable()
                     ->visibleFrom('md'),

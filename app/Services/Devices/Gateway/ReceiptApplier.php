@@ -167,7 +167,7 @@ final class ReceiptApplier
                         $command->update(['status' => $status, 'gateway_result_at' => $received,
                             'sent_at' => $command->sent_at ?? $received,
                             'acknowledged_at' => $status === 'acknowledged' ? $received : null,
-                            'response' => $payload['command_state'] === 'awaiting_data' ? 'Waiting for device data.' : (isset($payload['return_code']) ? ($payload['return_code'] === -1004 ? 'This device does not support the requested command table (return -1004).' : 'Device return code: '.$payload['return_code']) : null)]);
+                            'response' => ($payload['error_code'] ?? null) === 'read_timeout' ? 'Read timed out: no matching device data returned within 60 seconds.' : ($payload['command_state'] === 'awaiting_data' ? 'Waiting for device data.' : (isset($payload['return_code']) ? ($payload['return_code'] === -1004 ? 'This device does not support the requested command table (return -1004).' : 'Device return code: '.$payload['return_code']) : null))]);
                     }
                 }
             }

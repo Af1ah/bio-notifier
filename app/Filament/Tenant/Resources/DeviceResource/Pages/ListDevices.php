@@ -26,7 +26,7 @@ class ListDevices extends ListRecords
                     \Filament\Forms\Components\TextInput::make('serial_number')->label('Serial number')->required()->regex('/^[A-Za-z0-9_-]{1,64}$/')->helperText('Find this in the device’s information menu. Add the first device while connected to the same office internet; future devices connect automatically.'),
                     \Filament\Forms\Components\TextInput::make('device_ip')->label('Device IP address')->ip()->helperText('Optional: the device’s local network address, kept for reference.'),
                     \Filament\Forms\Components\TextInput::make('location')->label('Location')->maxLength(255),
-                    \Filament\Forms\Components\Select::make('timezone')->label('Time zone')->options(array_combine(timezone_identifiers_list(), timezone_identifiers_list()))->searchable()->default('Asia/Kolkata')->required(),
+                    \Filament\Forms\Components\Select::make('timezone')->label('Time zone')->options(array_combine(timezone_identifiers_list(), timezone_identifiers_list()))->searchable()->default(fn () => \App\Services\Support\TenantTimezone::get())->required(),
                 ])
                 ->modalSubmitActionLabel('Add device')
                 ->action(function (array $data) {

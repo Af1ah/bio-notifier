@@ -29,6 +29,9 @@ class OrganisationForm
                             ->required()
                             ->unique(ignoreRecord: true)
                             ->alphaDash(),
+                        Select::make('timezone')->label('Organisation timezone')
+                            ->options(array_combine(\DateTimeZone::listIdentifiers(), \DateTimeZone::listIdentifiers()))
+                            ->default('Asia/Kolkata')->searchable()->required()->rules(['timezone']),
                         TextInput::make('email')
                             ->label('Email address')
                             ->email()

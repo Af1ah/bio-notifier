@@ -43,7 +43,7 @@ class DeviceCommandResource extends Resource
     {
         return match ($record->status) {
             'acknowledged' => 'Completed',
-            'failed' => 'Action failed. Contact your administrator.',
+            'failed' => $record->response === 'Read timed out: no matching device data returned within 60 seconds.' ? $record->response : 'Action failed. Contact your administrator.',
             'sent' => 'Awaiting completion',
             'outcome_unknown' => 'Needs review. Contact your administrator.',
             'expired' => 'Expired before execution',
@@ -65,8 +65,8 @@ class DeviceCommandResource extends Resource
                 \Filament\Infolists\Components\TextEntry::make('response')
                     ->label('Result')
                     ->state(fn (DeviceCommand $record): string => self::resultLabel($record)),
-                \Filament\Infolists\Components\TextEntry::make('sent_at')->dateTime(),
-                \Filament\Infolists\Components\TextEntry::make('acknowledged_at')->dateTime(),
+                \Filament\Infolists\Components\TextEntry::make('sent_at')->dateTime(timezone: fn () => \App\Services\Support\TenantTimezone::get()),
+                \Filament\Infolists\Components\TextEntry::make('acknowledged_at')->dateTime(timezone: fn () => \App\Services\Support\TenantTimezone::get()),
                 \Filament\Infolists\Components\TextEntry::make('retry_count')->label('Retries'),
             ])->columns(2),
         ]);
@@ -158,10 +158,10 @@ class DeviceCommandResource extends Resource
                         default => 'gray',
                     }),
                 Tables\Columns\TextColumn::make('sent_at')
-                    ->dateTime()
+                    ->dateTime(timezone: fn () => \App\Services\Support\TenantTimezone::get())
                     ->visibleFrom('md'),
                 Tables\Columns\TextColumn::make('acknowledged_at')
-                    ->dateTime()
+                    ->dateTime(timezone: fn () => \App\Services\Support\TenantTimezone::get())
                     ->visibleFrom('md'),
                 Tables\Columns\TextColumn::make('retry_count')
                     ->label('Retries')

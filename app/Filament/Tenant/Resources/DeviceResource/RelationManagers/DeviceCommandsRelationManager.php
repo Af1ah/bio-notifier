@@ -26,8 +26,8 @@ class DeviceCommandsRelationManager extends RelationManager
             })->color(fn ($state) => match ($state) {
                 'acknowledged' => 'success', 'failed', 'outcome_unknown', 'expired' => 'danger', default => 'warning',
             }),
-            TextColumn::make('created_at')->label('Requested')->dateTime()->sortable(),
-            TextColumn::make('acknowledged_at')->label('Completed')->dateTime()->placeholder('—'),
+            TextColumn::make('created_at')->label('Requested')->dateTime(timezone: fn () => \App\Services\Support\TenantTimezone::get())->sortable(),
+            TextColumn::make('acknowledged_at')->label('Completed')->dateTime(timezone: fn () => \App\Services\Support\TenantTimezone::get())->placeholder('—'),
         ])->defaultSort('created_at', 'desc')->emptyStateHeading('No device actions yet')
             ->emptyStateDescription('Use the buttons above to check the connection or read device details.')
             ->recordActions([])->toolbarActions([]);

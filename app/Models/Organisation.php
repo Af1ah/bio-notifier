@@ -25,6 +25,7 @@ class Organisation extends BaseTenant implements TenantWithDatabase
         'status',
         'device_integration',
         'gateway_source_cidr',
+        'timezone',
         'ebio_url',
         'ebio_webhook_token',
         'ebio_aes_password',

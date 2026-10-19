@@ -272,6 +272,47 @@ class GatewayWorkflowTest extends TestCase
         tenancy()->end();
     }
 
+    public function test_read_timeout_receipt_finishes_command_with_clear_result(): void
+    {
+        [$company] = $this->company('READTIMEOUT01');
+        tenancy()->initialize($company);
+        $command = app(DeviceCommandService::class)->request(Device::firstOrFail(), 'info');
+        tenancy()->end();
+        $event = ['id' => (string) Str::uuid(), 'serial' => 'READTIMEOUT01', 'binding_version' => 1, 'kind' => 'command_result',
+            'received_at' => now()->toIso8601String(), 'command_id' => $command->gateway_command_id, 'command_state' => 'failed', 'error_code' => 'read_timeout'];
+        $this->deliver($event)->assertAccepted();
+        (new ApplyGatewayReceipt($event['id']))->handle(app(ReceiptApplier::class));
+        tenancy()->initialize($company);
+        $this->assertSame('failed', $command->fresh()->status);
+        $this->assertSame('Read timed out: no matching device data returned within 60 seconds.', $command->fresh()->response);
+        tenancy()->end();
+    }
+
+    public function test_tenant_timezone_setting_is_scoped_and_preserves_utc_storage(): void
+    {
+        [$company] = $this->company('TIMEZONE01');
+        tenancy()->initialize($company);
+        URL::defaults(['tenant' => $company->shortname]);
+        $admin = User::create(['name' => 'Admin', 'pin' => '900', 'privilege' => 14, 'email' => 'timezone@example.test', 'password' => 'password']);
+        $this->actingAs($admin, 'web');
+        Filament::setCurrentPanel(Filament::getPanel('tenant'));
+        Filament::bootCurrentPanel();
+        $this->assertSame('Asia/Kolkata', \App\Services\Support\TenantTimezone::get());
+        Livewire::test(\App\Filament\Tenant\Pages\OrganisationSettings::class)
+            ->set('data.timezone', 'Asia/Dubai')->call('save')->assertHasNoFormErrors();
+        $this->assertSame('Asia/Dubai', $company->fresh()->timezone);
+        $this->assertSame('Asia/Dubai', \App\Services\Support\TenantTimezone::get());
+        $command = \App\Models\DeviceCommand::create(['device_id' => Device::firstOrFail()->id, 'command_type' => 'check', 'command_content' => 'Check', 'status' => 'acknowledged', 'sent_at' => '2026-10-19 10:00:00']);
+        $component = Livewire::test(\App\Filament\Tenant\Resources\DeviceCommandResource\Pages\ListDeviceCommands::class);
+        $column = $component->instance()->getTable()->getColumn('sent_at')->record($command);
+        $this->assertStringContainsString('14:00:00', strip_tags($column->formatState($column->getState())));
+        $this->assertSame('2026-10-19 10:00:00', $command->fresh()->getRawOriginal('sent_at'));
+        $this->assertSame('UTC', config('app.timezone'));
+        Livewire::test(\App\Filament\Tenant\Pages\OrganisationSettings::class)
+            ->set('data.timezone', 'Invalid/Timezone')->call('save')->assertHasFormErrors(['timezone']);
+        tenancy()->end();
+    }
+
     public function test_manual_fetch_requests_ai_photo_and_received_jpeg_replaces_preview(): void
     {
         [$company, $binding] = $this->company('FETCHPHOTO01');
