@@ -16,7 +16,6 @@ use App\Filament\Tenant\Resources\DeviceResource\Pages;
 use App\Filament\Tenant\Resources\DeviceResource\RelationManagers;
 
 use App\Models\Device;
-use App\Services\Leave\LeaveSettingsService;
 
 class DeviceResource extends Resource
 {

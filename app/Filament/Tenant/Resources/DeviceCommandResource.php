@@ -43,7 +43,12 @@ class DeviceCommandResource extends Resource
     {
         return match ($record->status) {
             'acknowledged' => 'Completed',
-            'failed' => $record->response === 'Read timed out: no matching device data returned within 60 seconds.' ? $record->response : 'Action failed. Contact your administrator.',
+            'failed' => match ($record->response) {
+                'Read timed out: no matching device data returned within 60 seconds.' => $record->response,
+                'Device return code: -1' => 'Device rejected this request (return -1).',
+                'This device does not support the requested command table (return -1004).' => $record->response,
+                default => 'Action failed. Contact your administrator.',
+            },
             'sent' => 'Awaiting completion',
             'outcome_unknown' => 'Needs review. Contact your administrator.',
             'expired' => 'Expired before execution',
