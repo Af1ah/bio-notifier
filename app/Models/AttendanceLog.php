@@ -75,7 +75,7 @@ class AttendanceLog extends Model
 
     public function getStatusLabelAttribute(): string
     {
-        return match ($this->status) {
+        return match (is_numeric($this->status) ? (int) $this->status : null) {
             0 => 'Check In',
             1 => 'Check Out',
             2 => 'Break Out',

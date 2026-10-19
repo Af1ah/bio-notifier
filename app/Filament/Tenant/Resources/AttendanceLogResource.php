@@ -79,7 +79,7 @@ class AttendanceLogResource extends Resource
                     ->sortable(),
                 Tables\Columns\TextColumn::make('status')
                     ->badge()
-                    ->formatStateUsing(fn ($state) => match ($state) {
+                    ->formatStateUsing(fn ($state) => match (is_numeric($state) ? (int) $state : null) {
                         0 => 'Check In',
                         1 => 'Check Out',
                         2 => 'Break Out',
@@ -89,7 +89,7 @@ class AttendanceLogResource extends Resource
                         255 => 'INOUT',
                         default => 'Unknown',
                     })
-                    ->color(fn ($state): string => match ($state) {
+                    ->color(fn ($state): string => match (is_numeric($state) ? (int) $state : null) {
                         0 => 'success',
                         1 => 'danger',
                         default => 'warning',
