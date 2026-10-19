@@ -291,11 +291,11 @@ class UserResource extends Resource
                                 ->label('Stored face templates')
                                 ->state(fn (User $record): string => ($count = count(self::storedFaceTemplates($record))) > 0 ? "{$count} stored" : 'None stored'),
                             TextEntry::make('ai_face_photo_path')
-                                ->visible(fn (): bool => tenant()?->device_integration === DeviceIntegration::GATEWAY)
+                                ->visible(fn (): bool => in_array(tenant()?->device_integration, [DeviceIntegration::EBIO, DeviceIntegration::GATEWAY], true))
                                 ->label('Stored AI Face JPEG')
                                 ->state(fn (User $record): string => $record->ai_face_photo_path && Storage::disk('local')->exists($record->ai_face_photo_path) ? 'Stored' : 'None stored'),
                             ViewEntry::make('stored_face_photo')->label('Saved JPEG photo')
-                                ->visible(fn (): bool => tenant()?->device_integration === DeviceIntegration::GATEWAY)
+                                ->visible(fn (): bool => in_array(tenant()?->device_integration, [DeviceIntegration::EBIO, DeviceIntegration::GATEWAY], true))
                                 ->view('filament.infolists.employee-face-photo')
                                 ->columnSpanFull(),
                             TextEntry::make('biometric_transfer_status')
@@ -480,6 +480,7 @@ class UserResource extends Resource
                             Notification::make()->title('Device update queued')
                                 ->body("{$count} command(s) queued. Track their results in Device Commands.")->success()->send();
                         }),
+                    \App\Filament\Tenant\Actions\RefreshEbioPhotoAction::make(),
                     Action::make('fetchBiometric')
                         ->authorize(fn (): bool => tenant()?->device_integration === DeviceIntegration::GATEWAY)
                         ->label('Fetch biometric templates')

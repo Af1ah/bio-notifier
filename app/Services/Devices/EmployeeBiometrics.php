@@ -115,6 +115,18 @@ final class EmployeeBiometrics
         }
     }
 
+    public function refreshEbioPhoto(User $employee): bool
+    {
+        abort_unless(tenant() && DeviceIntegration::usesEbio(), 403);
+        abort_unless(User::whereKey($employee->id)->where('pin', $employee->pin)->exists(), 403);
+        $photo = app(\App\Services\EbioSoapService::class)->employeePhoto(tenant(), (string) $employee->pin);
+        if ($photo === null) {
+            return false;
+        }
+        $this->registerCameraPhoto($employee, 'data:image/jpeg;base64,'.base64_encode($photo));
+        return true;
+    }
+
     public function fetch(User $employee, Device $device): void
     {
         abort_unless($this->commands->available($device, 'query_biodata'), 403);
@@ -125,6 +137,11 @@ final class EmployeeBiometrics
         foreach ($types as $type) {
             $this->commands->request($device, 'query_biodata', ['pin' => (string) $employee->pin, 'type' => $type]);
         }
+    }
+
+    public function encodedPhoto(User $employee): string
+    {
+        return base64_encode($this->photo((string) $employee->ai_face_photo_path));
     }
 
     private function photo(string $path): string

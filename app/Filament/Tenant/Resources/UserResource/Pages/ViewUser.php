@@ -17,6 +17,7 @@ class ViewUser extends ViewRecord
         return [
             AssignShiftAction::make('user'),
             EndShiftAssignmentAction::make('user'),
+            \App\Filament\Tenant\Actions\RefreshEbioPhotoAction::make(),
             Actions\EditAction::make(),
         ];
     }

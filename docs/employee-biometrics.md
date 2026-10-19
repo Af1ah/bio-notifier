@@ -33,3 +33,11 @@ Manual Fetch can refresh templates or recover a failed or empty first fetch. Add
 ## View the stored photo
 
 Open Employee → View to see the saved AI Face JPEG. The preview is rendered inside the authorized employee profile from private storage; it does not create a public photo URL. It confirms what is saved in the application, not whether a terminal has accepted the photo. Conventional face templates are binary credentials and cannot be rendered as a photograph.
+
+## eBio employee photo
+
+For companies using eBio, **Refresh photo** in the employee actions or profile calls the authenticated `GetEmployeePhoto` SOAP method. eBio returns its decrypted Base64 photo. The application validates the JPEG, stores it privately and displays it in the existing employee profile. An empty, rejected or invalid response leaves the current photo unchanged. Refresh is explicit, not a request made on every profile view or punch.
+
+The local eBio assembly trace shows `BIOPHOTO Content` stored in `EmployeesBio` with BioName `AI` after eBio's own database encryption. `GetEmployeePhoto` decrypts that value before returning it. The Go device wire therefore does not need eBio's legacy database decryption algorithm. Legacy `USERPIC Content` JPEG records are also accepted as employee photos. `BIODATA Tmp` remains a recognition template and cannot be turned into the employee photograph.
+
+For gateway companies, receiving `BIOPHOTO` or `USERPIC` updates the saved JPEG; fetching only a face template does not. This does not add a new firmware-specific photo-export command or prove that MAGNUM can export its current photo. eBio user pushes now take the validated saved JPEG, rather than using a face-template value as EmployeePhoto.

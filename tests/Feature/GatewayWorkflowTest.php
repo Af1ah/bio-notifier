@@ -228,6 +228,48 @@ class GatewayWorkflowTest extends TestCase
         tenancy()->end();
     }
 
+    public function test_ebio_employee_photo_is_validated_and_kept_private(): void
+    {
+        [$company] = $this->company('EBIOPHOTO01');
+        $company->update(['device_integration' => DeviceIntegration::EBIO, 'ebio_url' => 'https://ebio.example.test',
+            'ebio_soap_username' => 'photo-api', 'ebio_soap_password' => 'test-password']);
+        tenancy()->initialize($company->fresh());
+        \Illuminate\Support\Facades\Storage::fake('local');
+        $employee = User::where('pin', '0007')->firstOrFail();
+        $image = imagecreatetruecolor(2, 2);
+        ob_start(); imagejpeg($image); $jpeg = ob_get_clean(); imagedestroy($image);
+        $reply = fn (string $value): string => '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><GetEmployeePhotoResponse xmlns="http://tempuri.org/"><GetEmployeePhotoResult>'.$value.'</GetEmployeePhotoResult></GetEmployeePhotoResponse></s:Body></s:Envelope>';
+        Http::fake(['*' => Http::sequence()->push($reply(base64_encode($jpeg)))
+            ->push('<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><UpdateEmployeeExResponse><UpdateEmployeeExResult>success</UpdateEmployeeExResult></UpdateEmployeeExResponse></s:Body></s:Envelope>')
+            ->push($reply(''))->push($reply(base64_encode('a face template is not a JPEG')))]);
+        $this->assertTrue(app(\App\Services\Devices\EmployeeBiometrics::class)->refreshEbioPhoto($employee));
+        Http::assertSent(fn ($request): bool => $request->hasHeader('SOAPAction', '"http://tempuri.org/GetEmployeePhoto"') && str_contains($request->body(), '<EmployeeCode>0007</EmployeeCode>'));
+        $path = $employee->fresh()->ai_face_photo_path;
+        $this->assertSame($jpeg, \Illuminate\Support\Facades\Storage::disk('local')->get($path));
+        URL::defaults(['tenant' => $company->shortname]);
+        $admin = User::create(['name' => 'Photo administrator', 'pin' => '900', 'privilege' => 14, 'email' => 'photo-admin@example.test', 'password' => 'password']);
+        $this->actingAs($admin, 'web');
+        Filament::setCurrentPanel(Filament::getPanel('tenant'));
+        Filament::bootCurrentPanel();
+        Livewire::test(\App\Filament\Tenant\Resources\UserResource\Pages\ViewUser::class, ['record' => $employee->getRouteKey()])
+            ->assertSee('Refresh photo')->assertSee('data:image/jpeg;base64,'.base64_encode($jpeg), escape: false);
+        $employee->update(['face_templates' => [['tmp' => 'not-a-photograph']]]);
+        $this->assertTrue(app(\App\Services\EbioSoapService::class)->pushUser($company->fresh(), $employee));
+        Http::assertSent(fn ($request): bool => str_contains($request->body(), '<EmployeePhoto>'.base64_encode($jpeg).'</EmployeePhoto>') && ! str_contains($request->body(), 'not-a-photograph'));
+        $this->assertFalse(app(\App\Services\Devices\EmployeeBiometrics::class)->refreshEbioPhoto($employee));
+        $this->assertSame($path, $employee->fresh()->ai_face_photo_path);
+        try {
+            app(\App\Services\Devices\EmployeeBiometrics::class)->refreshEbioPhoto($employee);
+            $this->fail('Non-image template accepted as employee photo.');
+        } catch (\RuntimeException) {
+            $this->assertSame($path, $employee->fresh()->ai_face_photo_path);
+        }
+        $company->update(['device_integration' => DeviceIntegration::GATEWAY]);
+        tenancy()->initialize($company->fresh());
+        $this->expectException(\Illuminate\Auth\Access\AuthorizationException::class);
+        app(\App\Services\Devices\EmployeeBiometrics::class)->refreshEbioPhoto($employee);
+    }
+
     public function test_cancel_before_submission_prevents_worker_delivery(): void
     {
         [$company] = $this->company('CANCEL01');

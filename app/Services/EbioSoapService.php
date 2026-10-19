@@ -293,11 +293,10 @@ class EbioSoapService
         $role = (int) $user->device_privilege === 14 ? 'Admin Users' : 'Normal Users';
         $cardNumber = $user->card_number ?? '';
 
-        // EmployeePhoto base64 can be included if available.
-        $photo = '';
-        if (! empty($user->face_templates)) {
-            $photo = is_array($user->face_templates) ? ($user->face_templates[0] ?? '') : $user->face_templates;
-        }
+        // eBio expects a JPEG here, never the encoded face-recognition template.
+        $photo = filled($user->ai_face_photo_path)
+            ? app(\App\Services\Devices\EmployeeBiometrics::class)->encodedPhoto($user)
+            : '';
 
         $expiryFrom = $user->valid_from ? Carbon::parse($user->valid_from)->format('Y-m-d') : '';
         $expiryTo = $user->valid_to ? Carbon::parse($user->valid_to)->format('Y-m-d') : '';
@@ -352,6 +351,46 @@ class EbioSoapService
         Log::error("eBioServer Webhook: API returned error for UpdateEmployeeEx for user {$user->pin}: {$result}");
 
         return false;
+    }
+
+    /** eBio decrypts EmployeesBio/AI itself; its SOAP result is the Base64 JPEG, not a recognition template. */
+    public function employeePhoto(Organisation $organisation, string $employeeCode): ?string
+    {
+        DeviceIntegration::requireEbio($organisation);
+        if (blank($organisation->ebio_url) || blank($organisation->ebio_soap_username)) {
+            throw new \RuntimeException('eBioServer SOAP credentials are not configured.');
+        }
+        $xml = '<?xml version="1.0" encoding="utf-8"?>'
+            .'<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body>'
+            .'<GetEmployeePhoto xmlns="http://tempuri.org/"><UserName>'.$this->xml($organisation->ebio_soap_username).'</UserName>'
+            .'<Password>'.$this->xml($organisation->ebio_soap_password).'</Password><EmployeeCode>'.$this->xml($employeeCode).'</EmployeeCode>'
+            .'</GetEmployeePhoto></soap:Body></soap:Envelope>';
+        $response = $this->http()->withoutRedirecting()->withHeaders([
+            'Content-Type' => 'text/xml; charset=utf-8', 'SOAPAction' => '"http://tempuri.org/GetEmployeePhoto"',
+        ])->send('POST', rtrim($organisation->ebio_url, '/').'/webservice.asmx', ['body' => $xml]);
+        if (! $response->successful() || strlen($response->body()) > 1500000) {
+            throw new \RuntimeException('The employee photo could not be read from eBioServer.');
+        }
+        $content = $this->result($response->body(), 'GetEmployeePhotoResult');
+        if ($content === '') {
+            return null;
+        }
+        if (strtolower($content) === 'error') {
+            throw new \RuntimeException('eBioServer could not return this employee photo. Check the API access and employee record.');
+        }
+        foreach (['data:image/jpeg;base64,', 'data:image/jpg;base64,'] as $prefix) {
+            if (str_starts_with($content, $prefix)) {
+                $content = substr($content, strlen($prefix));
+                break;
+            }
+        }
+        $content = preg_replace('/[\r\n ]/', '', $content);
+        $bytes = strlen($content) <= 1048576 ? base64_decode($content, true) : false;
+        $image = $bytes !== false ? @getimagesizefromstring($bytes) : false;
+        if (! $bytes || strlen($bytes) > 786432 || ! is_array($image) || ($image['mime'] ?? null) !== 'image/jpeg') {
+            throw new \RuntimeException('eBioServer returned no valid JPEG photo. Face templates cannot be displayed as photos.');
+        }
+        return $bytes;
     }
 
     /**
