@@ -112,6 +112,24 @@ final class ReceiptApplier
                     // login access, branches and local employee settings remain local.
                     $employee->save();
                 }
+            } elseif ($receipt->kind === 'biometric_photos') {
+                foreach ($payload['photos'] as $index => $photo) {
+                    $contents = base64_decode($photo['content'], true);
+                    $image = $contents !== false ? @getimagesizefromstring($contents) : false;
+                    if (! $contents || strlen($contents) > 786432 || ! is_array($image) || ($image['mime'] ?? null) !== 'image/jpeg') {
+                        throw new \RuntimeException('Invalid device JPEG.');
+                    }
+                    $employee = User::where('pin', $photo['pin'])->lockForUpdate()->first();
+                    if (! $employee) {
+                        continue;
+                    }
+                    // Stable receipt paths make replay safe without public photo URLs.
+                    $path = 'biometric-photos/'.$receipt->id.'-'.$index.'.jpg';
+                    if (! \Illuminate\Support\Facades\Storage::disk('local')->put($path, $contents, ['visibility' => 'private'])) {
+                        throw new \RuntimeException('Unable to save device photo.');
+                    }
+                    $employee->update(['ai_face_photo_path' => $path]);
+                }
             } elseif ($receipt->kind === 'biometrics') {
                 foreach ($payload['biometrics'] as $template) {
                     $employee = User::where('pin', trim((string) $template['pin']))->lockForUpdate()->first();

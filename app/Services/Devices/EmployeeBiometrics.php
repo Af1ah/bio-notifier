@@ -112,9 +112,9 @@ final class EmployeeBiometrics
     public function fetch(User $employee, Device $device): void
     {
         abort_unless($this->commands->available($device, 'query_biodata'), 403);
-        $types = array_intersect(['finger', 'face'], $device->verificationFormats());
+        $types = array_intersect(['finger', 'face', 'ai_face'], $device->verificationFormats());
         if ($types === []) {
-            $this->invalid('device_id', 'Enable Fingerprint or Face template in the source device settings first.');
+            $this->invalid('device_id', 'Enable Fingerprint, Face template or AI Face in the source device settings first.');
         }
         foreach ($types as $type) {
             $this->commands->request($device, 'query_biodata', ['pin' => (string) $employee->pin, 'type' => $type]);

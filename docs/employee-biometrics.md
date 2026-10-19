@@ -6,7 +6,7 @@ Use **Register biometric** to save data and **Push to device** to transfer it. *
 
 Choose one input:
 
-- **Read from attendance device**: enroll the employee on the source terminal under the employee PIN, then select it here. The application requests its configured fingerprint and face templates and saves returned data to the employee. An acknowledged request without returned data is not a completed fetch.
+- **Read from attendance device**: enroll the employee on the source terminal under the employee PIN, then select it here. The application requests its configured fingerprint templates, conventional face templates and AI Face JPEG and saves returned data to the employee. An acknowledged request without returned data is not a completed fetch.
 - **Raw fingerprint template**: choose the finger slot and paste the template from a compatible enrollment reader or its software. This stores the template; it does not send it to a terminal. Fingerprint photographs are not templates. Direct browser/USB-reader capture needs the reader manufacturer's SDK and is not implemented by this form.
 - **AI Face JPEG**: choose Upload photo or Take photo. Camera access uses the browser permission dialog; mobile browsers without live camera access may offer their native capture picker. The captured image is converted to JPEG, reduced to a maximum 1024-pixel edge and compressed to fit 768 KB. The server verifies the JPEG and size again. Upload accepts `.jpg` and `.jpeg` up to 768 KB. It is stored privately for later transfer to AI Face terminals. A JPEG cannot be sent as a conventional face template.
 
@@ -28,7 +28,7 @@ For a known employee with no stored fingerprint or conventional face template, t
 
 A persistent employee/format marker is saved in the same transaction as a recoverable background effect. It reuses the employee and device already loaded during attendance processing, with no extra lookup or cache request for each punch. Subsequent punches do not create discovery jobs or device queries. Stable command IDs prevent a retried background effect from queuing a second device command. Received templates are reused without polling.
 
-Manual Fetch can refresh templates or recover a failed or empty first fetch. Adding another finger after templates have already been stored requires this manual refresh; a punch does not report which slots changed. AI Face JPEGs are registered by upload; a face punch is not treated as an available JPEG download.
+Manual Fetch can refresh templates or recover a failed or empty first fetch. Adding another finger after templates have already been stored requires this manual refresh; a punch does not report which slots changed. Manual Fetch includes an AI Face JPEG query for devices configured for AI Face. Returned JPEGs replace the saved preview; a fingerprint or conventional face template reply never replaces the photo. Automatic discovery remains once-only for missing fingerprint/conventional face templates.
 
 ## View the stored photo
 

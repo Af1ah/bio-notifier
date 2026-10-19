@@ -272,6 +272,36 @@ class GatewayWorkflowTest extends TestCase
         tenancy()->end();
     }
 
+    public function test_manual_fetch_requests_ai_photo_and_received_jpeg_replaces_preview(): void
+    {
+        [$company, $binding] = $this->company('FETCHPHOTO01');
+        $binding->update(['capabilities' => ['query_biodata']]);
+        tenancy()->initialize($company);
+        $device = Device::firstOrFail();
+        $device->update(['options' => ['supported_verification_formats' => ['rfid', 'finger', 'ai_face']]]);
+        $employee = User::where('pin', '0007')->firstOrFail();
+        $employee->update(['ai_face_photo_path' => 'biometric-photos/old.jpg']);
+        app(\App\Services\Devices\EmployeeBiometrics::class)->fetch($employee, $device);
+        $types = DB::table('gateway_command_outbox')->get()->map(fn ($row) => json_decode($row->parameters, true)['type'])->all();
+        $this->assertSame(['finger', 'ai_face'], $types);
+        tenancy()->end();
+        $image = imagecreatetruecolor(2, 2);
+        ob_start(); imagejpeg($image); $jpeg = ob_get_clean(); imagedestroy($image);
+        $event = ['id' => (string) Str::uuid(), 'serial' => 'FETCHPHOTO01', 'binding_version' => 1, 'kind' => 'biometric_photos',
+            'source_ip' => '192.168.10.5', 'received_at' => now()->toIso8601String(), 'photos' => [['pin' => '0007', 'content' => base64_encode($jpeg)]]];
+        $this->deliver($event)->assertAccepted();
+        (new ApplyGatewayReceipt($event['id']))->handle(app(ReceiptApplier::class));
+        (new ApplyGatewayReceipt($event['id']))->handle(app(ReceiptApplier::class));
+        tenancy()->initialize($company);
+        $employee = User::where('pin', '0007')->firstOrFail();
+        $path = 'biometric-photos/'.$event['id'].'-0.jpg';
+        $this->assertSame($path, $employee->ai_face_photo_path);
+        $this->assertSame($jpeg, \Illuminate\Support\Facades\Storage::disk('local')->get($path));
+        $this->assertEmpty($employee->face_templates);
+        \Illuminate\Support\Facades\Storage::disk('local')->delete($path);
+        tenancy()->end();
+    }
+
     public function test_first_fingerprint_punch_fetches_once_and_reuses_received_template(): void
     {
         [$company, $binding] = $this->company('AUTOBIO01');
