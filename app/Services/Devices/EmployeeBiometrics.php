@@ -54,7 +54,13 @@ final class EmployeeBiometrics
                 if (strlen($content) > 8192 || preg_match('/[\r\n\t]/', $content) || ! preg_match($format === 'finger' ? '/^[0-9]$/' : '/^[0-9]{1,4}$/', (string) $slot)) {
                     $this->invalid('formats', 'A stored template cannot be sent in the supported device format.');
                 }
-                $transfers[] = ['update_biodata', ['pin' => (string) $employee->pin, 'no' => (string) $slot, 'type' => $format === 'finger' ? '1' : '9', 'tmp' => $content]];
+                $parameters = ['pin' => (string) $employee->pin, 'no' => (string) $slot, 'type' => $template['bio_type'] ?? ($format === 'finger' ? '1' : '9'), 'tmp' => $content];
+                foreach (['major_ver', 'minor_ver', 'index', 'format'] as $key) {
+                    if (isset($template[$key])) {
+                        $parameters[$key] = (string) $template[$key];
+                    }
+                }
+                $transfers[] = ['update_biodata', $parameters];
             }
         }
         $parameters = ['pin' => (string) $employee->pin, 'name' => (string) ($employee->name ?: $employee->pin), 'privilege' => (int) $employee->device_privilege === 14 ? '14' : '0'];

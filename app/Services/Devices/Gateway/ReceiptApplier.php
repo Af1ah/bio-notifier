@@ -142,6 +142,11 @@ final class ReceiptApplier
                         'size' => $template['size'] ?? null,
                         'valid' => $template['valid'] ?? null,
                         'tmp' => $template['tmp'],
+                        'bio_type' => $template['bio_type'] ?? null,
+                        'index' => $template['index'] ?? null,
+                        'major_ver' => $template['major_ver'] ?? null,
+                        'minor_ver' => $template['minor_ver'] ?? null,
+                        'format' => $template['format'] ?? null,
                     ], fn ($value) => $value !== null);
                     $employee->{$column} = $templates;
                     if ($template['type'] === 'face') {
