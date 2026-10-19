@@ -82,6 +82,7 @@ class AttendanceLog extends Model
             3 => 'Break In',
             4 => 'OT In',
             5 => 'OT Out',
+            255 => 'INOUT',
             default => 'Unknown',
         };
     }

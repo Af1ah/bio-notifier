@@ -47,6 +47,7 @@ class AttendanceLogResource extends Resource
                             3 => 'Break In',
                             4 => 'OT In',
                             5 => 'OT Out',
+                            255 => 'INOUT',
                         ]),
                     Select::make('verify_type')
                         ->options([
@@ -85,6 +86,7 @@ class AttendanceLogResource extends Resource
                         3 => 'Break In',
                         4 => 'OT In',
                         5 => 'OT Out',
+                        255 => 'INOUT',
                         default => 'Unknown',
                     })
                     ->color(fn ($state): string => match ($state) {
@@ -107,6 +109,7 @@ class AttendanceLogResource extends Resource
                         3 => 'Break In',
                         4 => 'OT In',
                         5 => 'OT Out',
+                        255 => 'INOUT',
                     ]),
                 Tables\Filters\Filter::make('punched_at')
                     ->schema([
