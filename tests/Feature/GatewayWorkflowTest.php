@@ -143,14 +143,15 @@ class GatewayWorkflowTest extends TestCase
         $this->deliver($changed)->assertConflict();
         $changed['id'] = (string) Str::uuid();
         $changed['source_ip'] = '10.0.0.1';
-        $this->deliver($changed)->assertUnprocessable();
+        $this->deliver($changed)->assertAccepted();
+        $changed['id'] = (string) Str::uuid();
         $changed['source_ip'] = '192.168.10.5';
         $changed['binding_version'] = 2;
         $this->deliver($changed)->assertUnprocessable();
         $changed['binding_version'] = 1;
         $changed['punches'][0]['pin'] = 7;
         $this->deliver($changed)->assertUnprocessable();
-        $this->assertSame(1, GatewayIngressReceipt::count());
+        $this->assertSame(2, GatewayIngressReceipt::count());
     }
 
     public function test_overlapping_tenant_device_ids_and_pins_cannot_cross_company_boundaries(): void
@@ -370,8 +371,8 @@ class GatewayWorkflowTest extends TestCase
         $this->assertSame($company->id, $binding->organisation_id);
         $this->assertSame($this->connection->id, $binding->gateway_connection_id);
         $this->assertSame(array_keys(\App\Services\Devices\Gateway\GatewayCommands::OPERATIONS), $binding->capabilities);
-        $this->assertSame('8.8.8.8/32', $binding->source_cidr);
-        $this->assertSame('8.8.8.8/32', $company->fresh()->gateway_source_cidr);
+        $this->assertSame('0.0.0.0/0', $binding->source_cidr);
+        $this->assertNull($company->fresh()->gateway_source_cidr);
         $this->assertSame('Reception', $device->options['location']);
         Queue::assertPushed(SyncGatewayBinding::class);
         $setup = $registration->setup($device);

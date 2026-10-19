@@ -12,7 +12,6 @@ use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
-use Illuminate\Support\Str;
 
 final class TenantDeviceRegistration
 {
@@ -41,13 +40,9 @@ final class TenantDeviceRegistration
                 if ($existing && $existing->organisation_id !== $company->id) {
                     throw ValidationException::withMessages(['serial_number' => 'This serial number is already registered. Contact your administrator if it needs to be moved.']);
                 }
-                $sourceCidr = $company->gateway_source_cidr ?: $this->normaliseSourceCidr(request()->ip());
-                if (! $sourceCidr) {
-                    throw ValidationException::withMessages(['serial_number' => 'We could not identify this office network. Contact support to connect the first device.']);
-                }
-                if (! $company->gateway_source_cidr) {
-                    $company->update(['gateway_source_cidr' => $sourceCidr]);
-                }
+                // Kept for compatibility with the existing binding schema only.
+                // Device admission uses registered ownership, not the office IP.
+                $sourceCidr = '0.0.0.0/0';
 
                 return app(ProvisionGatewayBinding::class)->provision([
                     'gateway_connection_id' => $connections->first()->id, 'organisation_id' => $company->id,
@@ -80,29 +75,6 @@ final class TenantDeviceRegistration
         }
 
         return $device;
-    }
-
-    private function normaliseSourceCidr(?string $value): ?string
-    {
-        $value = trim((string) $value);
-        if ($value === '') {
-            return null;
-        }
-        if (filter_var($value, FILTER_VALIDATE_IP)) {
-            return $value.(str_contains($value, ':') ? '/128' : '/32');
-        }
-        if (! Str::contains($value, '/')) {
-            throw ValidationException::withMessages(['gateway_source_cidr' => 'Enter a valid public IP address or CIDR range.']);
-        }
-        [$address, $prefix] = array_pad(explode('/', $value, 2), 2, null);
-        if (! filter_var($address, FILTER_VALIDATE_IP) || ! ctype_digit((string) $prefix)) {
-            throw ValidationException::withMessages(['gateway_source_cidr' => 'Enter a valid public IP address or CIDR range.']);
-        }
-        $maximum = str_contains($address, ':') ? 128 : 32;
-        if ((int) $prefix > $maximum) {
-            throw ValidationException::withMessages(['gateway_source_cidr' => 'Enter a valid public IP address or CIDR range.']);
-        }
-        return $address.'/'.$prefix;
     }
 
     public function setup(Device $device): array

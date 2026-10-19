@@ -10,7 +10,6 @@ use App\Models\GatewayIngressReceipt;
 use App\Models\Organisation;
 use App\Services\Devices\DeviceIntegration;
 use Illuminate\Http\Request;
-use Symfony\Component\HttpFoundation\IpUtils;
 
 final class GatewayEventController extends Controller
 {
@@ -79,9 +78,6 @@ final class GatewayEventController extends Controller
             abort_unless($version && $version->organisation_id === $binding->organisation_id && $version->device_id === $binding->device_id && $version->gateway_connection_id === $connection->id, 422);
             $organisation = Organisation::find($binding->organisation_id);
             abort_unless($organisation && $organisation->device_integration === DeviceIntegration::GATEWAY, 422);
-            if ($data['kind'] !== 'command_result') {
-                abort_unless(isset($data['source_ip']) && IpUtils::checkIp($data['source_ip'], $version->source_cidr), 422);
-            }
             abort_if(GatewayIngressReceipt::whereNotIn('state', ['applied'])->count() >= config('device_gateway.max_pending_receipts'), 503);
 
             return GatewayIngressReceipt::create([
