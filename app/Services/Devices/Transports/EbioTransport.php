@@ -17,7 +17,7 @@ final class EbioTransport implements DeviceTransport
         return DeviceIntegration::usesEbio() && in_array($operation, self::OPERATIONS, true);
     }
 
-    public function request(Device $device, string $operation, array $parameters = []): DeviceCommand
+    public function request(Device $device, string $operation, array $parameters = [], ?string $dependsOn = null): DeviceCommand
     {
         DeviceIntegration::requireEbio(tenant());
         abort_unless($this->supports($device, $operation), 403);

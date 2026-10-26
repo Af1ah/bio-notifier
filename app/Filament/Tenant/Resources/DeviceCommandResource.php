@@ -42,7 +42,7 @@ class DeviceCommandResource extends Resource
     private static function resultLabel(DeviceCommand $record): string
     {
         return match ($record->status) {
-            'acknowledged' => 'Completed',
+            'acknowledged' => $record->completionLabel(),
             'failed' => match ($record->response) {
                 'Read timed out: no matching device data returned within 60 seconds.' => $record->response,
                 'Device return code: -1' => 'Device rejected this request (return -1).',
@@ -136,7 +136,7 @@ class DeviceCommandResource extends Resource
                     ->sortable()
                     ->searchable(),
                 Tables\Columns\TextColumn::make('command_type')
-                    ->formatStateUsing(fn (string $state): string => match ($state) {
+                    ->formatStateUsing(fn (string $state, DeviceCommand $record): string => match ($state) {
                         'sync_users' => 'Sync users',
                         default => str($state)->replace('_', ' ')->title()->toString(),
                     })
@@ -148,11 +148,11 @@ class DeviceCommandResource extends Resource
                     ->visibleFrom('md'),
                 Tables\Columns\TextColumn::make('status')
                     ->badge()
-                    ->formatStateUsing(fn (string $state): string => match ($state) {
+                    ->formatStateUsing(fn (string $state, DeviceCommand $record): string => match ($state) {
                         'sent' => 'Sent / awaiting data',
                         'outcome_unknown' => 'Needs review',
                         'expired' => 'Expired',
-                        'acknowledged' => 'Completed',
+                        'acknowledged' => $record->completionLabel(),
                         default => str($state)->title()->toString(),
                     })
                     ->color(fn (string $state): string => match ($state) {

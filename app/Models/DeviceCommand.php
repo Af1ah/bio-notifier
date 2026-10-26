@@ -25,10 +25,20 @@ class DeviceCommand extends Model
     protected $guarded = [];
 
     protected $casts = [
+        'data_receipt_ids' => 'array', 'data_applied' => 'boolean',
         'sent_at' => 'datetime',
         'acknowledged_at' => 'datetime',
         'gateway_result_at' => 'datetime',
     ];
+
+    public function completionLabel(): string
+    {
+        $read = in_array($this->command_type, ['query_biodata', 'query_users', 'info'], true) && $this->gateway_command_id;
+        if ($read && ($this->data_applied || $this->status === 'acknowledged')) {
+            return $this->data_applied ? 'Data saved; inventory completeness unconfirmed' : ($this->data_receipt_ids ? 'Device data received; saving pending' : 'Device confirmed; no saved data');
+        }
+        return match ($this->status) {'acknowledged' => 'Device confirmed', 'pending' => 'Queued', 'sent' => 'Sent / awaiting response', default => str($this->status)->replace('_', ' ')->title()->toString()};
+    }
 
     public function getTable(): string
     {

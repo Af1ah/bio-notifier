@@ -20,7 +20,7 @@ class GatewayCommandSubmission extends Model
     protected function casts(): array
     {
         return [
-            'parameters' => 'array',
+            'parameters' => \App\Casts\ProtectedArray::class,
             'expires_at' => 'datetime',
             'leased_until' => 'datetime',
             'next_attempt_at' => 'datetime',

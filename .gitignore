@@ -26,3 +26,5 @@ Thumbs.db
 
 # Local test database artifact
 /testing
+/storage/tenant*
+

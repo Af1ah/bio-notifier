@@ -18,11 +18,12 @@ final class EmployeeBiometrics
             $operation = match ($format) {
                 'rfid' => 'upsert_user', 'ai_face' => 'update_biophoto', default => 'update_biodata',
             };
-            if ($this->commands->available($device, $operation)) {
+            if ($this->commands->available($device, $operation) && DeviceProfilePolicy::format($device, $format)) {
                 $options[$format] = $format === 'rfid' ? 'Card' : Device::VERIFICATION_FORMAT_OPTIONS[$format];
             }
         }
 
+        if ($device->supportsVerificationFormat('ai_face') && DeviceProfilePolicy::format($device, 'ai_face_template') && $this->commands->available($device, 'update_biodata')) { $options['ai_face_template'] = 'AI Face template'; }
         return $options;
     }
 
@@ -45,20 +46,54 @@ final class EmployeeBiometrics
                 continue;
             }
             $templates = $format === 'finger' ? $employee->fingerprints : $employee->face_templates;
-            $templates = array_filter(is_array($templates) ? $templates : [], fn ($t) => is_array($t) && filled($t['tmp'] ?? null));
+            $templates = is_array($templates) ? $templates : [];
+            if ($format !== 'finger') {
+                $templates = array_filter($templates, fn ($t) => is_array($t) && (($t['bio_type'] ?? null) === '9') === ($format === 'ai_face_template'));
+            }
+            $templates = BiometricCredentials::latest($templates, $format === 'finger' ? '1' : '2');
             if ($templates === []) {
                 $this->invalid('formats', 'No stored '.($format === 'finger' ? 'fingerprint' : 'face').' template. Register biometric data first.');
             }
-            foreach ($templates as $slot => $template) {
+            foreach ($templates as $template) {
+                $slot = $template['slot'];
+                if ((string) ($template['valid'] ?? '1') !== '1' || (string) ($template['duress'] ?? '0') !== '0') {
+                    $this->invalid('formats', 'Invalid or duress credentials require a separate authorized transfer.');
+                }
+                if (($template['bio_type'] ?? null) === '9' && $format === 'face') {
+                    $this->invalid('formats', 'An AI Face template cannot be sent as a conventional face template.');
+                }
+                if ($format === 'ai_face_template') {
+                    $destination = $device->options['observed_metadata'] ?? [];
+                    foreach (['major_ver', 'minor_ver', 'format'] as $key) {
+                        if (! isset($template[$key], $destination[$key]) || (string) $template[$key] !== (string) $destination[$key]) {
+                            $this->invalid('formats', 'The destination face algorithm is unknown or incompatible. Read its enrollment data before transferring this template.');
+                        }
+                    }
+                }
+                if ($format === 'finger' || $format === 'face') {
+                    $key = $format === 'finger' ? 'fp_algorithm_version' : 'face_algorithm_version';
+                    $version = $device->options['observed_metadata'][$key] ?? null;
+                    if ($format === 'finger' && ! filled($version)) {
+                        $version = '10';
+                    }
+                    $majorVer = $template['major_ver'] ?? ($format === 'finger' ? BiometricCredentials::inferMajorVersion('finger', (string) $template['tmp']) : null);
+                    $sameSource = ($template['source_serial'] ?? null) === $device->serial_number;
+                    if (! $sameSource && (! filled($version) || ! filled($majorVer) || (string) $version !== (string) $majorVer)) {
+                        $this->invalid('formats', 'The credential algorithm is unknown or incompatible with this destination. Read its device details and source credentials first.');
+                    }
+                }
                 $content = trim((string) $template['tmp']);
                 if (strlen($content) > 8192 || preg_match('/[\r\n\t]/', $content) || ! preg_match($format === 'finger' ? '/^[0-9]$/' : '/^[0-9]{1,4}$/', (string) $slot)) {
                     $this->invalid('formats', 'A stored template cannot be sent in the supported device format.');
                 }
-                $parameters = ['pin' => (string) $employee->pin, 'no' => (string) $slot, 'type' => $template['bio_type'] ?? ($format === 'finger' ? '1' : '9'), 'tmp' => $content];
-                foreach (['major_ver', 'minor_ver', 'index', 'format'] as $key) {
+                $parameters = ['pin' => (string) $employee->pin, 'no' => (string) $slot, 'type' => $template['bio_type'] ?? ($format === 'finger' ? '1' : '2'), 'tmp' => $content];
+                foreach (['major_ver', 'minor_ver', 'index', 'format', 'valid', 'duress', 'representation', 'source_serial'] as $key) {
                     if (isset($template[$key])) {
                         $parameters[$key] = (string) $template[$key];
                     }
+                }
+                if ($format === 'finger' && ! isset($parameters['major_ver'])) {
+                    $parameters['major_ver'] = $majorVer ?? '10';
                 }
                 $transfers[] = ['update_biodata', $parameters];
             }
@@ -67,28 +102,33 @@ final class EmployeeBiometrics
         if (in_array('rfid', $formats, true)) {
             $parameters['card'] = (string) ($employee->card_number ?? '');
         }
-        $this->commands->request($device, 'upsert_user', $parameters);
+        $parent = $this->commands->request($device, 'upsert_user', $parameters);
         foreach ($transfers as [$operation, $parameters]) {
-            $this->commands->request($device, $operation, $parameters);
+            $this->commands->request($device, $operation, $parameters, $parent->gateway_command_id);
         }
 
         return 1 + count($transfers);
     }
 
-    public function registerFingerprint(User $employee, string $slot, string $template): void
+    public function registerFingerprint(User $employee, string $slot, string $template, ?string $algorithm = null): void
     {
         $template = trim($template);
         if (! preg_match('/^[0-9]$/', $slot) || $template === '' || strlen($template) > 8192 || preg_match('/[\r\n\t]/', $template)) {
             $this->invalid('template_data', 'Enter a single raw template of up to 8192 characters and choose a valid finger slot.');
         }
         $templates = $employee->fingerprints ?? [];
-        $templates[$slot] = ['tmp' => $template, 'size' => (string) strlen($template), 'valid' => '1'];
+        if ($algorithm !== null && ! in_array($algorithm, ['9', '10'], true)) {
+            $this->invalid('template_algorithm', 'Choose the fingerprint algorithm reported by the enrollment reader.');
+        }
+        $algorithm = $algorithm ?? BiometricCredentials::inferMajorVersion('finger', $template);
+        $templates[$slot] = array_filter(['tmp' => $template, 'size' => (string) strlen($template), 'valid' => '1', 'major_ver' => $algorithm, 'representation' => 'legacy_fp', 'bio_type' => '1', 'slot' => $slot, 'index' => '0', 'observed_at' => now()->toIso8601String(), 'sha256' => hash('sha256', $template), 'byte_length' => strlen($template)], fn ($v) => $v !== null);
         $employee->update(['fingerprints' => $templates]);
     }
 
     public function registerPhoto(User $employee, string $path): void
     {
         $this->photo($path);
+        PrivateBiometricPhoto::protect($path);
         $employee->update(['ai_face_photo_path' => $path]);
     }
 
@@ -104,9 +144,7 @@ final class EmployeeBiometrics
             $this->invalid('camera_photo', 'Take a valid JPEG photo of 768 KB or smaller.');
         }
         $path = 'biometric-photos/'.\Illuminate\Support\Str::uuid().'.jpg';
-        if (! Storage::disk('local')->put($path, $contents, ['visibility' => 'private'])) {
-            $this->invalid('camera_photo', 'The photo could not be saved. Please try again.');
-        }
+        PrivateBiometricPhoto::put($path, $contents);
         try {
             $employee->update(['ai_face_photo_path' => $path]);
         } catch (\Throwable $exception) {
@@ -130,7 +168,7 @@ final class EmployeeBiometrics
     public function fetch(User $employee, Device $device): void
     {
         abort_unless($this->commands->available($device, 'query_biodata'), 403);
-        $types = array_intersect(['finger', 'face', 'ai_face'], $device->verificationFormats());
+        $types = array_filter(array_intersect(['finger', 'face', 'ai_face'], $device->verificationFormats()), fn ($type) => DeviceProfilePolicy::format($device, $type));
         if ($types === []) {
             $this->invalid('device_id', 'Enable Fingerprint, Face template or AI Face in the source device settings first.');
         }
@@ -146,16 +184,8 @@ final class EmployeeBiometrics
 
     private function photo(string $path): string
     {
-        $disk = Storage::disk('local');
-        if (! str_starts_with($path, 'biometric-photos/') || str_contains($path, '..') || ! $disk->exists($path)) {
-            $this->invalid('ai_face_photo_path', 'Register an AI Face JPEG first.');
-        }
-        $image = @getimagesize($disk->path($path));
-        if (! is_array($image) || ($image['mime'] ?? null) !== 'image/jpeg' || $disk->size($path) > 786432) {
-            $this->invalid('ai_face_photo_path', 'Use a valid JPEG of 768 KB or smaller.');
-        }
-
-        return $disk->get($path);
+        try { return PrivateBiometricPhoto::read($path); }
+        catch (\RuntimeException) { $this->invalid('ai_face_photo_path', 'Register a valid AI Face JPEG first.'); }
     }
 
     private function invalid(string $field, string $message): never

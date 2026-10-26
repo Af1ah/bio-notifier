@@ -3,7 +3,9 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Carbon;
 
 /**
@@ -26,6 +28,24 @@ use Illuminate\Support\Carbon;
  */
 class Device extends Model
 {
+    // ADMS terminals poll at a short cadence. A long grace period makes an
+    // unplugged terminal look live long after its last real heartbeat.
+    public const CONNECTION_WINDOW_MINUTES = 2;
+
+    public const DIRECTION_OPTIONS = [
+        'DEVICE' => 'Use terminal punch status',
+        'IN' => 'Entry only',
+        'OUT' => 'Exit only',
+        'INOUT' => 'IN/OUT — unspecified',
+    ];
+
+    public function attendanceDirection(): string
+    {
+        $direction = $this->options['direction'] ?? 'DEVICE';
+
+        return array_key_exists($direction, self::DIRECTION_OPTIONS) ? $direction : 'DEVICE';
+    }
+
     public const VERIFICATION_FORMAT_OPTIONS = [
         'rfid' => 'RFID card',
         'finger' => 'Fingerprint',
@@ -72,15 +92,29 @@ class Device extends Model
             return false;
         }
 
-        $threshold = 10;
+        return $this->last_activity_at->between(now()->subMinutes(self::CONNECTION_WINDOW_MINUTES), now());
+    }
 
-        return $this->last_activity_at->between(now()->subMinutes($threshold), now());
+    public function scopeConnected(Builder $query): Builder
+    {
+        return $query->whereBetween('last_activity_at', [
+            now()->subMinutes(self::CONNECTION_WINDOW_MINUTES),
+            now(),
+        ]);
     }
 
     /** @return list<string> */
     public function verificationFormats(): array
     {
-        $formats = $this->options['supported_verification_formats'] ?? ['rfid'];
+        $formats = $this->options['supported_verification_formats'] ?? null;
+        if ($formats === null) {
+            return match (\App\Services\Devices\DeviceProfilePolicy::name($this)) {
+                'visible-face-ta' => ['rfid', 'finger', 'ai_face'],
+                'legacy-face' => ['rfid', 'finger', 'face'],
+                'legacy-fp' => ['rfid', 'finger'],
+                default => ['rfid', 'finger'],
+            };
+        }
 
         return array_values(array_intersect(
             is_array($formats) ? $formats : ['rfid'],
@@ -108,7 +142,7 @@ class Device extends Model
         ]);
     }
 
-    public function branch(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    public function branch(): BelongsTo
     {
         return $this->belongsTo(Branch::class);
     }

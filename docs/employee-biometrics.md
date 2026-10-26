@@ -6,21 +6,21 @@ Use **Register biometric** to save data and **Push to device** to transfer it. *
 
 Choose one input:
 
-- **Read from attendance device**: enroll the employee on the source terminal under the employee PIN, then select it here. The application requests its configured fingerprint templates, conventional face templates and AI Face JPEG and saves returned data to the employee. An acknowledged request without returned data is not a completed fetch.
-- **Raw fingerprint template**: choose the finger slot and paste the template from a compatible enrollment reader or its software. This stores the template; it does not send it to a terminal. Fingerprint photographs are not templates. Direct browser/USB-reader capture needs the reader manufacturer's SDK and is not implemented by this form.
+- **Read from attendance device**: enroll the employee on the source terminal under the employee PIN, then select it here. The application requests its configured fingerprint templates, conventional face templates and visible-light AI face templates and saves returned data to the employee. An acknowledged request without returned data is not a completed fetch.
+- **Raw fingerprint template**: choose the reader algorithm version and finger slot, then paste the template from a compatible enrollment reader or its software. This stores the template; it does not send it to a terminal. Fingerprint photographs are not templates. Direct browser/USB-reader capture needs the reader manufacturer's SDK and is not implemented by this form.
 - **AI Face JPEG**: choose Upload photo or Take photo. Camera access uses the browser permission dialog; mobile browsers without live camera access may offer their native capture picker. The captured image is converted to JPEG, reduced to a maximum 1024-pixel edge and compressed to fit 768 KB. The server verifies the JPEG and size again. Upload accepts `.jpg` and `.jpeg` up to 768 KB. It is stored privately for later transfer to AI Face terminals. A JPEG cannot be sent as a conventional face template.
 
-Conventional face templates are read from terminals and can be sent only to devices configured for Face template. A matching verification format does not guarantee the same biometric algorithm across firmware models; verify actual recognition when piloting a new model.
+Conventional face templates are read from terminals and can be sent only to devices configured for Face template. Declared sensor support alone does not authorize a transfer. The identified protocol family and compatible observed algorithm/version are checked. Unknown or mismatched algorithms block cross-device transfer. Invalid or duress credentials are retained but cannot be pushed by the ordinary action. Verify actual recognition when piloting a new model.
 
 ## Push to device
 
-Select the destination first. The application always sends the employee PIN, name and device privilege, then sends selected stored credentials in queue order.
+Select the destination first. The application always sends the employee PIN, name and device privilege, then sends selected stored credentials only after the device confirms that user update. Rejected, cancelled or expired prerequisites prevent dependent credential dispatch.
 
 Only formats enabled in the device's supported verification formats and available gateway operations appear. Card is selected by default when supported; biometric formats start unchecked. A device configured for Card and Fingerprint shows those two options. One configured for Card, Fingerprint and Face template also shows Face template.
 
-Fingerprint sends all stored finger slots. Face template sends stored face slots. AI Face sends the stored JPEG. Missing selected data or unsupported formats stop the push before commands are queued. Unselected credentials are left unchanged; unchecking Card omits the Card field instead of sending a blank card number.
+Fingerprint sends the latest stored finger slots and indexes. Conventional face sends conventional face templates. AI Face template sends type-9 credentials only when destination algorithm/version/format match. AI Face sends the separately saved JPEG. Missing selected data or unsupported formats stop the push before commands are queued. Unselected credentials are left unchanged; unchecking Card omits the Card field instead of sending a blank card number.
 
-Track individual command results in Device Commands. Queue acceptance does not prove device storage or successful fingerprint recognition. No biometric credential is deleted by these actions. Existing eBio companies retain their enrollment workflow.
+Track individual command results in Device Commands. “Device confirmed” is separate from “Data saved”; saving remains pending until the correlated tenant receipts have been applied. “Data saved; inventory completeness unconfirmed” does not claim every device slot was returned. Queue acceptance does not prove device storage or successful fingerprint recognition. No biometric credential is deleted by these actions. Existing eBio companies retain their enrollment workflow.
 
 ## Automatic fetch after a punch
 
@@ -28,11 +28,11 @@ For a known employee with no stored fingerprint or conventional face template, t
 
 A persistent employee/format marker is saved in the same transaction as a recoverable background effect. It reuses the employee and device already loaded during attendance processing, with no extra lookup or cache request for each punch. Subsequent punches do not create discovery jobs or device queries. Stable command IDs prevent a retried background effect from queuing a second device command. Received templates are reused without polling.
 
-Manual Fetch can refresh templates or recover a failed or empty first fetch. Adding another finger after templates have already been stored requires this manual refresh; a punch does not report which slots changed. Manual Fetch includes an AI Face JPEG query for devices configured for AI Face. Returned JPEGs replace the saved preview; a fingerprint or conventional face template reply never replaces the photo. Automatic discovery remains once-only for missing fingerprint/conventional face templates.
+Manual Fetch can refresh templates or recover a failed or empty first fetch. Adding another finger after templates have already been stored requires this manual refresh; a punch does not report which slots changed. Manual Fetch requests BIODATA for devices configured for AI Face. That returns recognition templates, not a newly exported photo. A separately received BIOPHOTO/USERPIC JPEG replaces the saved preview; a template reply never replaces the photo. Automatic discovery remains once-only for missing fingerprint/conventional face templates.
 
 ## View the stored photo
 
-Open Employee → View to see the saved AI Face JPEG. The preview is rendered inside the authorized employee profile from private storage; it does not create a public photo URL. It confirms what is saved in the application, not whether a terminal has accepted the photo. Conventional face templates are binary credentials and cannot be rendered as a photograph.
+Open Employee → View to see the saved AI Face JPEG. Photo bytes and stored template arrays are encrypted at rest. The preview is rendered inside the authorized employee profile from private storage; it does not create a public photo URL. It confirms what is saved in the application, not whether a terminal has accepted the photo. Conventional face templates are binary credentials and cannot be rendered as a photograph.
 
 ## eBio employee photo
 
