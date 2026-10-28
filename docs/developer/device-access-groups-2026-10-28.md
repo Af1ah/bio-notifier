@@ -40,3 +40,10 @@ Source: ZKTeco Attendance PUSH Communication Protocol, sections 12.1.1.1, 12.1.1
 The coordinated rollout completed with the central capability migration and both tenant migrations applied to both installed organisations. The 35 runtime source files matched the reviewed release hashes. Both private environment files were preserved unchanged. PHP-FPM, the Bio-Notifier workers/scheduler and the rebuilt gateway container were running; the authenticated private health endpoint reported two delivery workers. Database backups were verified by restoration into isolated temporary databases before rollout. Existing parked receipts were not replayed.
 
 Access writes remain disabled pending actual firmware readback and hardware qualification. Service health is not physical-device acceptance. No browser or interactive UI checks were performed.
+
+
+## Supported-device enablement and command status update
+
+The earlier global default-off decision is superseded at the user’s direction. Access controls now default on only through the existing exact model/platform/firmware profile, enabled synchronized company/device binding and operation capabilities, enforced in Laravel and Go. Unsupported or unsynchronized devices do not display the access tabs/user action; backend requests remain rejected. DEVICE_ACCESS_GROUPS_ENABLED=false remains an emergency override. This does not enable expiry-reset or quota writes.
+
+Device Commands and each device’s action list include Sync status. A user access write shows Synced only after its dependent targeted readback is saved and its reported group and group/personal-period encoding match the requested values. Acknowledgement alone is labeled Acknowledged or Waiting for readback. Failed/expired reads and mismatching or incomplete access fields remain visible as failure/review states. The parent write retains the confirming receipt identifiers; list relationships are eager-loaded to avoid per-row status queries. Group/period writes retain Acknowledged until separate readback; no physical enforcement claim is inferred.

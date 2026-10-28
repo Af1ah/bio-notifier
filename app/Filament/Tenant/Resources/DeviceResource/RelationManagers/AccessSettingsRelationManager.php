@@ -6,7 +6,6 @@ use App\Models\DeviceAccessSetting;
 use App\Services\Devices\DeviceAccessSettings;
 use App\Services\Devices\DeviceCommandService;
 use App\Services\Devices\DeviceIntegration;
-use App\Services\Devices\DeviceProfilePolicy;
 use App\Services\Support\TenantTimezone;
 use Filament\Actions\Action;
 use Filament\Forms\Components\Checkbox;
@@ -28,7 +27,9 @@ abstract class AccessSettingsRelationManager extends RelationManager
 
     public static function canViewForRecord(Model $ownerRecord, string $pageClass): bool
     {
-        return tenant()?->device_integration === DeviceIntegration::GATEWAY && DeviceProfilePolicy::supportsValidity($ownerRecord);
+        return tenant()?->device_integration === DeviceIntegration::GATEWAY
+            && app(DeviceCommandService::class)->available($ownerRecord, 'query_access_groups')
+            && app(DeviceCommandService::class)->available($ownerRecord, 'query_access_periods');
     }
 
     private function editable(): bool
@@ -138,8 +139,7 @@ abstract class AccessSettingsRelationManager extends RelationManager
                         return $data;
                     })->modalSubmitActionLabel('Save draft')->action(fn (DeviceAccessSetting $record, array $data) => $this->saveData($data, $record)),
                 Action::make('applyAccessSetting')->label('Apply to device')->authorize(fn (): bool => $this->editable())
-                    ->disabled(fn (): bool => ! app(DeviceCommandService::class)->available($this->getOwnerRecord(), 'set_access_'.static::$accessKind))
-                    ->tooltip(fn (): ?string => config('device_gateway.access_groups_enabled') ? null : 'Device writes await firmware qualification.')
+                    ->visible(fn (): bool => app(DeviceCommandService::class)->available($this->getOwnerRecord(), 'set_access_'.static::$accessKind))
                     ->modalDescription('This changes a shared device setting. All users and groups referencing it may be affected. Check the draft and current readback before applying.')
                     ->schema([Hidden::make('revision'), Checkbox::make('confirmed')->label('I reviewed the shared access change.')->required()->accepted()])
                     ->fillForm(fn (DeviceAccessSetting $record) => ['revision' => $record->revision])

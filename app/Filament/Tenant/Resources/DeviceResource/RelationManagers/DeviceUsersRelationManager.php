@@ -8,7 +8,6 @@ use App\Models\DeviceRosterEntry;
 use App\Services\Devices\DeviceAccessSettings;
 use App\Services\Devices\DeviceCommandService;
 use App\Services\Devices\DeviceIntegration;
-use App\Services\Devices\DeviceProfilePolicy;
 use App\Services\Devices\DeviceUserAccess;
 use App\Services\Support\TenantTimezone;
 use Filament\Actions\Action;
@@ -97,9 +96,8 @@ class DeviceUsersRelationManager extends RelationManager
                         TextEntry::make('access_settings.Grp')->label('Reported access group')->placeholder('Not reported'),
                     ]),
                 Action::make('editDeviceUserAccess')->label('Edit access')->icon('heroicon-o-pencil-square')
-                    ->authorize(fn (): bool => (bool) auth('web')->user()?->has_login && DeviceProfilePolicy::supportsValidity($this->getOwnerRecord()))
-                    ->disabled(fn (): bool => ! $this->accessSyncAvailable())
-                    ->tooltip(fn (): ?string => config('device_gateway.access_groups_enabled') ? null : 'Device access writes await firmware qualification.')
+                    ->authorize(fn (): bool => (bool) auth('web')->user()?->has_login && $this->accessSyncAvailable())
+                    ->visible(fn (): bool => $this->accessSyncAvailable())
                     ->modalHeading('Edit device user access')->modalSubmitActionLabel('Save and sync')
                     ->modalDescription('Choose this user’s access group and daily-period mode on this device. Expiration and remaining entries are separate device settings.')
                     ->fillForm(function (DeviceRosterEntry $record): array {

@@ -1469,6 +1469,30 @@ class GatewayWorkflowTest extends TestCase
         } catch (HttpException $exception) {
             $this->assertSame(409, $exception->getStatusCode());
         }
+        $tracked = DeviceCommand::where('gateway_command_id', $requestId)->firstOrFail();
+        $this->assertSame('Queued', $tracked->syncStatusLabel());
+        $tracked->update(['status' => 'acknowledged']);
+        $tracked = DeviceCommand::with('accessReadback')->findOrFail($tracked->id);
+        $this->assertSame($read->id, $tracked->accessReadback->id);
+        $this->assertSame('Waiting for readback', $tracked->syncStatusLabel());
+        $read->update(['status' => 'acknowledged']);
+        tenancy()->end();
+        $event = ['id' => (string) Str::uuid(), 'serial' => 'ACCESSGROUP01', 'binding_version' => 1, 'kind' => 'users',
+            'command_id' => $read->gateway_command_id, 'received_at' => now()->toIso8601String(),
+            'users' => [['pin' => '0007', 'access' => ['Grp' => '2', 'TZ' => '0001000200000000']]]];
+        $this->deliver($event)->assertAccepted();
+        (new ApplyGatewayReceipt($event['id']))->handle(app(ReceiptApplier::class));
+        tenancy()->initialize($company);
+        $this->assertSame('Synced', $tracked->fresh()->syncStatusLabel());
+        Livewire::test(ListDeviceCommands::class)->assertCanSeeTableRecords([$tracked])->assertSee('Synced');
+        tenancy()->end();
+        $event['id'] = (string) Str::uuid();
+        $event['users'][0]['access']['Grp'] = '3';
+        $this->deliver($event)->assertAccepted();
+        (new ApplyGatewayReceipt($event['id']))->handle(app(ReceiptApplier::class));
+        tenancy()->initialize($company);
+        $this->assertSame('Readback needs review', $tracked->fresh()->syncStatusLabel());
+        $this->assertFalse($tracked->fresh()->data_applied);
     }
 
     public function test_access_settings_reject_stale_edits_conflicting_revisions_and_cross_device_assignment(): void
@@ -1511,15 +1535,43 @@ class GatewayWorkflowTest extends TestCase
         $this->assertSame(0, DeviceCommand::count());
     }
 
-    public function test_access_setting_writes_are_disabled_by_default_and_incomplete_readbacks_are_rejected(): void
+    public function test_access_controls_follow_supported_profiles_and_incomplete_readbacks_are_rejected(): void
     {
         [$company, $binding] = $this->company('ACCESSGROUP02');
         $binding->update(['capabilities' => [...DeviceAccessSettings::OPERATIONS, 'query_users']]);
         tenancy()->initialize($company);
         $device = Device::firstOrFail();
         $device->update(['options' => ['observed_metadata' => ['model' => 'x 2008', 'platform' => 'ZMM510_TFT', 'firmware_version' => 'ZMM510-NF24VB-Ver2.2.1']]]);
-        $this->assertFalse(app(DeviceCommandService::class)->available($device, 'set_access_group'));
+        $this->assertTrue(app(DeviceCommandService::class)->available($device, 'set_access_group'));
         $this->assertTrue(app(DeviceCommandService::class)->available($device, 'query_access_groups'));
+        $this->assertTrue(AccessGroupsRelationManager::canViewForRecord($device, EditDevice::class));
+        $admin = User::create(['name' => 'Access admin', 'pin' => '900', 'privilege' => 14, 'email' => 'supported-access@example.test', 'password' => 'password']);
+        $this->actingAs($admin, 'web');
+        URL::defaults(['tenant' => $company->shortname]);
+        Filament::setCurrentPanel(Filament::getPanel('tenant'));
+        Filament::bootCurrentPanel();
+        $roster = DeviceRosterEntry::create(['device_id' => $device->id, 'pin' => '0007', 'receipt_id' => (string) Str::uuid()]);
+        Livewire::test(DeviceUsersRelationManager::class, ['ownerRecord' => $device, 'pageClass' => EditDevice::class])
+            ->assertTableActionVisible('editDeviceUserAccess', $roster);
+        $supported = $device->options;
+        $device->update(['options' => ['observed_metadata' => ['model' => 'x 2008', 'platform' => 'ZMM510_TFT', 'firmware_version' => 'unknown']]]);
+        $this->assertFalse(app(DeviceCommandService::class)->available($device, 'set_access_group'));
+        $this->assertFalse(AccessGroupsRelationManager::canViewForRecord($device, EditDevice::class));
+        request()->attributes->remove('device-user-access-sync:'.tenant('id').':'.$device->id);
+        Livewire::test(DeviceUsersRelationManager::class, ['ownerRecord' => $device->fresh(), 'pageClass' => EditDevice::class])
+            ->assertTableActionHidden('editDeviceUserAccess', $roster);
+        try {
+            app(DeviceCommandService::class)->request($device, 'set_user_access_group', ['pin' => '0007', 'number' => '2']);
+            $this->fail('Unsupported firmware accepted an access write.');
+        } catch (HttpException $exception) {
+            $this->assertSame(403, $exception->getStatusCode());
+        }
+        $device->update(['options' => $supported]);
+        config(['device_gateway.access_groups_enabled' => false]);
+        $this->assertFalse(app(DeviceCommandService::class)->available($device, 'set_access_group'));
+        config(['device_gateway.access_groups_enabled' => true]);
+        $binding->update(['synced_at' => null]);
+        $this->assertFalse(AccessGroupsRelationManager::canViewForRecord($device, EditDevice::class));
         tenancy()->end();
         $event = ['id' => (string) Str::uuid(), 'serial' => 'ACCESSGROUP02', 'binding_version' => 1, 'kind' => 'access_groups',
             'received_at' => now()->toIso8601String(), 'access_records' => [['number' => '2', 'TZ' => '1;2;0;0']]];

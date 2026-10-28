@@ -2,27 +2,32 @@
 
 namespace App\Filament\Tenant\Resources;
 
+use App\Filament\Tenant\Resources\DeviceCommandResource\Pages;
+use App\Models\DeviceCommand;
+use App\Services\Devices\DeviceAccessSettings;
+use App\Services\Devices\DeviceIntegration;
+use App\Services\Devices\Gateway\GatewayCommands;
+use App\Services\Support\TenantTimezone;
 use Filament\Actions\Action;
+use Filament\Actions\ActionGroup;
 use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteAction;
 use Filament\Actions\DeleteBulkAction;
 use Filament\Actions\ViewAction;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
+use Filament\Infolists\Components\TextEntry;
 use Filament\Resources\Resource;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
 use Filament\Tables;
 use Filament\Tables\Table;
-use App\Filament\Tenant\Resources\DeviceCommandResource\Pages;
-
-use App\Models\DeviceCommand;
 
 class DeviceCommandResource extends Resource
 {
     protected static ?string $model = DeviceCommand::class;
 
-    protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-command-line';
+    protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-command-line';
 
     protected static \UnitEnum|string|null $navigationGroup = 'Device Management';
 
@@ -61,18 +66,21 @@ class DeviceCommandResource extends Resource
     {
         return $schema->components([
             Section::make('Device action')->schema([
-                \Filament\Infolists\Components\TextEntry::make('device.name')
+                TextEntry::make('device.name')
                     ->label('Target')->placeholder('Company devices'),
-                \Filament\Infolists\Components\TextEntry::make('command_type')
+                TextEntry::make('command_type')
                     ->label('Action')
-                    ->formatStateUsing(fn (string $state): string => str($state)->replace('_', ' ')->title()->toString()),
-                \Filament\Infolists\Components\TextEntry::make('status')->badge(),
-                \Filament\Infolists\Components\TextEntry::make('response')
+                    ->formatStateUsing(fn (DeviceCommand $record): string => $record->actionLabel()),
+                TextEntry::make('status')->badge(),
+                TextEntry::make('sync_status')->label('Sync status')
+                    ->state(fn (DeviceCommand $record): string => $record->syncStatusLabel())->badge()
+                    ->color(fn (DeviceCommand $record): string => $record->syncStatusColor()),
+                TextEntry::make('response')
                     ->label('Result')
                     ->state(fn (DeviceCommand $record): string => self::resultLabel($record)),
-                \Filament\Infolists\Components\TextEntry::make('sent_at')->dateTime(timezone: fn () => \App\Services\Support\TenantTimezone::get()),
-                \Filament\Infolists\Components\TextEntry::make('acknowledged_at')->dateTime(timezone: fn () => \App\Services\Support\TenantTimezone::get()),
-                \Filament\Infolists\Components\TextEntry::make('retry_count')->label('Retries'),
+                TextEntry::make('sent_at')->dateTime(timezone: fn () => TenantTimezone::get()),
+                TextEntry::make('acknowledged_at')->dateTime(timezone: fn () => TenantTimezone::get()),
+                TextEntry::make('retry_count')->label('Retries'),
             ])->columns(2),
         ]);
     }
@@ -129,6 +137,7 @@ class DeviceCommandResource extends Resource
     public static function table(Table $table): Table
     {
         return $table
+            ->modifyQueryUsing(fn ($query) => $query->with('accessReadback'))
             ->columns([
                 Tables\Columns\TextColumn::make('device.name')
                     ->label('Target')
@@ -143,7 +152,7 @@ class DeviceCommandResource extends Resource
                     ->badge(),
                 Tables\Columns\TextColumn::make('command_content')
                     ->label('Action')
-                    ->formatStateUsing(fn (DeviceCommand $record): string => str($record->command_type)->replace('_', ' ')->title()->toString())
+                    ->formatStateUsing(fn (DeviceCommand $record): string => $record->actionLabel())
                     ->limit(40)
                     ->visibleFrom('md'),
                 Tables\Columns\TextColumn::make('status')
@@ -162,11 +171,14 @@ class DeviceCommandResource extends Resource
                         'failed' => 'danger',
                         default => 'gray',
                     }),
+                Tables\Columns\TextColumn::make('sync_status')->label('Sync status')->badge()
+                    ->getStateUsing(fn (DeviceCommand $record): string => $record->syncStatusLabel())
+                    ->color(fn (DeviceCommand $record): string => $record->syncStatusColor()),
                 Tables\Columns\TextColumn::make('sent_at')
-                    ->dateTime(timezone: fn () => \App\Services\Support\TenantTimezone::get())
+                    ->dateTime(timezone: fn () => TenantTimezone::get())
                     ->visibleFrom('md'),
                 Tables\Columns\TextColumn::make('acknowledged_at')
-                    ->dateTime(timezone: fn () => \App\Services\Support\TenantTimezone::get())
+                    ->dateTime(timezone: fn () => TenantTimezone::get())
                     ->visibleFrom('md'),
                 Tables\Columns\TextColumn::make('retry_count')
                     ->label('Retries')
@@ -177,7 +189,10 @@ class DeviceCommandResource extends Resource
                     ->wrap()
                     ->toggleable(),
             ])
-            ->poll(fn () => \App\Models\DeviceCommand::whereIn('status', ['pending', 'sent'])->exists() ? '10s' : null)
+            ->poll(fn () => DeviceCommand::whereIn('status', ['pending', 'sent'])
+                ->orWhere(fn ($query) => $query->whereIn('command_type', ['set_user_access_group', 'query_access_groups', 'query_access_periods'])
+                    ->where('status', 'acknowledged')->where('data_applied', false)->where('created_at', '>=', now()->subMinutes(15)))
+                ->exists() ? '10s' : null)
             ->defaultSort('created_at', 'desc')
             ->filters([
                 Tables\Filters\SelectFilter::make('device')
@@ -188,9 +203,9 @@ class DeviceCommandResource extends Resource
                         'sent' => 'Sent',
                         'acknowledged' => 'Acknowledged',
                         'failed' => 'Failed',
-                            'outcome_unknown' => 'Needs review',
-                            'expired' => 'Expired',
-                            'cancelled' => 'Cancelled',
+                        'outcome_unknown' => 'Needs review',
+                        'expired' => 'Expired',
+                        'cancelled' => 'Cancelled',
                     ]),
                 Tables\Filters\SelectFilter::make('command_type')
                     ->options([
@@ -210,6 +225,7 @@ class DeviceCommandResource extends Resource
                         'info' => 'Read device information',
                         'check' => 'Check connection',
                         'query_users' => 'Read device users',
+                        ...array_intersect_key(GatewayCommands::OPERATIONS, array_flip(DeviceAccessSettings::OPERATIONS)),
                         'clear_alarm' => 'Clear Alarm',
                         'update_biodata' => 'Update Biometric Template',
                         'update_biophoto' => 'Update User Photo',
@@ -218,26 +234,26 @@ class DeviceCommandResource extends Resource
                     ]),
             ])
             ->recordActions([
-                \Filament\Actions\ActionGroup::make([
+                ActionGroup::make([
                     ViewAction::make(),
                     Action::make('cancelCommand')
                         ->label(fn (DeviceCommand $record): string => $record->status === 'pending' ? 'Cancel command' : 'Stop waiting')
                         ->icon('heroicon-o-stop-circle')
                         ->color('danger')
                         ->authorize(fn (DeviceCommand $record): bool => static::canEdit($record))
-                        ->visible(fn (DeviceCommand $record): bool => (tenant()?->device_integration === \App\Services\Devices\DeviceIntegration::GATEWAY) && filled($record->gateway_command_id) && in_array($record->status, ['pending', 'sent', 'outcome_unknown'], true))
+                        ->visible(fn (DeviceCommand $record): bool => (tenant()?->device_integration === DeviceIntegration::GATEWAY) && filled($record->gateway_command_id) && in_array($record->status, ['pending', 'sent', 'outcome_unknown'], true))
                         ->requiresConfirmation()
                         ->modalDescription('Cancels queued work or stops waiting for a sent command. A command already sent may have executed; this does not undo changes on the device.')
-                        ->action(fn (DeviceCommand $record) => app(\App\Services\Devices\Gateway\GatewayCommands::class)->cancel($record)),
+                        ->action(fn (DeviceCommand $record) => app(GatewayCommands::class)->cancel($record)),
                     Action::make('retry')
-                        ->authorize(fn (): bool => \App\Services\Devices\DeviceIntegration::usesEbio())
+                        ->authorize(fn (): bool => DeviceIntegration::usesEbio())
                         ->icon('heroicon-o-arrow-path')
                         ->color('warning')
                         ->requiresConfirmation()
                         ->visible(fn (DeviceCommand $record) => $record->status === 'failed')
                         ->action(fn (DeviceCommand $record) => $record->retry()),
                     DeleteAction::make(),
-                ])
+                ]),
             ])
             ->toolbarActions([
                 BulkActionGroup::make([
