@@ -190,7 +190,7 @@ class DeviceCommandResource extends Resource
                     ->toggleable(),
             ])
             ->poll(fn () => DeviceCommand::whereIn('status', ['pending', 'sent'])
-                ->orWhere(fn ($query) => $query->whereIn('command_type', ['set_user_access_group', 'query_access_groups', 'query_access_periods'])
+                ->orWhere(fn ($query) => $query->whereIn('command_type', ['set_user_access_group', 'set_user_validity', 'query_access_groups', 'query_access_periods'])
                     ->where('status', 'acknowledged')->where('data_applied', false)->where('created_at', '>=', now()->subMinutes(15)))
                 ->exists() ? '10s' : null)
             ->defaultSort('created_at', 'desc')
@@ -225,6 +225,7 @@ class DeviceCommandResource extends Resource
                         'info' => 'Read device information',
                         'check' => 'Check connection',
                         'query_users' => 'Read device users',
+                        'set_user_validity' => 'Set user expiration rule',
                         ...array_intersect_key(GatewayCommands::OPERATIONS, array_flip(DeviceAccessSettings::OPERATIONS)),
                         'clear_alarm' => 'Clear Alarm',
                         'update_biodata' => 'Update Biometric Template',

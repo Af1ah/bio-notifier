@@ -30,7 +30,7 @@ final class GatewayCommands
         'log' => 'Request device logs',
         'get_option' => 'Read device setting',
         'upsert_user' => 'Add or update device user',
-        'set_user_validity' => 'Set device access period',
+        'set_user_validity' => 'Set user expiration rule',
         'query_access_groups' => 'Read access groups',
         'query_access_periods' => 'Read daily periods',
         'set_access_group' => 'Update access group',

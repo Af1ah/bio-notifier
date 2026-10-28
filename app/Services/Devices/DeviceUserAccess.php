@@ -28,10 +28,7 @@ final class DeviceUserAccess
     {
         $access = $record->access_settings ?? [];
 
-        // SDK mode numbers alone do not establish PUSH firmware semantics.
-        return isset($access['Expires']) && $access['Expires'] !== ''
-            ? 'Reported mode '.$access['Expires'].' (unverified)'
-            : 'Not reported';
+        return ['0' => 'No expiration', '1' => 'Dates only', '2' => 'Entry limit only', '3' => 'Dates and entry limit'][$access['Expires'] ?? ''] ?? 'Not reported';
     }
 
     public static function entries(DeviceRosterEntry $record): string

@@ -22,3 +22,5 @@ Older engineering documents remain in the parent docs directory. New client guid
 - [Master panel and desktop scope](master-panel-desktop-scope.md): current duties, automated device registration, and removing master/eBio support from the desktop edition.
 
 - [Device access groups and per-user sync](device-access-groups-2026-10-28.md): separate per-device group/period tabs, per-user Edit access and Save and sync, native readback requirements and firmware qualification.
+
+- [Independent user expiration and physical pilot](device-user-expiration-2026-10-28.md): separate time-period and expiration controls, none/date/count/both modes, readback evidence and controlled testing.

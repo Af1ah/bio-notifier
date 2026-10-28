@@ -71,6 +71,7 @@ use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Livewire\Livewire;
+use Ramsey\Uuid\Uuid;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 use Tests\TestCase;
 
@@ -1339,7 +1340,7 @@ class GatewayWorkflowTest extends TestCase
     {
         config(['device_gateway.user_validity_enabled' => true]);
         [$company, $binding] = $this->company('VALIDITY01');
-        $binding->update(['capabilities' => ['upsert_user', 'get_option', 'set_user_validity']]);
+        $binding->update(['capabilities' => ['upsert_user', 'get_option', 'set_user_validity', 'query_users']]);
         tenancy()->initialize($company);
         $device = Device::firstOrFail();
         $device->update(['model' => 'x 2008', 'options' => ['observed_metadata' => [
@@ -1358,15 +1359,75 @@ class GatewayWorkflowTest extends TestCase
         Livewire::test(DeviceUsersRelationManager::class, [
             'ownerRecord' => $device, 'pageClass' => EditDevice::class,
         ])->callTableAction('deviceAccessPeriod', DeviceRosterEntry::firstOrFail(), data: [
-            'device_id' => $device->id, 'mode' => 'period', 'from' => '2026-10-25', 'until' => '2026-10-26',
+            'request_id' => (string) Str::uuid(), 'mode' => 'dates', 'from' => '2026-10-25', 'until' => '2026-10-26',
         ])->assertHasNoTableActionErrors();
         $command = DeviceCommand::where('command_type', 'set_user_validity')->firstOrFail();
         $row = DB::table('gateway_command_outbox')->where('id', $command->gateway_command_id)->first();
-        $this->assertSame(['pin' => '0007', 'mode' => 'period', 'from' => '2026-10-25', 'until' => '2026-10-26'], ProtectedArray::decode($row->parameters));
+        $this->assertSame(['pin' => '0007', 'mode' => 'dates', 'from' => '2026-10-25', 'until' => '2026-10-26'], ProtectedArray::decode($row->parameters));
         $this->assertStringNotContainsString('2026-10-25', $row->parameters);
         $this->assertSame($before, $employee->fresh()->getAttributes());
         $this->expectException(ValidationException::class);
         app(DeviceAccessValidity::class)->apply($employee, $device, ['mode' => 'unrestricted']);
+    }
+
+    public function test_expiration_modes_are_separate_from_daily_periods_and_clear_inactive_limits(): void
+    {
+        [$company, $binding] = $this->company('EXPIRYMODES01');
+        $binding->update(['capabilities' => ['set_user_validity', 'query_users']]);
+        tenancy()->initialize($company);
+        $device = Device::firstOrFail();
+        $device->update(['options' => ['observed_metadata' => ['model' => 'x 2008', 'platform' => 'ZMM510_TFT', 'firmware_version' => 'ZMM510-NF24VB-Ver2.2.1']]]);
+        $employee = User::where('pin', '0007')->firstOrFail();
+        $before = $employee->getAttributes();
+        $roster = DeviceRosterEntry::create(['device_id' => $device->id, 'pin' => '0007', 'receipt_id' => (string) Str::uuid(),
+            'access_settings' => ['Grp' => '1', 'TZ' => '0001003200000000', 'StartDatetime' => '20261001', 'EndDatetime' => '20261031']]);
+        $admin = User::create(['name' => 'Expiration admin', 'pin' => '900', 'privilege' => 14, 'email' => 'expiry-modes@example.test', 'password' => 'password']);
+        $this->actingAs($admin, 'web');
+        URL::defaults(['tenant' => $company->shortname]);
+        Filament::setCurrentPanel(Filament::getPanel('tenant'));
+        Filament::bootCurrentPanel();
+        foreach (['none' => [], 'dates' => ['from' => '2026-10-28', 'until' => '2026-10-29'], 'entries' => ['entries' => '3'],
+            'both' => ['from' => '2026-10-28', 'until' => '2026-10-29', 'entries' => '3']] as $mode => $fields) {
+            $id = (string) Str::uuid();
+            Livewire::test(DeviceUsersRelationManager::class, ['ownerRecord' => $device, 'pageClass' => EditDevice::class])
+                ->callTableAction('deviceAccessPeriod', $roster, data: ['request_id' => $id, 'mode' => $mode] + $fields)->assertHasNoTableActionErrors();
+            $outbox = DB::table('gateway_command_outbox')->where('id', $id)->firstOrFail();
+            $this->assertSame(['pin' => '0007', 'mode' => $mode] + $fields, ProtectedArray::decode($outbox->parameters));
+            $readId = (string) Uuid::uuid5($id, 'user-readback');
+            $read = DeviceCommand::where('gateway_command_id', $readId)->firstOrFail();
+            $this->assertSame('query_users', $read->command_type);
+            $this->assertSame('0001003200000000', $roster->fresh()->access_settings['TZ']);
+        }
+        $this->assertSame($before, $employee->fresh()->getAttributes());
+        $write = DeviceCommand::where('gateway_command_id', $id)->firstOrFail();
+        $write->update(['status' => 'acknowledged']);
+        $read->update(['status' => 'acknowledged']);
+        tenancy()->end();
+        $event = ['id' => (string) Str::uuid(), 'serial' => 'EXPIRYMODES01', 'binding_version' => 1, 'kind' => 'users',
+            'command_id' => $readId, 'received_at' => now()->toIso8601String(),
+            'users' => [['pin' => '0007', 'access' => ['StartDatetime' => '20261028', 'EndDatetime' => '20261029']]]];
+        $this->deliver($event)->assertAccepted();
+        (new ApplyGatewayReceipt($event['id']))->handle(app(ReceiptApplier::class));
+        tenancy()->initialize($company);
+        $this->assertSame('Verify on terminal', $write->fresh()->syncStatusLabel());
+        $this->assertFalse($write->fresh()->data_applied);
+        tenancy()->end();
+        $event['id'] = (string) Str::uuid();
+        $event['users'][0]['access'] += ['Expires' => '3', 'VaildCount' => '3'];
+        $this->deliver($event)->assertAccepted();
+        (new ApplyGatewayReceipt($event['id']))->handle(app(ReceiptApplier::class));
+        tenancy()->initialize($company);
+        $this->assertSame('Synced', $write->fresh()->syncStatusLabel());
+        $this->assertSame('Dates and entry limit', DeviceUserAccess::expiry($roster->fresh()));
+        foreach ([['pin' => '0007', 'mode' => 'none', 'entries' => '3'], ['pin' => '0007', 'mode' => 'entries', 'entries' => '0'],
+            ['pin' => '0007', 'mode' => 'entries', 'entries' => '3', 'from' => '2026-10-28'], ['pin' => '0007', 'mode' => 'both', 'entries' => '3']] as $invalid) {
+            try {
+                DeviceAccessValidity::parameters($invalid);
+                $this->fail('Incomplete/mixed expiration mode accepted.');
+            } catch (ValidationException) {
+                $this->assertTrue(true);
+            }
+        }
     }
 
     public function test_device_access_period_rejects_unsupported_firmware_and_unknown_device_user(): void

@@ -46,7 +46,7 @@ class DeviceCommand extends Model
 
     public function getAccessReadbackIdAttribute(): ?string
     {
-        return $this->command_type === 'set_user_access_group' && Str::isUuid($this->gateway_command_id ?? '')
+        return in_array($this->command_type, ['set_user_access_group', 'set_user_validity'], true) && Str::isUuid($this->gateway_command_id ?? '')
             ? (string) Uuid::uuid5($this->gateway_command_id, 'user-readback') : null;
     }
 
@@ -57,7 +57,7 @@ class DeviceCommand extends Model
 
     public function syncStatusLabel(): string
     {
-        if (! in_array($this->command_type, DeviceAccessSettings::OPERATIONS, true)) {
+        if (! in_array($this->command_type, [...DeviceAccessSettings::OPERATIONS, 'set_user_validity'], true)) {
             return '—';
         }
         $state = match ($this->status) {
@@ -70,7 +70,7 @@ class DeviceCommand extends Model
         if ($this->status !== 'acknowledged') {
             return 'Waiting for device';
         }
-        if ($this->command_type !== 'set_user_access_group') {
+        if (! in_array($this->command_type, ['set_user_access_group', 'set_user_validity'], true)) {
             return str_starts_with($this->command_type, 'query_')
                 ? ($this->data_applied ? 'Data saved' : 'Waiting for saved data') : 'Acknowledged';
         }
@@ -87,7 +87,7 @@ class DeviceCommand extends Model
             };
         }
 
-        return $read->data_applied ? 'Readback needs review' : 'Waiting for readback';
+        return $read->data_applied ? ($this->command_type === 'set_user_validity' ? 'Verify on terminal' : 'Readback needs review') : 'Waiting for readback';
     }
 
     public function syncStatusColor(): string

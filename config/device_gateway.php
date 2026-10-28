@@ -3,8 +3,8 @@
 return [
     // Exact firmware/profile and binding capabilities still gate every access command.
     'access_groups_enabled' => (bool) env('DEVICE_ACCESS_GROUPS_ENABLED', true),
-    // Keep validity writes unavailable until physical acceptance and reset semantics are resolved.
-    'user_validity_enabled' => false,
+    // Expiration is independent from daily periods; exact firmware and binding checks apply.
+    'user_validity_enabled' => (bool) env('DEVICE_USER_EXPIRATION_ENABLED', true),
     // History imports are preserved without sending old punch notifications.
     'live_punch_window_minutes' => 15,
     // Only gateway management origins from this operator-owned allowlist are callable.

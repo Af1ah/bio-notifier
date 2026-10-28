@@ -95,11 +95,11 @@ class DeviceUsersRelationManager extends RelationManager
                             ->getStateUsing(fn (DeviceRosterEntry $record): string => DeviceUserAccess::schedule($record)),
                         TextEntry::make('access_settings.Grp')->label('Reported access group')->placeholder('Not reported'),
                     ]),
-                Action::make('editDeviceUserAccess')->label('Edit access')->icon('heroicon-o-pencil-square')
+                Action::make('editDeviceUserAccess')->label('Daily time periods')->icon('heroicon-o-pencil-square')
                     ->authorize(fn (): bool => (bool) auth('web')->user()?->has_login && $this->accessSyncAvailable())
                     ->visible(fn (): bool => $this->accessSyncAvailable())
-                    ->modalHeading('Edit device user access')->modalSubmitActionLabel('Save and sync')
-                    ->modalDescription('Choose this user’s access group and daily-period mode on this device. Expiration and remaining entries are separate device settings.')
+                    ->modalHeading('Daily time periods')->modalSubmitActionLabel('Save and sync')
+                    ->modalDescription('Choose this user’s group or personal daily periods. Expiration rules are managed separately.')
                     ->fillForm(function (DeviceRosterEntry $record): array {
                         $access = $record->access_settings ?? [];
                         $tz = $access['TZ'] ?? '';
@@ -118,10 +118,6 @@ class DeviceUsersRelationManager extends RelationManager
                         Select::make('periods')->label('Personal periods')->multiple()->minItems(1)->maxItems(3)->required()
                             ->visible(fn ($get): bool => $get('mode') === 'personal')
                             ->options(fn () => DeviceAccessSetting::where('device_id', $this->getOwnerRecord()->id)->where('kind', 'period')->orderBy('number')->limit(1000)->get()->mapWithKeys(fn ($period) => [(string) $period->number => $period->number.' · '.$period->name])->all()),
-                        TextEntry::make('current_expiry')->label('Reported expiration rule')->getStateUsing(fn (DeviceRosterEntry $record): string => DeviceUserAccess::expiry($record)),
-                        TextEntry::make('current_start')->label('Expiration start')->getStateUsing(fn (DeviceRosterEntry $record): string => DeviceUserAccess::date($record->access_settings['StartDatetime'] ?? null)),
-                        TextEntry::make('current_end')->label('Expiration end')->getStateUsing(fn (DeviceRosterEntry $record): string => DeviceUserAccess::date($record->access_settings['EndDatetime'] ?? null)),
-                        TextEntry::make('current_entries')->label('Remaining entries')->getStateUsing(fn (DeviceRosterEntry $record): string => DeviceUserAccess::entries($record)),
                     ])
                     ->action(function (DeviceRosterEntry $record, array $data): void {
                         validator($data, ['request_id' => ['required', 'uuid'], 'mode' => ['required', 'in:group,personal']])->validate();
