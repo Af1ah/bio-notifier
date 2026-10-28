@@ -33,7 +33,7 @@ class DeviceCommand extends Model
 
     public function completionLabel(): string
     {
-        $read = in_array($this->command_type, ['query_biodata', 'query_users', 'info'], true) && $this->gateway_command_id;
+        $read = in_array($this->command_type, ['query_biodata', 'query_users', 'info', 'query_access_groups', 'query_access_periods'], true) && $this->gateway_command_id;
         if ($read && ($this->data_applied || $this->status === 'acknowledged')) {
             return $this->data_applied ? 'Data saved; inventory completeness unconfirmed' : ($this->data_receipt_ids ? 'Device data received; saving pending' : 'Device confirmed; no saved data');
         }

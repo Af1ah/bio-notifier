@@ -4,6 +4,7 @@ namespace App\Services\Devices;
 
 use App\Models\Device;
 use App\Models\DeviceCommand;
+use App\Models\DeviceRosterEntry;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -24,6 +25,15 @@ final class DeviceAccessValidity
         }
 
         return $data;
+    }
+
+    public function applyToDeviceUser(DeviceRosterEntry $record, Device $device, array $input): DeviceCommand
+    {
+        abort_unless($record->device_id === $device->id && DeviceRosterEntry::whereKey($record->id)
+            ->where('device_id', $device->id)->where('pin', $record->pin)->exists(), 403);
+
+        return app(DeviceCommandService::class)->request($device, 'set_user_validity',
+            self::parameters(['pin' => (string) $record->pin] + $input));
     }
 
     public function apply(User $employee, Device $device, array $input): DeviceCommand

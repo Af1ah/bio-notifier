@@ -1,6 +1,8 @@
 <?php
 
 return [
+    // Enable device writes only after this firmware's group/readback pilot.
+    'access_groups_enabled' => (bool) env('DEVICE_ACCESS_GROUPS_ENABLED', false),
     // Keep validity writes unavailable until physical acceptance and reset semantics are resolved.
     'user_validity_enabled' => false,
     // History imports are preserved without sending old punch notifications.

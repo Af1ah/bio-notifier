@@ -267,6 +267,8 @@ class DeviceResource extends Resource
             RelationManagers\AttendanceLogsRelationManager::class,
             RelationManagers\DeviceCommandsRelationManager::class,
             RelationManagers\DeviceUsersRelationManager::class,
+            RelationManagers\AccessGroupsRelationManager::class,
+            RelationManagers\AccessPeriodsRelationManager::class,
         ];
     }
 

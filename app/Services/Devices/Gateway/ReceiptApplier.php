@@ -2,9 +2,11 @@
 
 namespace App\Services\Devices\Gateway;
 
+use App\Casts\ProtectedArray;
 use App\Models\AttendanceDay;
 use App\Models\AttendanceLog;
 use App\Models\Device;
+use App\Models\DeviceAccessSetting;
 use App\Models\DeviceCommand;
 use App\Models\GatewayCommandSubmission;
 use App\Models\GatewayIngressReceipt;
@@ -118,11 +120,47 @@ final class ReceiptApplier
                         'receipt_id' => $receipt->id, 'attendance_log_id' => $logId, 'type' => 'calculation', 'state' => 'pending', 'created_at' => now(), 'updated_at' => now(),
                     ]);
                 }
+            } elseif (in_array($receipt->kind, ['access_groups', 'access_periods'], true)) {
+                foreach ($payload['access_records'] as $settings) {
+                    $kind = $receipt->kind === 'access_groups' ? 'group' : 'period';
+                    $entry = DeviceAccessSetting::firstOrNew(['device_id' => $device->id, 'kind' => $kind, 'number' => $settings['number']]);
+                    if ($entry->reported_at && $entry->reported_at->gt($received)) {
+                        continue;
+                    }
+                    $sameBinding = $entry->binding_id === $receipt->binding_id && $entry->binding_version === $receipt->binding_version;
+                    if (! $entry->exists || ! $sameBinding || ($entry->desired == $entry->reported && ! $entry->command_id)) {
+                        $entry->desired = $settings;
+                    }
+                    if (! $entry->exists) {
+                        $entry->name = ucfirst($kind).' '.$settings['number'];
+                    }
+                    if ($entry->exists && ! $sameBinding) {
+                        $entry->command_id = null;
+                        $entry->submitted_revision = null;
+                        $entry->origin = 'device';
+                        $entry->revision++;
+                    }
+                    $entry->reported = $settings;
+                    $entry->reported_at = $received;
+                    $entry->binding_id = $receipt->binding_id;
+                    $entry->binding_version = $receipt->binding_version;
+                    $entry->save();
+                }
             } elseif ($receipt->kind === 'users') {
                 foreach ($payload['users'] as $user) {
+                    $existing = DB::table('gateway_device_users')->where('device_id', $device->id)->where('pin', $user['pin'])->first();
+                    $values = ['name' => $user['name'] ?? null, 'card' => $user['card'] ?? null,
+                        'receipt_id' => $receipt->id, 'updated_at' => now()];
+                    if (! $existing) {
+                        $values['created_at'] = now();
+                    }
+                    // Device row is locked above. Older replays must not replace a newer access snapshot.
+                    if (! $existing?->access_received_at || $received->gte(Carbon::parse($existing->access_received_at))) {
+                        $values['access_settings'] = ProtectedArray::encode($user['access'] ?? []);
+                        $values['access_received_at'] = $received;
+                    }
                     DB::table('gateway_device_users')->updateOrInsert(
-                        ['device_id' => $device->id, 'pin' => $user['pin']],
-                        ['name' => $user['name'] ?? null, 'card' => $user['card'] ?? null, 'receipt_id' => $receipt->id, 'created_at' => now(), 'updated_at' => now()]
+                        ['device_id' => $device->id, 'pin' => $user['pin']], $values
                     );
                     $pin = trim((string) $user['pin']);
                     if ($pin === '') {

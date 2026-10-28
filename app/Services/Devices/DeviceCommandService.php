@@ -14,12 +14,12 @@ final class DeviceCommandService
         return $this->resolver->current()->supports($device, $operation);
     }
 
-    public function request(Device $device, string $operation, array $parameters = [], ?string $dependsOn = null): DeviceCommand
+    public function request(Device $device, string $operation, array $parameters = [], ?string $dependsOn = null, ?string $requestId = null): DeviceCommand
     {
         abort_unless(Device::whereKey($device->id)->where('serial_number', $device->serial_number)->exists(), 403);
         $transport = $this->resolver->current();
         abort_unless($transport->supports($device, $operation), 403);
 
-        return $transport->request($device, $operation, $parameters, $dependsOn);
+        return $transport->request($device, $operation, $parameters, $dependsOn, $requestId);
     }
 }

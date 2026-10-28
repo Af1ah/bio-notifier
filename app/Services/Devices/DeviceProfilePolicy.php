@@ -45,7 +45,7 @@ final class DeviceProfilePolicy
 
     public static function allows(Device $device, string $operation): bool
     {
-        if ($operation === 'set_user_validity') {
+        if (in_array($operation, ['set_user_validity', 'query_access_groups', 'query_access_periods', 'set_access_group', 'set_access_period', 'set_user_access_group'], true)) {
             return self::supportsValidity($device);
         }
 

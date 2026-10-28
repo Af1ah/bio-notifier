@@ -10,6 +10,7 @@ use App\Models\GatewayCommandSubmission;
 use App\Models\GatewayConnection;
 use App\Models\GatewayDeviceBinding;
 use App\Models\GatewayIngressReceipt;
+use App\Services\Devices\DeviceAccessSettings;
 use App\Services\Devices\DeviceAccessValidity;
 use App\Services\Devices\DeviceIntegration;
 use App\Services\Devices\DeviceProfilePolicy;
@@ -30,6 +31,11 @@ final class GatewayCommands
         'get_option' => 'Read device setting',
         'upsert_user' => 'Add or update device user',
         'set_user_validity' => 'Set device access period',
+        'query_access_groups' => 'Read access groups',
+        'query_access_periods' => 'Read daily periods',
+        'set_access_group' => 'Update access group',
+        'set_access_period' => 'Update daily period',
+        'set_user_access_group' => 'Assign access group',
         'delete_user' => 'Remove device user',
         'reset_transaction_stamp' => 'Reset Transaction Stamp',
         'reset_op_stamp' => 'Reset OP Stamp',
@@ -62,6 +68,9 @@ final class GatewayCommands
 
     public function available(Device $device, string $operation): bool
     {
+        if (in_array($operation, ['set_access_group', 'set_access_period', 'set_user_access_group'], true) && ! config('device_gateway.access_groups_enabled', false)) {
+            return false;
+        }
         if ($operation === 'set_user_validity' && ! config('device_gateway.user_validity_enabled', false)) {
             return false;
         }
@@ -85,6 +94,12 @@ final class GatewayCommands
         $id = $requestId ?? (string) Str::uuid();
         if ($requestId && ($existing = DeviceCommand::where('gateway_command_id', $requestId)->first())) {
             abort_unless($existing->device_id === $device->id && $existing->command_type === $operation, 409);
+            $expected = array_filter($parameters, fn ($value) => $value !== null);
+            if ($dependsOn !== null) {
+                $expected['__depends_on'] = $dependsOn;
+            }
+            $outbox = DB::table('gateway_command_outbox')->where('id', $requestId)->first();
+            abort_unless($outbox && ProtectedArray::decode($outbox->parameters) == $expected, 409);
             $this->relay((string) tenant('id'), $requestId);
 
             return $existing;
@@ -95,6 +110,9 @@ final class GatewayCommands
             if (GatewayIngressReceipt::where('organisation_id', tenant('id'))->where('device_id', $device->id)->where('kind', 'attendance')->where('state', '!=', 'applied')->exists()) {
                 throw ValidationException::withMessages(['dialect' => 'Attendance is still processing. Wait until saved punches have been applied before clearing the device.']);
             }
+        }
+        if (in_array($operation, ['query_access_groups', 'query_access_periods', 'set_access_group', 'set_access_period', 'set_user_access_group'], true)) {
+            $parameters = DeviceAccessSettings::parameters($operation, $parameters);
         }
         if ($operation === 'set_user_validity') {
             $parameters = DeviceAccessValidity::parameters($parameters);

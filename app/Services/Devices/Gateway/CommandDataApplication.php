@@ -12,7 +12,7 @@ final class CommandDataApplication
     public function received(GatewayIngressReceipt $receipt): void
     {
         $id = $receipt->payload['command_id'] ?? null;
-        if (! $id || ! in_array($receipt->kind, ['users', 'biometrics', 'biometric_photos', 'device_info'], true)) {
+        if (! $id || ! in_array($receipt->kind, ['users', 'biometrics', 'biometric_photos', 'device_info', 'access_groups', 'access_periods'], true)) {
             return;
         }
         $command = DeviceCommand::where('gateway_command_id', $id)->lockForUpdate()->first();

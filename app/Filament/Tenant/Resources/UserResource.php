@@ -480,7 +480,6 @@ class UserResource extends Resource
                             Notification::make()->title('Device update queued')
                                 ->body("{$count} command(s) queued. Track their results in Device Commands.")->success()->send();
                         }),
-                    \App\Filament\Tenant\Actions\DeviceAccessPeriodAction::make(),
                     \App\Filament\Tenant\Actions\RefreshEbioPhotoAction::make(),
                     Action::make('fetchBiometric')
                         ->authorize(fn (): bool => tenant()?->device_integration === DeviceIntegration::GATEWAY)

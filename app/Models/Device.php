@@ -81,6 +81,16 @@ class Device extends Model
         return $this->hasMany(DeviceRosterEntry::class, 'device_id');
     }
 
+    public function accessGroups(): HasMany
+    {
+        return $this->hasMany(DeviceAccessSetting::class)->where('kind', 'group');
+    }
+
+    public function accessPeriods(): HasMany
+    {
+        return $this->hasMany(DeviceAccessSetting::class)->where('kind', 'period');
+    }
+
     public function pendingCommands(): HasMany
     {
         return $this->commands()->where('status', 'pending');

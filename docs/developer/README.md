@@ -20,3 +20,5 @@ Client-facing configuration and operations are in [Client guides](../client/READ
 Older engineering documents remain in the parent docs directory. New client guides belong under docs/client; new engineering guides belong here.
 
 - [Master panel and desktop scope](master-panel-desktop-scope.md): current duties, automated device registration, and removing master/eBio support from the desktop edition.
+
+- [Device access groups and per-user sync](device-access-groups-2026-10-28.md): separate per-device group/period tabs, per-user Edit access and Save and sync, native readback requirements and firmware qualification.
