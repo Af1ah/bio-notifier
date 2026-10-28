@@ -3,6 +3,9 @@
 namespace App\Models;
 
 use App\Services\Devices\DeviceIntegration;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\ValidationException;
 use Stancl\Tenancy\Contracts\TenantWithDatabase;
 use Stancl\Tenancy\Database\Concerns\HasDatabase;
 use Stancl\Tenancy\Database\Concerns\HasDomains;
@@ -78,6 +81,28 @@ class Organisation extends BaseTenant implements TenantWithDatabase
 
     protected static function booted()
     {
+        static::updating(function ($tenant) {
+            // Virtual-column event decoding resets originals before this event. Compare persisted settings.
+            $previous = $tenant->fresh()?->timezone ?: config('attendance.timezone', 'Asia/Kolkata');
+            $next = $tenant->timezone ?: config('attendance.timezone', 'Asia/Kolkata');
+            if ($previous === $next) {
+                return;
+            }
+            // Legacy attendance columns contain local wall times, not UTC instants.
+            // A normal settings update must never reinterpret an existing payroll calendar.
+            $hasHistory = $tenant->run(function () {
+                foreach (['attendance_logs', 'attendance_days', 'manual_attendance_entries'] as $table) {
+                    if (Schema::hasTable($table) && DB::table($table)->exists()) {
+                        return true;
+                    }
+                }
+
+                return false;
+            });
+            if ($hasHistory) {
+                throw ValidationException::withMessages(['timezone' => 'Attendance already exists. Changing its timezone requires a reviewed history migration.']);
+            }
+        });
         static::creating(function ($tenant) {
             $tenant->device_integration ??= DeviceIntegration::GATEWAY;
             $tenant->ebio_webhook_token = bin2hex(random_bytes(32));

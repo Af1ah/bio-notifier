@@ -94,7 +94,7 @@
             <table>
                 <tr>
                     <td style="text-align: left;"><b>Company:</b> {{ $tenantName }}</td>
-                    <td style="text-align: right;"><b>Printed On:</b> {{ now()->format('M d Y H:i') }}</td>
+                    <td style="text-align: right;"><b>Printed On:</b> {{ \App\Services\Support\TenantTimezone::formatInstant(now(), 'M d Y H:i') }}</td>
                 </tr>
             </table>
         </div>

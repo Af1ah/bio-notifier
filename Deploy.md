@@ -1,375 +1,154 @@
-# Production Deployment Guide
+# Production deployment and troubleshooting
 
-For the October security/schema changes and webhook credential migration, follow [Beta verification and recovery](docs/beta-verification.md) before resuming workers.
+Bio-Notifier has two services: a Laravel application for organisations, attendance and payroll, and a Go ADMS gateway for device communication. PostgreSQL stores the central application database, one database per organisation, and a separate gateway database. eBio remains available for organisations configured to use it.
 
-Since we have merged everything into a single, unified application, deploying to a fresh production instance (like a VPS or Laravel Forge) is now incredibly simple. 
+This guide describes the current Linux deployment. The Windows offline and semi-offline editions are plans, not installed deployment targets. Check the release notes and [beta verification and recovery](docs/beta-verification.md) for migrations or one-time changes specific to a release.
 
-You no longer need to worry about custom packages, symlinks, or private repositories. Your entire app lives in one place on GitHub: `https://github.com/Af1ah/bio-notifier`.
+## Paths and prerequisites
 
-## Prerequisites
+The examples use these paths; replace them if your installation differs:
 
-On your fresh production server (e.g. Ubuntu 22.04/24.04), install the required dependencies one by one:
+- Laravel: `/var/www/bio-notifier`
+- Gateway source and Compose file: `/opt/bio-device-gateway`
+- Application user: `www-data`
 
-**1. Update system packages:**
+Install PHP and its extensions required by `composer.lock`, Composer, PostgreSQL, Nginx, Supervisor, Docker and the Compose plugin. PHP 8.2 or newer is required; use the actual installed PHP-FPM service and socket version. The gateway image is built from its own Dockerfile. Keep the Laravel and gateway releases compatible and deploy them together when their protocol or schema changes.
+
+The gateway management listener must remain private. Configure the device listener and reverse proxy according to the device protocol and network; verify whether each device actually supports TLS. A browser's HTTPS connection does not prove a terminal supports HTTPS. Set DNS and certificates for the domains used by the web application and the device listener, and route `/iclock/` traffic to the device listener, not the management API. Never expose gateway management endpoints or tokens to devices.
+
+## Before an update
+
+1. Identify the release and inspect both working trees. Preserve existing local changes; do not run `git reset --hard` or overwrite configuration to make a checkout clean.
+2. Take a restorable backup of the central, all tenant and gateway databases, private storage, and the original Laravel `APP_KEY` and gateway encryption key. Store keys separately and securely. Test restoration in an isolated environment. A database dump alone cannot decrypt protected data.
+3. Check disk space, queued work and service health. Plan a maintenance window when schema changes or incompatible releases require one. Coordinate eBio delivery where applicable.
+
 ```bash
-sudo apt update && sudo apt upgrade -y
+cd /var/www/bio-notifier
+php artisan --version
+php artisan migrate:status
+php artisan tenants:list
+sudo supervisorctl status
+cd /opt/bio-device-gateway
+docker compose ps
 ```
 
-**2. Install Web Server (Nginx):**
+Do not print `.env` files, tokens, biometric data or raw device payloads into tickets or shared logs. Do not replace keys on an existing installation. `php artisan key:generate` is for a new installation only.
+
+## First installation
+
+1. Place the Laravel and gateway sources in their respective directories. Create private environment files from the corresponding `.env.example` files and configure each installation's own domains, database credentials and keys. Set `APP_ENV=production`, `APP_DEBUG=false` and the correct `APP_URL` and `CENTRAL_DOMAIN`. Keep runtime files owned and writable by the appropriate service account.
+2. Provision PostgreSQL central and tenant access for Laravel and a dedicated gateway database and least-privilege role. Configure the gateway encryption key, management and event tokens, listener addresses and Laravel event URL. Configure the matching shared gateway connection in the master panel. The local provisioning scripts are explicitly local-only and must not be used as a production installer.
+3. In the Laravel directory install locked dependencies and build frontend assets when needed. Configure the web server to serve `public/` and route PHP to the installed PHP-FPM socket.
+
 ```bash
-sudo apt install nginx -y
-```
-
-**3. Install Database (PostgreSQL or MySQL):**
-```bash
-# For PostgreSQL
-sudo apt install postgresql postgresql-contrib -y
-
-# OR for MySQL/MariaDB
-sudo apt install mariadb-server -y
-```
-
-**4. Install PHP and Required Extensions (adjust version 8.2+ as needed):**
-```bash
-sudo apt install php8.2-fpm php8.2-cli php8.2-pgsql php8.2-mysql php8.2-mbstring php8.2-xml php8.2-bcmath php8.2-curl php8.2-zip unzip -y
-```
-
-**5. Install Composer:**
-```bash
-curl -sS https://getcomposer.org/installer | php
-sudo mv composer.phar /usr/local/bin/composer
-```
-
-**6. Install Supervisor (for Background Queues):**
-```bash
-sudo apt install supervisor -y
-```
-
-## Step-by-Step Deployment
-
-### 1. Clone the Repository
-SSH into your production server and navigate to your web directory (e.g. `/var/www/html`), then clone your repository:
-```bash
-git clone https://github.com/Af1ah/bio-notifier.git .
-```
-
-### 2. Install Dependencies
-Install all required PHP packages optimized for production:
-```bash
-composer install --optimize-autoloader --no-dev
-```
-
-### 3. Environment Configuration
-Copy the example environment file and generate your application key:
-```bash
-cp .env.example .env
-php artisan key:generate
-```
-
-Now, open the `.env` file using a text editor like `nano`:
-```bash
-nano .env
-```
-Update your database credentials to match your production MySQL database:
-```env
-DB_CONNECTION=mysql
-DB_HOST=127.0.0.1
-DB_PORT=3306
-DB_DATABASE=your_production_db_name
-DB_USERNAME=your_production_db_user
-DB_PASSWORD=your_production_db_password
-```
-
-> [!IMPORTANT]
-> Make sure you change `APP_ENV=local` to `APP_ENV=production` and `APP_DEBUG=true` to `APP_DEBUG=false` in your `.env` file!
-
-### 4. Run Migrations & Setup Database
-Because this is a multi-tenant system, you must run migrations for BOTH the central database (Master Admin) and the tenant databases.
-
-1. **Migrate the central database:**
-```bash
+cd /var/www/bio-notifier
+composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction
+npm ci
+npm run build
 php artisan migrate --force
-```
-
-2. **Migrate all tenant databases:**
-```bash
 php artisan tenants:migrate --force
-```
-
-3. **Create your initial Master Admin user:**
-```bash
-php artisan make:filament-user
-```
-
-### 5. Optimize Caches
-To ensure your production application runs as fast as possible, cache your configurations, routes, and views:
-```bash
-php artisan optimize
-php artisan filament:optimize
-```
-
-### 6. Storage Link & Permissions
-Ensure Nginx/Apache has permission to read and write to the storage folders, and link the public storage directory:
-```bash
 php artisan storage:link
-sudo chown -R www-data:www-data storage bootstrap/cache
+php artisan optimize:clear
+php artisan config:cache
+php artisan route:cache
+php artisan view:cache
 ```
 
-### 7. Configure Supervisor for Queue Workers
+Run application commands as the configured application user where practical; ensure it can write `storage`, `bootstrap/cache`, and published assets. A new installation must generate its application key once before using encrypted data. Set up TLS, scheduled tasks, queue workers and the gateway before registering devices. Create the initial master administrator using the application's supported provisioning process.
 
-Bio-Notifier uses the connection's default queue for webhook, application, and attendance recalculation jobs. Run `php artisan queue:work` from the application directory in development; no attendance-specific worker is needed. Restart any existing worker after deploying this change.
+## Routine update
 
-Jobs already queued on the old `attendance` queue retain their queue name. During an upgrade, drain those jobs once with `php artisan queue:work --queue=default,attendance --stop-when-empty`, then use the normal worker below. Invalid reversed-date calculations are rejected, not executed. The scheduler still requires its separate cron entry.
+Use a reviewed release checkout or artifact; do not assume a Git branch is the running release. Back up first. Preserve the production `.env`, storage, keys, tenant data and gateway `.env`. When copying individual files, preserve their relative paths: copying `app/Services/Devices/DeviceProfilePolicy.php` into `app/` does not update the class used by Laravel. Avoid `rsync --delete` unless the destination and exclusions have been reviewed.
 
-1. Create a new configuration file:
-```bash
-sudo nano /etc/supervisor/conf.d/bio-notifier-worker.conf
-```
-
-2. Add the following configuration (replace `/var/www/html` with your exact project path, e.g. `/var/www/bio-notifier`):
-```ini
-[program:bio-notifier-worker]
-process_name=%(program_name)s_%(process_num)02d
-command=php /var/www/html/artisan queue:work --sleep=3 --tries=3 --timeout=60 --max-time=3600
-autostart=true
-autorestart=true
-stopasgroup=true
-killasgroup=true
-user=www-data
-numprocs=1
-redirect_stderr=true
-stdout_logfile=/var/www/html/storage/logs/worker.log
-stopwaitsecs=3600
-```
-
-3. Read the new configuration and start the worker:
-```bash
-sudo supervisorctl reread
-sudo supervisorctl update
-sudo supervisorctl start bio-notifier-worker:*
-```
-
-After each deployment, restart long-running workers so they load the new application code:
+From the Laravel directory, as the application user where appropriate:
 
 ```bash
+cd /var/www/bio-notifier
+composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction
+# Run these when frontend sources or dependencies changed:
+npm ci
+npm run build
+php artisan optimize:clear
+php artisan migrate --force
+php artisan tenants:migrate --force
+php artisan config:cache
+php artisan route:cache
+php artisan view:cache
 php artisan queue:restart
-sudo supervisorctl status bio-notifier-worker:*
 ```
 
-When deploying authentication changes, run `php artisan optimize:clear` and
-`npm ci && npm run build`, and reload PHP-FPM (or restart `php artisan serve`
-in development). Deploy the generated `public/sw.js` with the PHP changes.
-Tenant session and remember cookies are now scoped to each organisation;
-existing tenant logins require one fresh login after this update. The master
-panel keeps its own session. Authenticated HTML is fetched from the server,
-never restored from the service-worker page cache; the new worker removes the
-old `pages` cache on activation. Do not disable CSRF protection or extend the
-session lifetime to work around expired-page errors.
-
-The worker log is written to `storage/logs/worker.log`. Investigate failed jobs before retrying them:
+The central migration and tenant migration commands are both required for a multi-tenant update. `queue:restart` signals workers to exit after their current job; the process manager must restart them. Reload the installed PHP-FPM service to ensure web processes load the release:
 
 ```bash
-php artisan queue:failed
-php artisan queue:retry <job-uuid>
+sudo systemctl reload php8.4-fpm  # Replace 8.4 with the installed version.
+sudo supervisorctl status
 ```
 
-### 8. Configure the Laravel Scheduler
-
-Attendance for the previous workday is queued automatically every day at midnight in the configured attendance timezone. The application schedule does not run by itself; production needs one system cron entry.
-
-Open the web-server user's crontab:
+For a gateway update, use its existing configuration and rebuild the container:
 
 ```bash
-sudo crontab -u www-data -e
+cd /opt/bio-device-gateway
+docker compose up -d --build
+docker compose ps
+docker compose logs --tail=50 gateway
 ```
 
-Add this line, replacing `/var/www/html` with the deployed project path:
+The gateway applies its own additive schema at startup. Check startup logs before resuming device operations. Do not roll back binaries or migrations blindly: newer encrypted command or receipt data may be incompatible with an older release. Recovery requires a coordinated, tested plan.
+
+## Workers and scheduler
+
+### Optional Redis reference cache
+
+The default application cache, sessions and queues remain database-backed. `REFERENCE_CACHE_ENABLED=true` enables only 30-second branch, department and task-group dropdown caches. Redis access is limited to the `reference` connection; it uses `REDIS_REFERENCE_HOST`, `REDIS_REFERENCE_PORT`, `REDIS_REFERENCE_DB` (default 2), and optional `REDIS_REFERENCE_USERNAME` / `REDIS_REFERENCE_PASSWORD`. Credentials fall back to the corresponding REDIS variables. It uses a 0.2-second connection/read timeout and falls back to the live database if Redis is unavailable. Names may take up to 30 seconds to refresh; payroll validation and employee selection still read the database. Set `REFERENCE_CACHE_ENABLED=false` and refresh cached configuration to disable this optional path.
+
+Tenant Redis stores prefix values and locks with the organisation identity. Tagged tenant flushes are scoped; a raw tenant Redis-store flush is blocked because FLUSHDB ignores key prefixes. Keep Redis private and do not share a destructive maintenance command across applications. This feature does not require changing the Redis process's memory or eviction settings; review those separately for the complete shared service. Do not change CACHE_STORE, SESSION_DRIVER or QUEUE_CONNECTION to enable this limited cache.
+
+Run the existing default Laravel worker for eBio and other application work, plus gateway queue workers. The gateway source contains `scripts/workers.conf.example`; copy and adapt its paths, user, process names and log locations. Its lanes are `device-ingest`, `device-commands`, `attendance-live`, and `exports-notifications` on the `gateway` connection. Keep timeouts below the queue retry interval and allow workers to finish when stopping them. Service names vary by installation; inspect them before restarting.
+
+The scheduler must run every minute, either through an existing supervised scheduler or one cron entry for the application user:
 
 ```cron
-* * * * * cd /var/www/html && php artisan schedule:run >> /dev/null 2>&1
+* * * * * cd /var/www/bio-notifier && php artisan schedule:run >> /dev/null 2>&1
 ```
 
-Confirm that Laravel sees the nightly task:
+Use one scheduler mechanism for the installation. Verify scheduling and workers:
 
 ```bash
+cd /var/www/bio-notifier
 php artisan schedule:list
-```
-
-The output should contain `attendance:recalculate-nightly` at `00:00` in the configured attendance timezone. The command calculates yesterday, not the newly started day, so employees have had time to complete their final punch.
-
-To verify dispatch safely for one tenant and date:
-
-```bash
-php artisan attendance:recalculate-nightly --tenant=TENANT_SHORTNAME --date=2026-09-30
-php artisan queue:work --stop-when-empty
-```
-
-Monitor the result under **Organisation Management → Recalculation runs**. A successful run must reach `completed = total` with `failed = 0`.
-
-Manual historical backfills remain intentionally bounded to 31 days per command. Split longer periods into non-overlapping ranges:
-
-```bash
-php artisan attendance:recalculate TENANT_SHORTNAME 2026-08-01 2026-08-31
-php artisan attendance:recalculate TENANT_SHORTNAME 2026-09-01 2026-09-30
-```
-
-Before a historical backfill, confirm that the applicable shift rule and assignment were effective throughout the requested dates. Otherwise, those days will correctly calculate as `No shift`.
-
-### 9. Web Server Configuration (Nginx & Multi-Tenancy)
-
-Bio-Notifier uses an isolated domain-based routing system for tenants. To allow clients to have their own domains (like `client1.noti.ariise.cloud`) without breaking other apps on your server, you need to set up a wildcard properly in Nginx.
-
-**DNS Configuration in your Registrar:**
-1. Point an A-record for your base domain (e.g. `noti.ariise.cloud`) to your server IP.
-2. Point a Wildcard A-record (e.g. `*.noti.ariise.cloud`) to your server IP.
-
-**Nginx Setup:**
-1. Create a new Nginx server block configuration:
-```bash
-sudo nano /etc/nginx/sites-available/bio-notifier
-```
-
-2. Add the following standard Nginx setup. Ensure you explicitly list the wildcard in `server_name` so Nginx routes all tenant traffic here!
-
-```nginx
-server {
-    listen 80;
-    listen [::]:80;
-
-    # Explicitly catch the master domain AND all subdomains
-    server_name noti.ariise.cloud *.noti.ariise.cloud;
-    
-    root /var/www/html/public; # IMPORTANT: This MUST point to the /public directory!
-
-    add_header X-Frame-Options "SAMEORIGIN";
-    add_header X-Content-Type-Options "nosniff";
-
-    index index.php;
-
-    charset utf-8;
-
-    location / {
-        try_files $uri $uri/ /index.php?$query_string;
-    }
-
-    location = /favicon.ico { access_log off; log_not_found off; }
-    location = /robots.txt  { access_log off; log_not_found off; }
-
-    error_page 404 /index.php;
-
-    location ~ \.php$ {
-        fastcgi_pass unix:/var/run/php/php8.2-fpm.sock; # Ensure PHP version matches what you installed
-        fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
-        include fastcgi_params;
-        fastcgi_hide_header X-Powered-By;
-    }
-
-    location ~ /\.(?!well-known).* {
-        deny all;
-    }
-}
-```
-
-3. Enable the site and restart Nginx:
-```bash
-sudo ln -s /etc/nginx/sites-available/bio-notifier /etc/nginx/sites-enabled/
-sudo nginx -t
-sudo systemctl restart nginx
-```
-
-### 10. Environment Variables (.env)
-
-Make sure your `.env` contains the correct routing information so the system knows how to build tenant URLs correctly.
-
-```env
-APP_URL=https://noti.ariise.cloud
-CENTRAL_DOMAIN=noti.ariise.cloud
-ATTENDANCE_TIMEZONE=Asia/Kolkata
-ATTENDANCE_NIGHTLY_TIME=00:00
-```
-*Note: Setting `CENTRAL_DOMAIN` guarantees that when you create a tenant named "client1", their URL becomes `client1.noti.ariise.cloud` perfectly without stacking extra domains.*
-
-`ATTENDANCE_TIMEZONE` controls which local midnight starts the nightly calculation. `ATTENDANCE_NIGHTLY_TIME` uses 24-hour `HH:MM` format. After changing either value, refresh cached configuration and restart workers:
-
-```bash
-php artisan optimize
-php artisan queue:restart
-```
-
-### Attendance Deployment Verification
-
-Run these checks after deploying attendance changes:
-
-```bash
-php artisan schedule:list
-sudo supervisorctl status bio-notifier-worker:*
 php artisan queue:failed
+sudo supervisorctl status
 ```
 
-Then confirm in the tenant panel:
+`gateway:recover` is scheduled for bounded recovery. Inspect the failure and durable receipt/command state before replay or retry. Avoid bulk retries, queue deletion or resetting device stamps as a first troubleshooting step.
 
-1. New raw punches appear under **Attendance Logs**.
-2. The following morning's **Recalculation run** is completed without failures.
-3. Completed IN/OUT days appear in **Reports** without manual approval.
-4. Only genuine missing-checkout, correction, or qualifying overtime exceptions appear under **Attendance approvals**.
-5. Payroll generation remains blocked if attendance is stale or approvals are pending.
+## Add a device
 
-## Configuring the Attendance Devices
+For an organisation using ADMS, add the terminal once from **Devices → Add device** with its actual serial number, name, location and time zone. The application creates and syncs its gateway binding automatically. Configure the terminal with the device server address from **Connection setup**; use the transport and port supported by that terminal. Select supported verification methods in device settings; a selected scanner type does not establish biometric algorithm compatibility. Refresh device details and check command outcomes when testing a new model.
 
-Once your application is live on your domain (e.g. `https://zkteco.ariise.cloud`), you need to configure your physical ZKTeco attendance devices.
+For an eBio organisation, use its eBio connection and webhook setup. Copy its current webhook URL from the application into eBio and set the expected response to `Success`. Newly created organisations receive credentials automatically; rotating one invalidates the old URL. Do not reset eBio's historical sync date without investigating first.
 
-On the device menu, navigate to **Cloud Server Settings** or **ADMS Settings** and enter:
-- **Server Address:** `zkteco.ariise.cloud`
-- **Server Port:** `443` (if using HTTPS) or `80`
-- **Server URL / Domain:** `http://zkteco.ariise.cloud` (or just `zkteco.ariise.cloud` if the device asks for Server Address)
+## After deployment
 
-> [!WARNING]
-> Do **not** add `/api` to the end of the URL! We recently updated the architecture to handle biometric requests directly on the root domain (e.g., `/iclock/cdata`). If your device firmware asks for a "Server Address", simply enter your domain without `http://` or `/iclock`.
+- Confirm Laravel, PHP-FPM, Supervisor workers, scheduler and gateway container are running. Confirm migrations completed for the central database and every tenant.
+- Check the device's last activity and inspect receipt/command status. A queued or acknowledged command is not proof that a physical operation succeeded; verify with the terminal when required.
+- Confirm a new punch reaches the correct organisation and device, then confirm attendance processing. Review failed jobs and pending or quarantined receipts without exposing sensitive payloads.
+- For payroll changes, check an existing paid payslip and an older month. Do not regenerate or modify processed payslips merely to verify a deployment.
 
-## Docker Support (Local & Development)
+## Troubleshooting
 
-Docker support has been added to the project via Laravel Sail. This makes it incredibly easy to spin up the application without installing PHP or PostgreSQL directly on your local machine.
+**Page fails after a PHP release:** Check the Laravel log and PHP-FPM log, file ownership and published assets. Run locked `composer install --no-dev`, clear caches and reload the correct PHP-FPM service. A missing development-only provider can indicate stale package discovery/autoload metadata. Do not run `composer update` on production to fix it.
 
-### Prerequisites for Docker
-- Docker Engine
-- Docker Compose
+**A device is offline or appears connected after unplugging:** Check the displayed last activity, timezone, current poll interval, device server address and gateway logs. A recent heartbeat indicates recent contact, not a continuously open connection. Confirm the serial and binding belong to the intended organisation before interpreting the status.
 
-### Getting Started with Docker
+**A device or command is missing:** Confirm the organisation uses the gateway, its device serial matches the saved binding, the binding is enabled and synced, and the command is permitted for the device's observed profile. Refresh device details and inspect the command result. Capabilities and compatible fingerprint/face algorithms differ; a check box or INFO response does not prove a template can be transferred. Check the deployed files in their actual relative paths and clear caches after updating.
 
-1. **Clone the repository:**
-```bash
-git clone https://github.com/Af1ah/bio-notifier.git
-cd bio-notifier
-```
+**A command stays pending or fails:** Check the device's recent polls, the device-commands worker, gateway container and command expiry. Distinguish queued, sent, acknowledgement, returned data and applied data. A read can be acknowledged without returning its data; an ambiguous outcome should be investigated before resending a door, reset or destructive command.
 
-2. **Install Composer Dependencies (using a small Docker container):**
-```bash
-docker run --rm \
-    -u "$(id -u):$(id -g)" \
-    -v "$(pwd):/var/www/html" \
-    -w /var/www/html \
-    laravelsail/php82-composer:latest \
-    composer install --ignore-platform-reqs
-```
+**Attendance is missing:** Check gateway and Laravel receipt state, worker health, quarantine and tenant ownership. For eBio, check webhook URL, exact `Success` response, worker and receipt state. Preserve raw punches and manual corrections. Replay retained evidence only after identifying the problem; clearing device logs or resetting stamps can lose data or resend history.
 
-3. **Configure Environment:**
-```bash
-cp .env.example .env
-```
-Make sure your `.env` contains the Sail DB settings (e.g. `DB_HOST=pgsql`).
+**Older salary slips do not appear:** Select the payroll month and check the status, employee and organisation filters. Paid slips can be hidden by a status filter. Verify records exist before generating anything again; processed payroll should not be rewritten as a visibility fix.
 
-4. **Start the Docker Containers:**
-```bash
-./vendor/bin/sail up -d
-```
+**Times differ:** Inspect the organisation and device time zones, whether a field represents UTC or local wall time, and the terminal clock. Change display or device time settings only after identifying the source; do not bulk-shift raw historical punches.
 
-5. **Run Migrations & Generate Key:**
-```bash
-./vendor/bin/sail artisan key:generate
-./vendor/bin/sail artisan migrate
-```
-
-Your application will now be accessible at `http://localhost`. To stop the containers, simply run:
-```bash
-./vendor/bin/sail down
-```
+**Gateway won't start or deliver:** Check `docker compose ps`, gateway logs, private listener addresses, database reachability, configured tokens and encryption key, Laravel event endpoint, disk space and worker health. A successful HTTP response alone does not establish that a receipt was applied. See the gateway README and [ADMS history and clear](docs/developer/adms-stamps-history-and-clear-2026-10-20.md) for recovery boundaries.

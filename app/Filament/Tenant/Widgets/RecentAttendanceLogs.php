@@ -29,7 +29,7 @@ class RecentAttendanceLogs extends TableWidget
                     ->badge(),
                 \Filament\Tables\Columns\TextColumn::make('punched_at')
                     ->label('Time')
-                    ->time()
+                    ->time()->timezone(fn () => \App\Services\Support\TenantTimezone::get())
                     ->sortable(),
             ])
             ->paginated(false)

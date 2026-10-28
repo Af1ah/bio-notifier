@@ -2,8 +2,10 @@
 
 namespace App\Models;
 
+use App\Casts\TenantWallTime;
 use App\Jobs\RefreshAttendanceDay;
 use App\Jobs\SendPunchNotification;
+use App\Services\Attendance\ManualAttendanceProtection;
 use App\Services\Payroll\PayrollFreshnessService;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -31,6 +33,9 @@ class AttendanceLog extends Model
     {
         parent::boot();
 
+        static::updating(fn () => throw new \LogicException('Device punches are immutable. Submit a manual correction.'));
+        static::deleting(fn () => throw new \LogicException('Device punches are retained as source evidence.'));
+
         static::created(function ($log) {
             $user = $log->user;
             if (! $user) {
@@ -40,11 +45,23 @@ class AttendanceLog extends Model
                 $query->whereDate('work_date', $log->punched_at->toDateString())
                     ->orWhereHas('occurrences', fn ($q) => $q->where('window_starts_at', '<=', $log->punched_at)->where('window_ends_at', '>=', $log->punched_at));
             })->get();
+            $refreshDates = [$log->punched_at->copy()->subDay()->toDateString(), $log->punched_at->toDateString()];
+            $protectedEvidence = false;
             foreach ($days as $day) {
-                $day->update(['stale_at' => now()]);
-                app(PayrollFreshnessService::class)->invalidate($user->id, $day->work_date);
-                if (tenancy()->initialized) {
-                    RefreshAttendanceDay::dispatch((string) tenant('id'), $user->id, $day->work_date->toDateString())->afterCommit();
+                if (app(ManualAttendanceProtection::class)->applies($day)) {
+                    $protectedEvidence = true;
+                } else {
+                    $day->update(['stale_at' => now()]);
+                    app(PayrollFreshnessService::class)->invalidate($user->id, $day->work_date);
+                }
+                $refreshDates[] = $day->work_date->toDateString();
+            }
+            if (tenancy()->initialized) {
+                foreach (array_unique($refreshDates) as $date) {
+                    if ($protectedEvidence && ! AttendanceDay::where('user_id', $user->id)->whereDate('work_date', $date)->exists()) {
+                        continue;
+                    }
+                    RefreshAttendanceDay::dispatch((string) tenant('id'), $user->id, $date)->onConnection('gateway')->onQueue('attendance-live')->afterCommit();
                 }
             }
             if (tenancy()->initialized && $user->whatsapp_number) {
@@ -54,7 +71,7 @@ class AttendanceLog extends Model
     }
 
     protected $casts = [
-        'punched_at' => 'datetime',
+        'punched_at' => TenantWallTime::class,
         'raw_data' => 'array',
     ];
 
@@ -71,6 +88,17 @@ class AttendanceLog extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class, 'pin', 'pin');
+    }
+
+    /** Immutable interpretation captured when the punch arrived; never consult today's device setting. */
+    public function getAttendanceStatusAttribute(): int
+    {
+        return match ($this->raw_data['device_direction'] ?? 'DEVICE') {
+            'IN' => 0,
+            'OUT' => 1,
+            'INOUT' => 255,
+            default => (int) $this->status,
+        };
     }
 
     public function getStatusLabelAttribute(): string

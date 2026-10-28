@@ -9,9 +9,15 @@ use App\Models\DeviceCommand;
 use App\Models\GatewayCommandSubmission;
 use App\Models\GatewayIngressReceipt;
 use App\Models\User;
+use App\Services\Attendance\AttendanceReplayReconciler;
+use App\Services\Attendance\ManualAttendanceProtection;
+use App\Services\Devices\BiometricCredentials;
+use App\Services\Devices\PrivateBiometricPhoto;
 use App\Services\Payroll\PayrollFreshnessService;
+use App\Services\Support\TenantTimezone;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 final class ReceiptApplier
 {
@@ -29,63 +35,88 @@ final class ReceiptApplier
             }
             $device = Device::whereKey($receipt->device_id)->where('serial_number', $payload['serial'])->lockForUpdate()->firstOrFail();
             $received = Carbon::parse($payload['received_at']);
+            app(CommandDataApplication::class)->received($receipt);
             if (! $device->last_activity_at || $received->gt($device->last_activity_at)) {
                 $device->update(['last_activity_at' => $received, 'status' => 'online']);
             }
             if ($receipt->kind === 'attendance') {
+                $reconciler = new AttendanceReplayReconciler;
+                $calculations = [];
+                $invalidated = [];
+                $evidence = [];
                 foreach ($payload['punches'] as $index => $punch) {
                     // The legacy application stores tenant-local wall time. Keep the original offset as evidence.
-                    $at = Carbon::parse($punch['at'])->setTimezone(config('attendance.timezone', 'Asia/Kolkata'));
+                    $at = Carbon::parse($punch['at'])->setTimezone(TenantTimezone::get());
                     $log = AttendanceLog::withoutEvents(fn () => AttendanceLog::firstOrCreate([
                         'pin' => $punch['pin'], 'punched_at' => $at->format('Y-m-d H:i:s'),
                     ], [
                         'device_id' => $device->id, 'status' => $punch['status'], 'verify_type' => $punch['verify'],
-                        'work_code' => $punch['work_code'] ?? null, 'raw_data' => ['source' => 'device', 'receipt_id' => $receipt->id, 'original_time' => $punch['at']],
+                        'work_code' => $punch['work_code'] ?? null, 'raw_data' => ['source' => 'device', 'device_direction' => $device->attendanceDirection(), 'receipt_id' => $receipt->id, 'original_time' => $punch['at'], 'utc_time' => Carbon::parse($punch['at'])->utc()->toIso8601String(), 'timezone' => TenantTimezone::get()],
                     ]));
-                    DB::table('gateway_attendance_evidence')->insert([
+                    $evidence[] = [
                         'receipt_id' => $receipt->id, 'record_index' => $index, 'attendance_log_id' => $log->id,
                         'serial' => $payload['serial'], 'pin' => $punch['pin'], 'original_time' => $punch['at'],
                         'raw_status' => $punch['status'], 'raw_verify' => $punch['verify'], 'created_at' => now(), 'updated_at' => now(),
-                    ]);
+                    ];
+                    if (! $log->wasRecentlyCreated) {
+                        $reconciler->recoverMissingDay($log);
+                    }
                     if ($log->wasRecentlyCreated) {
                         $employee = $employees->get($punch['pin']);
                         if ($employee) {
                             // Reuse the already-loaded employee/device; no extra lookup per punch.
-                            $format = match ((int) $punch['verify']) { 1 => 'finger', 15 => 'face', default => null };
+                            $format = match ((int) $punch['verify']) {
+                                1 => 'finger', 15 => 'face', default => null
+                            };
                             $templates = $format === 'finger' ? $employee->fingerprints : $employee->face_templates;
                             $stored = is_array($templates) && collect($templates)->contains(fn ($template) => is_array($template) && filled($template['tmp'] ?? null));
                             $requests = $employee->biometric_fetch_requests ?? [];
                             if ($format && ! $stored && ! isset($requests[$format]) && $device->supportsVerificationFormat($format)) {
-                                $requests[$format] = ['command_id' => (string) \Illuminate\Support\Str::uuid(), 'device_id' => $device->id];
+                                $requests[$format] = ['command_id' => (string) Str::uuid(), 'device_id' => $device->id];
                                 $employee->update(['biometric_fetch_requests' => $requests]);
                                 DB::table('gateway_domain_effects')->insert([
                                     'receipt_id' => $receipt->id, 'attendance_log_id' => $log->id,
                                     'type' => 'biometric_'.$format, 'state' => 'pending', 'created_at' => now(), 'updated_at' => now(),
                                 ]);
                             }
-                            $dates = [$at->copy()->subDay()->toDateString(), $at->toDateString()];
-                            $days = AttendanceDay::where('user_id', $employee->id)->where(function ($query) use ($dates, $at) {
-                                $query->where(function ($datesQuery) use ($dates) {
-                                    foreach ($dates as $date) $datesQuery->orWhereDate('work_date', $date);
+                            $candidateDates = [$at->copy()->subDay()->toDateString(), $at->toDateString()];
+                            $dates = [];
+                            $days = AttendanceDay::where('user_id', $employee->id)->where(function ($query) use ($candidateDates, $at) {
+                                $query->where(function ($datesQuery) use ($candidateDates) {
+                                    foreach ($candidateDates as $date) {
+                                        $datesQuery->orWhereDate('work_date', $date);
+                                    }
                                 })->orWhereHas('occurrences', fn ($q) => $q->where('window_starts_at', '<=', $at)->where('window_ends_at', '>=', $at));
                             })->orderBy('id')->lockForUpdate()->get();
                             foreach ($days as $day) {
-                                $day->update(['stale_at' => now()]);
-                                $dates[] = $day->work_date->toDateString();
+                                if (! isset($invalidated[$day->id]) && ! app(ManualAttendanceProtection::class)->applies($day)) {
+                                    $invalidated[$day->id] = true;
+                                    $day->update(['stale_at' => now()]);
+                                    $dates[] = $day->work_date->toDateString();
+                                }
                             }
                             foreach (array_unique($dates) as $date) {
                                 app(PayrollFreshnessService::class)->invalidate($employee->id, \Carbon\Carbon::parse($date));
                             }
                         }
-                        DB::table('gateway_domain_effects')->insert([
-                            'receipt_id' => $receipt->id, 'attendance_log_id' => $log->id, 'type' => 'calculation', 'state' => 'pending', 'created_at' => now(), 'updated_at' => now(),
-                        ]);
-                        if ($log->user?->whatsapp_number) {
+                        if ($employee) {
+                            // One whole-day calculation covers all punches in this employee/date batch.
+                            $calculations[$employee->id.':'.$at->toDateString()] = $log->id;
+                        }
+                        if ($employee?->whatsapp_number && $at->betweenIncluded($received->copy()->subMinutes(max(1, min(60, (int) config('device_gateway.live_punch_window_minutes', 15)))), $received->copy()->addMinutes(5))) {
                             DB::table('gateway_domain_effects')->insert([
                                 'receipt_id' => $receipt->id, 'attendance_log_id' => $log->id, 'type' => 'notification', 'state' => 'pending', 'created_at' => now(), 'updated_at' => now(),
                             ]);
                         }
                     }
+                }
+                foreach (array_chunk($evidence, 500) as $rows) {
+                    DB::table('gateway_attendance_evidence')->insert($rows);
+                }
+                foreach ($calculations as $logId) {
+                    DB::table('gateway_domain_effects')->insert([
+                        'receipt_id' => $receipt->id, 'attendance_log_id' => $logId, 'type' => 'calculation', 'state' => 'pending', 'created_at' => now(), 'updated_at' => now(),
+                    ]);
                 }
             } elseif ($receipt->kind === 'users') {
                 foreach ($payload['users'] as $user) {
@@ -125,29 +156,22 @@ final class ReceiptApplier
                     }
                     // Stable receipt paths make replay safe without public photo URLs.
                     $path = 'biometric-photos/'.$receipt->id.'-'.$index.'.jpg';
-                    if (! \Illuminate\Support\Facades\Storage::disk('local')->put($path, $contents, ['visibility' => 'private'])) {
-                        throw new \RuntimeException('Unable to save device photo.');
-                    }
+                    PrivateBiometricPhoto::put($path, $contents);
                     $employee->update(['ai_face_photo_path' => $path]);
                 }
             } elseif ($receipt->kind === 'biometrics') {
                 foreach ($payload['biometrics'] as $template) {
+                    if (($template['bio_type'] ?? null) === '9') {
+                        $info = array_merge($device->options['observed_metadata'] ?? [], array_intersect_key($template, array_flip(['major_ver', 'minor_ver', 'format'])), ['biometric_type' => '9']);
+                        $device->update(['options' => array_replace($device->options ?? [], ['observed_metadata' => $info])]);
+                    }
                     $employee = User::where('pin', trim((string) $template['pin']))->lockForUpdate()->first();
                     if (! $employee) {
                         continue;
                     }
                     $column = $template['type'] === 'face' ? 'face_templates' : 'fingerprints';
                     $templates = is_array($employee->{$column}) ? $employee->{$column} : [];
-                    $templates[(string) $template['slot']] = array_filter([
-                        'size' => $template['size'] ?? null,
-                        'valid' => $template['valid'] ?? null,
-                        'tmp' => $template['tmp'],
-                        'bio_type' => $template['bio_type'] ?? null,
-                        'index' => $template['index'] ?? null,
-                        'major_ver' => $template['major_ver'] ?? null,
-                        'minor_ver' => $template['minor_ver'] ?? null,
-                        'format' => $template['format'] ?? null,
-                    ], fn ($value) => $value !== null);
+                    $templates = BiometricCredentials::remember($templates, $template, $payload['serial'], $received->toIso8601String());
                     $employee->{$column} = $templates;
                     if ($template['type'] === 'face') {
                         $employee->face_enrolled = true;
@@ -155,7 +179,11 @@ final class ReceiptApplier
                     $employee->save();
                 }
             } elseif ($receipt->kind === 'device_info') {
-                $device->update($payload['device_info']);
+                $metadata = $payload['device_info'];
+                // Observed identity cannot overwrite the centrally registered serial.
+                $device->update(array_intersect_key($metadata, array_flip(['firmware_version', 'model', 'device_type', 'push_version'])) + [
+                    'options' => array_replace($device->options ?? [], ['profile_policy_version' => 1, 'observed_metadata' => array_replace($device->options['observed_metadata'] ?? [], $metadata)]),
+                ]);
             } elseif ($receipt->kind === 'command_result') {
                 $submission = GatewayCommandSubmission::findOrFail($payload['command_id']);
                 if ($submission->binding_id !== $receipt->binding_id || $submission->binding_version !== $receipt->binding_version || $submission->organisation_id !== $receipt->organisation_id) {

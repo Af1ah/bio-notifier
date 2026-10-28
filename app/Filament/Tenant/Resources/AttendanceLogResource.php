@@ -2,11 +2,12 @@
 
 namespace App\Filament\Tenant\Resources;
 
-use Filament\Actions\BulkActionGroup;
-use Filament\Actions\DeleteBulkAction;
+use App\Filament\Forms\Components\LocalDateTimePicker;
+use App\Filament\Tenant\Resources\AttendanceLogResource\Pages;
+use App\Models\AttendanceLog;
+use App\Services\Support\TenantTimezone;
 use Filament\Actions\ViewAction;
 use Filament\Forms\Components\DatePicker;
-use Filament\Forms\Components\DateTimePicker;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Resources\Resource;
@@ -14,18 +15,27 @@ use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
 use Filament\Tables;
 use Filament\Tables\Table;
-use App\Filament\Tenant\Resources\AttendanceLogResource\Pages;
-use App\Models\AttendanceLog;
+use Illuminate\Database\Eloquent\Model;
 
 class AttendanceLogResource extends Resource
 {
     protected static ?string $model = AttendanceLog::class;
 
-    protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-clipboard-document-list';
+    protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-clipboard-document-list';
 
     protected static \UnitEnum|string|null $navigationGroup = 'Device Management';
 
     protected static ?int $navigationSort = 99;
+
+    public static function canDelete(Model $record): bool
+    {
+        return false;
+    }
+
+    public static function canDeleteAny(): bool
+    {
+        return false;
+    }
 
     public static function form(Schema $schema): Schema
     {
@@ -37,7 +47,8 @@ class AttendanceLogResource extends Resource
                         ->required(),
                     TextInput::make('pin')
                         ->required(),
-                    DateTimePicker::make('punched_at')
+                    LocalDateTimePicker::make('punched_at')
+                        ->timezone(fn (): string => TenantTimezone::get())
                         ->required(),
                     Select::make('status')
                         ->options([
@@ -76,9 +87,13 @@ class AttendanceLogResource extends Resource
                     ->placeholder('Unknown'),
                 Tables\Columns\TextColumn::make('punched_at')
                     ->dateTime()
+                    ->timezone(fn (): string => TenantTimezone::get())
                     ->sortable(),
                 Tables\Columns\TextColumn::make('status')
                     ->badge()
+                    ->description(fn (AttendanceLog $record): ?string => $record->attendance_status === (int) $record->status ? null : match ($record->attendance_status) {
+                        0 => 'Attendance: Entry', 1 => 'Attendance: Exit', 255 => 'Attendance: Unspecified', default => null
+                    })
                     ->formatStateUsing(fn ($state) => match (is_numeric($state) ? (int) $state : null) {
                         0 => 'Check In',
                         1 => 'Check Out',
@@ -125,11 +140,7 @@ class AttendanceLogResource extends Resource
             ->recordActions([
                 ViewAction::make(),
             ])
-            ->toolbarActions([
-                BulkActionGroup::make([
-                    DeleteBulkAction::make(),
-                ]),
-            ]);
+            ->toolbarActions([]);
     }
 
     public static function getPages(): array

@@ -2,8 +2,9 @@
     $path = (string) $getRecord()->ai_face_photo_path;
     $disk = \Illuminate\Support\Facades\Storage::disk('local');
     $photo = null;
-    if (str_starts_with($path, 'biometric-photos/') && ! str_contains($path, '..') && $disk->exists($path) && $disk->size($path) <= 786432) {
-        $photo = 'data:image/jpeg;base64,'.base64_encode($disk->get($path));
+    if ($path !== '') {
+        try { $photo = 'data:image/jpeg;base64,'.base64_encode(\App\Services\Devices\PrivateBiometricPhoto::read($path)); }
+        catch (\RuntimeException $exception) { $photo = null; }
     }
 @endphp
 <x-filament-infolists::entry-wrapper :entry="$entry">

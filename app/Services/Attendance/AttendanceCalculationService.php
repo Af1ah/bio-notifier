@@ -12,6 +12,7 @@ use App\Models\ShiftRuleRevision;
 use App\Models\User;
 use App\Services\Leave\CompensatoryLeaveService;
 use App\Services\Payroll\PayrollFreshnessService;
+use App\Services\Support\TenantTimezone;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -21,9 +22,9 @@ class AttendanceCalculationService
 {
     public function __construct(private readonly ShiftAssignmentResolver $assignments) {}
 
-    public function calculate(User $user, Carbon $workDate): AttendanceDay
+    public function calculate(User $user, Carbon $workDate, bool $preserveManualDecisions = true): AttendanceDay
     {
-        return DB::transaction(function () use ($user, $workDate) {
+        return DB::transaction(function () use ($user, $workDate, $preserveManualDecisions) {
             // Lock an existing parent before creating a day: this also protects
             // the first calculation, where there is no day row to lock yet.
             User::whereKey($user->id)->lockForUpdate()->firstOrFail();
@@ -40,6 +41,18 @@ class AttendanceCalculationService
             }
             if ($day->exists && empty($day->explanation['input_signature']) && $day->approvals()->where('calculation_revision', $day->calculation_revision)->where('state', 'approved')->exists()) {
                 throw ValidationException::withMessages(['attendance' => 'Legacy approved attendance has no input baseline. Review and migrate its decision before recalculating; the approved result was preserved.']);
+            }
+            if ($day->exists && $preserveManualDecisions && app(ManualAttendanceProtection::class)->applies($day)) {
+                // Keep the decision baseline distinct from later raw evidence. A rejected proposal may then reconcile it.
+                if (($day->explanation['manual_reconciliation']['observed_input_signature'] ?? null) === $signature && $day->stale_at === null) {
+                    return $day->fresh('occurrences');
+                }
+                $day->update(['stale_at' => null, 'explanation' => array_merge($day->explanation ?? [], [
+                    'manual_reconciliation' => ['preserved' => true, 'original_signature' => $day->explanation['manual_reconciliation']['original_signature'] ?? $day->explanation['input_signature'] ?? null,
+                        'observed_input_signature' => $signature, 'observed_at' => now()->toIso8601String(), 'reason' => 'New source evidence retained; manual attendance decision preserved.'],
+                ])]);
+
+                return $day->fresh('occurrences');
             }
             app(PayrollFreshnessService::class)->invalidate($user->id, $workDate);
             if ($day->exists) {
@@ -72,15 +85,15 @@ class AttendanceCalculationService
                 if (! $rule) {
                     continue;
                 }
-                $start = Carbon::parse($workDate->toDateString().' '.$rule->start_time);
-                $end = Carbon::parse($workDate->toDateString().' '.$rule->end_time)->addDays((int) $rule->end_day_offset);
+                $start = TenantTimezone::parse($workDate->toDateString().' '.$rule->start_time);
+                $end = TenantTimezone::parse($workDate->toDateString().' '.$rule->end_time)->addDays((int) $rule->end_day_offset);
                 $windowStart = $start->copy()->subMinutes($rule->earliest_arrival_minutes);
                 $cutoff = $end->copy()->addMinutes($rule->checkout_cutoff_minutes);
                 $next = $slots->get($index + 1);
                 if ($next) {
                     $nextRule = $next->schedule?->activeRuleRevision($workDate);
                     if ($nextRule) {
-                        $nextOpen = Carbon::parse($workDate->toDateString().' '.$nextRule->start_time)->addDays((int) ($nextRule->start_time < $rule->start_time))->subMinutes($nextRule->earliest_arrival_minutes);
+                        $nextOpen = TenantTimezone::parse($workDate->toDateString().' '.$nextRule->start_time)->addDays((int) ($nextRule->start_time < $rule->start_time))->subMinutes($nextRule->earliest_arrival_minutes);
                         if ($nextOpen->lt($cutoff)) {
                             $cutoff = $nextOpen;
                         }
@@ -102,7 +115,7 @@ class AttendanceCalculationService
                 }
                 $assumed = null;
                 if (($open || ($in && ! $out)) && $manualForShift->isEmpty() && $rule->auto_checkout_enabled && now()->gte($cutoff)) {
-                    $candidate = Carbon::parse($workDate->toDateString().' '.$rule->auto_checkout_time)->addDays((int) $rule->auto_checkout_day_offset);
+                    $candidate = TenantTimezone::parse($workDate->toDateString().' '.$rule->auto_checkout_time)->addDays((int) $rule->auto_checkout_day_offset);
                     if ($candidate->gt(($open ?? $in)->punched_at) && $candidate->lte($cutoff)) {
                         $assumed = $candidate;
                         $workedIntervals[] = [($open ?? $in)->punched_at, $candidate];
@@ -161,14 +174,14 @@ class AttendanceCalculationService
                 continue;
             }
             $rule->load(['weekdays', 'breaks']);
-            $cutoff = Carbon::parse($date->toDateString().' '.$rule->end_time)->addDays((int) $rule->end_day_offset)->addMinutes($rule->checkout_cutoff_minutes);
+            $cutoff = TenantTimezone::parse($date->toDateString().' '.$rule->end_time)->addDays((int) $rule->end_day_offset)->addMinutes($rule->checkout_cutoff_minutes);
             // Include off-day/holiday device evidence in the revision fingerprint.
-            $windows[] = [Carbon::parse($date->toDateString().' '.$rule->start_time)->subMinutes($rule->earliest_arrival_minutes), $cutoff];
+            $windows[] = [TenantTimezone::parse($date->toDateString().' '.$rule->start_time)->subMinutes($rule->earliest_arrival_minutes), $cutoff];
             $rules[] = [$slot->id, $rule->toArray(), now()->gte($cutoff), DB::table('shift_break_weekdays')->whereIn('shift_break_id', $rule->breaks->pluck('id'))->orderBy('id')->get()->toArray()];
         }
         foreach (ManualAttendanceEntry::with('ruleRevision')->where('user_id', $user->id)->whereDate('work_date', $date)->get() as $entry) {
             $rule = $entry->ruleRevision;
-            $windows[] = [Carbon::parse($date->toDateString().' '.$rule->start_time)->subMinutes($rule->earliest_arrival_minutes), Carbon::parse($date->toDateString().' '.$rule->end_time)->addDays($rule->end_day_offset)->addMinutes($rule->checkout_cutoff_minutes)];
+            $windows[] = [TenantTimezone::parse($date->toDateString().' '.$rule->start_time)->subMinutes($rule->earliest_arrival_minutes), TenantTimezone::parse($date->toDateString().' '.$rule->end_time)->addDays($rule->end_day_offset)->addMinutes($rule->checkout_cutoff_minutes)];
         }
         $punches = $windows ? AttendanceLog::where('pin', $user->pin)->where(function ($query) use ($windows) {
             foreach ($windows as $window) {
@@ -185,13 +198,13 @@ class AttendanceCalculationService
     {
         $rule = $occurrence->ruleRevision()->firstOrFail();
         $open = $occurrence->explanation['open_in_at'] ?? null;
-        $intervals = ! $replaceInterval && $open ? array_map(fn ($v) => [Carbon::parse($v[0]), Carbon::parse($v[1])], $occurrence->explanation['worked_intervals'] ?? []) : [];
+        $intervals = ! $replaceInterval && $open ? array_map(fn ($v) => [TenantTimezone::parse($v[0]), TenantTimezone::parse($v[1])], $occurrence->explanation['worked_intervals'] ?? []) : [];
         if ($open && ! $replaceInterval) {
-            $intervals = array_values(array_filter($intervals, fn ($v) => $v[0]->lt(Carbon::parse($open))));
+            $intervals = array_values(array_filter($intervals, fn ($v) => $v[0]->lt(TenantTimezone::parse($open))));
         }
-        $intervals[] = [(! $replaceInterval && $open) ? Carbon::parse($open) : $occurrence->first_in_at, $checkout];
+        $intervals[] = [(! $replaceInterval && $open) ? TenantTimezone::parse($open) : $occurrence->first_in_at, $checkout];
         if ($replaceInterval && count($occurrence->explanation['worked_intervals'] ?? []) > 1) {
-            $intervals = array_map(fn ($v) => [Carbon::parse($v[0]), Carbon::parse($v[1])], $occurrence->explanation['worked_intervals']);
+            $intervals = array_map(fn ($v) => [TenantTimezone::parse($v[0]), TenantTimezone::parse($v[1])], $occurrence->explanation['worked_intervals']);
             $intervals[0][0] = $occurrence->first_in_at;
             $intervals[count($intervals) - 1][1] = $checkout;
             foreach ($intervals as $interval) {
@@ -202,7 +215,7 @@ class AttendanceCalculationService
         }
         $breakMinutes = $this->breakMinutes($rule, $day->work_date, $intervals);
         $minutes = max(0, $this->unionMinutes($intervals) - $breakMinutes);
-        $end = Carbon::parse($day->work_date->toDateString().' '.$rule->end_time)->addDays((int) $rule->end_day_offset);
+        $end = TenantTimezone::parse($day->work_date->toDateString().' '.$rule->end_time)->addDays((int) $rule->end_day_offset);
         $occurrence->update([
             'last_out_at' => $checkout, 'assumed_out_at' => null,
             'candidate_worked_minutes' => $minutes, 'approved_worked_minutes' => $minutes,
@@ -221,9 +234,9 @@ class AttendanceCalculationService
                 if (! $slotRule) {
                     continue;
                 }
-                $slotEnd = Carbon::parse($day->work_date->toDateString().' '.$slotRule->end_time)->addDays((int) $slotRule->end_day_offset);
+                $slotEnd = TenantTimezone::parse($day->work_date->toDateString().' '.$slotRule->end_time)->addDays((int) $slotRule->end_day_offset);
                 if (($slot->explanation['checkout_source'] ?? null) === 'hr' || $slot->assumed_out_at) {
-                    $worked = array_map(fn ($v) => [Carbon::parse($v[0]), Carbon::parse($v[1])], $slot->explanation['worked_intervals'] ?? [[$slot->first_in_at->toIso8601String(), ($slot->last_out_at ?? $slot->assumed_out_at)->toIso8601String()]]);
+                    $worked = array_map(fn ($v) => [TenantTimezone::parse($v[0]), TenantTimezone::parse($v[1])], $slot->explanation['worked_intervals'] ?? [[$slot->first_in_at->toIso8601String(), ($slot->last_out_at ?? $slot->assumed_out_at)->toIso8601String()]]);
                 } else {
                     [, , $worked] = $this->pair($slot->punches->pluck('attendanceLog')->filter()->sortBy('punched_at')->values(), $slotRule->punch_method);
                 }
@@ -251,13 +264,13 @@ class AttendanceCalculationService
         $approved = [];
         foreach ($slots as $slot) {
             $rule = $slot->ruleRevision;
-            $intervals = array_map(fn ($v) => [Carbon::parse($v[0]), Carbon::parse($v[1])], $slot->explanation['worked_intervals'] ?? []);
+            $intervals = array_map(fn ($v) => [TenantTimezone::parse($v[0]), TenantTimezone::parse($v[1])], $slot->explanation['worked_intervals'] ?? []);
             $net = $this->withoutBreaks($rule, $day->work_date, $intervals);
             $all = array_merge($all, $net);
             if ($slot->approved_worked_minutes > 0) {
                 $approved = array_merge($approved, $net);
             }
-            $end = Carbon::parse($day->work_date->toDateString().' '.$rule->end_time)->addDays($rule->end_day_offset);
+            $end = TenantTimezone::parse($day->work_date->toDateString().' '.$rule->end_time)->addDays($rule->end_day_offset);
             $available[$slot->id] = ($rule->snapshot['overtime_enabled'] ?? true) ? ($policy->overtime_basis === 'after_shift_end' ? $this->minutesAfter($net, $end) : $slot->candidate_worked_minutes) : 0;
         }
         $eligible = $policy->overtime_basis === 'after_shift_end' ? array_sum($available) : max(0, $day->candidate_worked_minutes - $policy->full_day_minutes);
@@ -293,10 +306,10 @@ class AttendanceCalculationService
             $first = null;
             $last = null;
             foreach ($p as $log) {
-                if ((int) $log->status === 0) {
+                if ($log->attendance_status === 0) {
                     $stack = $log;
                     $first ??= $log;
-                } elseif ((int) $log->status === 1 && $stack && $log->punched_at->gt($stack->punched_at)) {
+                } elseif ($log->attendance_status === 1 && $stack && $log->punched_at->gt($stack->punched_at)) {
                     $intervals[] = [$stack->punched_at, $log->punched_at];
                     $last = $log;
                     $stack = null;
@@ -313,9 +326,9 @@ class AttendanceCalculationService
     private function mergeIntervals(array $intervals): array
     {
         $result = [];
-        foreach (collect($intervals)->sortBy(fn ($v) => Carbon::parse($v[0])->timestamp) as [$start,$end]) {
-            $start = Carbon::parse($start);
-            $end = Carbon::parse($end);
+        foreach (collect($intervals)->sortBy(fn ($v) => TenantTimezone::parse($v[0])->timestamp) as [$start,$end]) {
+            $start = TenantTimezone::parse($start);
+            $end = TenantTimezone::parse($end);
             if ($end->lte($start)) {
                 continue;
             }
@@ -332,13 +345,13 @@ class AttendanceCalculationService
 
     private function unionMinutes(array $intervals): int
     {
-        $ranges = collect($intervals)->filter(fn ($v) => $v[0] && $v[1] && Carbon::parse($v[1])->gt($v[0]))->sortBy(fn ($v) => Carbon::parse($v[0])->timestamp)->values();
+        $ranges = collect($intervals)->filter(fn ($v) => $v[0] && $v[1] && TenantTimezone::parse($v[1])->gt($v[0]))->sortBy(fn ($v) => TenantTimezone::parse($v[0])->timestamp)->values();
         $total = 0;
         $s = null;
         $e = null;
         foreach ($ranges as [$a,$b]) {
-            $a = Carbon::parse($a);
-            $b = Carbon::parse($b);
+            $a = TenantTimezone::parse($a);
+            $b = TenantTimezone::parse($b);
             if (! $s) {
                 $s = $a;
                 $e = $b;
@@ -362,12 +375,12 @@ class AttendanceCalculationService
             if (! DB::table('shift_break_weekdays')->where('shift_break_id', $break->id)->where('weekday', $date->dayOfWeek)->exists()) {
                 continue;
             }
-            $start = Carbon::parse($date->toDateString().' '.$break->start_time)->addDays($break->day_offset);
+            $start = TenantTimezone::parse($date->toDateString().' '.$break->start_time)->addDays($break->day_offset);
             $end = $start->copy()->addMinutes($break->duration_minutes);
             $remaining = [];
             foreach ($intervals as [$a, $b]) {
-                $a = Carbon::parse($a);
-                $b = Carbon::parse($b);
+                $a = TenantTimezone::parse($a);
+                $b = TenantTimezone::parse($b);
                 if ($b->lte($start) || $a->gte($end)) {
                     $remaining[] = [$a, $b];
 
@@ -394,8 +407,8 @@ class AttendanceCalculationService
     private function minutesAfter(array $intervals, Carbon $after): int
     {
         return collect($intervals)->sum(function ($v) use ($after) {
-            $s = Carbon::parse($v[0])->max($after);
-            $e = Carbon::parse($v[1]);
+            $s = TenantTimezone::parse($v[0])->max($after);
+            $e = TenantTimezone::parse($v[1]);
 
             return $e->gt($s) ? $s->diffInMinutes($e) : 0;
         });
@@ -413,8 +426,8 @@ class AttendanceCalculationService
 
     public function isHoliday(User $user, Carbon $date): bool
     {
-        return HolidayOccurrence::whereDate('holiday_date', $date)->whereHas('holiday', function ($q) use ($user, $date) {
-            $q->where('active', true)->where(function ($q) use ($user, $date) {
+        return HolidayOccurrence::whereDate('holiday_date', $date)->whereHas('holiday', function ($q) use ($user) {
+            $q->where('active', true)->where(function ($q) use ($user) {
                 $q->whereDoesntHave('branches')->whereDoesntHave('departments')->whereDoesntHave('taskGroups')->orWhereHas('branches', fn ($x) => $x->whereKey($user->branch_id))->orWhereHas('departments', fn ($x) => $x->whereKey($user->department_id))->orWhereHas('taskGroups', fn ($x) => $x->whereIn('task_groups.id', $user->taskGroups()->pluck('task_groups.id')));
             });
         })->exists();

@@ -6,6 +6,8 @@ use App\Models\AttendanceDay;
 use App\Models\AttendanceLog;
 use App\Models\Organisation;
 use App\Services\Attendance\AttendanceCalculationService;
+use App\Services\Attendance\ManualAttendanceProtection;
+use App\Services\Devices\Gateway\GatewayCommands;
 use App\Services\Payroll\PayrollFreshnessService;
 use App\Services\WhatsAppService;
 use Carbon\Carbon;
@@ -59,11 +61,17 @@ class ApplyDomainEffect implements ShouldQueue
                 $days = collect([$log->punched_at->copy()->subDay()->toDateString(), $log->punched_at->toDateString()]);
                 $existing = AttendanceDay::where('user_id', $user->id)->whereHas('occurrences', fn ($q) => $q->where('window_starts_at', '<=', $log->punched_at)->where('window_ends_at', '>=', $log->punched_at))->get();
                 foreach ($existing as $day) {
-                    $day->update(['stale_at' => now()]);
+                    if (! app(ManualAttendanceProtection::class)->applies($day)) {
+                        $day->update(['stale_at' => now()]);
+                    }
                     $days->push($day->work_date->toDateString());
                 }
+                $protectedEvidence = $existing->contains(fn ($day) => app(ManualAttendanceProtection::class)->applies($day));
                 foreach ($days->unique() as $date) {
-                    $freshness->invalidate($user->id, Carbon::parse($date));
+                    if ($protectedEvidence && ! AttendanceDay::where('user_id', $user->id)->whereDate('work_date', $date)->exists()) {
+                        continue;
+                    }
+                    // The calculator invalidates payroll only when the effective result may change.
                     $calculator->calculate($user, Carbon::parse($date));
                 }
             } elseif ($user && in_array($effect->type, ['biometric_finger', 'biometric_face'], true)) {
@@ -73,7 +81,7 @@ class ApplyDomainEffect implements ShouldQueue
                 $request = ($user->biometric_fetch_requests ?? [])[$format] ?? null;
                 $device = $log->device;
                 if (! $stored && $request && $device && (int) $request['device_id'] === $device->id && $device->supportsVerificationFormat($format)) {
-                    $commands = app(\App\Services\Devices\Gateway\GatewayCommands::class);
+                    $commands = app(GatewayCommands::class);
                     if ($commands->available($device, 'query_biodata')) {
                         $commands->request($device, 'query_biodata', ['pin' => (string) $user->pin, 'type' => $format], $request['command_id']);
                     }

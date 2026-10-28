@@ -10,7 +10,7 @@ class AttendanceOccurrence extends Model
 
     protected function casts(): array
     {
-        return ['window_starts_at' => 'datetime', 'window_ends_at' => 'datetime', 'first_in_at' => 'datetime', 'last_out_at' => 'datetime', 'assumed_out_at' => 'datetime', 'exception_flags' => 'array', 'explanation' => 'array'];
+        return ['window_starts_at' => \App\Casts\TenantWallTime::class, 'window_ends_at' => \App\Casts\TenantWallTime::class, 'first_in_at' => \App\Casts\TenantWallTime::class, 'last_out_at' => \App\Casts\TenantWallTime::class, 'assumed_out_at' => \App\Casts\TenantWallTime::class, 'exception_flags' => 'array', 'explanation' => 'array'];
     }
 
     public function attendanceDay()

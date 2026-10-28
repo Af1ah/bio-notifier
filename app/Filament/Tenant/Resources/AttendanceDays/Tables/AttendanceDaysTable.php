@@ -2,6 +2,7 @@
 
 namespace App\Filament\Tenant\Resources\AttendanceDays\Tables;
 
+use App\Filament\Tenant\Resources\AttendanceDays\Schemas\AttendanceCorrectionForm;
 use App\Models\AttendanceDay;
 use App\Models\Schedule;
 use App\Services\Attendance\AttendanceBaselineService;
@@ -9,14 +10,11 @@ use App\Services\Attendance\AttendanceEntryService;
 use App\Services\Attendance\AttendanceRateLimiter;
 use Filament\Actions\Action;
 use Filament\Forms\Components\DatePicker;
-use Filament\Forms\Components\DateTimePicker;
 use Filament\Forms\Components\Hidden;
 use Filament\Forms\Components\Placeholder;
-use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\Toggle;
 use Filament\Schemas\Components\Utilities\Get;
-use Filament\Schemas\Components\Utilities\Set;
 use Filament\Schemas\Schema;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\Filter;
@@ -28,17 +26,18 @@ class AttendanceDaysTable
 {
     public static function configure(Table $table): Table
     {
-        return $table->modifyQueryUsing(fn ($query) => $query->with(['user', 'compensatoryAward']))->columns([
+        return $table->modifyQueryUsing(fn ($query) => $query->with(['user', 'compensatoryAward'])->withExists(['approvals as has_pending_attendance_approval' => fn ($q) => $q->where('type', 'attendance')->where('state', 'pending')]))->columns([
             TextColumn::make('user.name')->label('Employee')->searchable(),
             TextColumn::make('work_date')->label('Date')->date()->sortable(),
             TextColumn::make('occurrences.schedule.name')->label('Shift')->badge(),
-            TextColumn::make('status')->label('Attendance')->badge()->formatStateUsing(fn (string $state): string => match ($state) {
+            TextColumn::make('status')->label('Attendance')->badge()->formatStateUsing(fn (string $state, AttendanceDay $record): string => $record->has_pending_attendance_approval ? 'Waiting for approval' : match ($state) {
                 'present' => 'Present', 'half_day' => 'Half day', 'absent' => 'Absent', 'off' => 'Off', 'holiday' => 'Holiday', 'pending', 'pending_approval' => 'Needs review', 'no_shift' => 'No shift', default => str($state)->replace('_', ' ')->title(),
-            })->color(fn (string $state): string => match ($state) {
+            })->color(fn (string $state, AttendanceDay $record): string => $record->has_pending_attendance_approval ? 'warning' : match ($state) {
                 'present' => 'success', 'half_day', 'pending', 'pending_approval' => 'warning', 'absent' => 'danger', default => 'gray',
             }),
             TextColumn::make('worked_time')->label('Worked time')->state(function (AttendanceDay $record): string {
                 $minutes = $record->approved_worked_minutes ?: $record->candidate_worked_minutes;
+
                 return intdiv((int) $minutes, 60).'h '.((int) $minutes % 60).'m';
             }),
             TextColumn::make('candidate_overtime_minutes')->label('Overtime')->formatStateUsing(fn ($state) => intdiv((int) $state, 60).'h '.((int) $state % 60).'m')->toggleable(isToggledHiddenByDefault: true),
@@ -55,22 +54,8 @@ class AttendanceDaysTable
         ])->recordActions([
             ...CompensatoryAttendanceActions::actions(),
             Action::make('correct')->label('Correct')->icon('heroicon-o-pencil')->modalDescription('The original row and device punches are preserved. Corrected times are calculated using the selected shift and take effect after approval.')
-                ->fillForm(function (AttendanceDay $record): array {
-                    $occ = $record->occurrences()->orderBy('position')->first();
-
-                    return ['attendance_occurrence_id' => $occ?->id, 'proposed_in_at' => $occ?->first_in_at, 'proposed_out_at' => $occ?->assumed_out_at ?? $occ?->last_out_at, 'proposed_status' => null];
-                })->schema([
-                    Placeholder::make('current_row')->content(fn (AttendanceDay $record) => $record->user->name.' · '.$record->work_date->format('d M Y').' · Original status: '.$record->status.' · '.$record->candidate_worked_minutes.' minutes'),
-                    Select::make('attendance_occurrence_id')->label('Shift occurrence')->options(fn (AttendanceDay $record) => $record->occurrences()->with('schedule')->orderBy('position')->get()->mapWithKeys(fn ($o) => [$o->id => ($o->schedule?->name ?? 'Shift').' · '.$o->window_starts_at->format('d M H:i').'–'.$o->window_ends_at->format('d M H:i')]))->required(fn (Get $get) => filled($get('proposed_in_at')) || filled($get('proposed_out_at')))->live()
-                        ->afterStateUpdated(function ($state, Set $set, AttendanceDay $record) {
-                            $occ = $record->occurrences()->find($state);
-                            $set('proposed_in_at', $occ?->first_in_at);
-                            $set('proposed_out_at', $occ?->assumed_out_at ?? $occ?->last_out_at);
-                        }),
-                    DateTimePicker::make('proposed_in_at')->label('Actual check-in')->seconds(false), DateTimePicker::make('proposed_out_at')->label('Actual checkout')->seconds(false)->after('proposed_in_at'),
-                    Select::make('proposed_status')->label('Status override')->placeholder('Calculate automatically from corrected times')->options(['present' => 'Present', 'half_day' => 'Half day', 'absent' => 'Absent', 'off' => 'Off', 'holiday' => 'Holiday'])->helperText('Leave blank to calculate status from the selected shift rules.'),
-                    Textarea::make('reason')->required()->maxLength(2000),
-                ])->action(function (AttendanceDay $record, array $data, Schema $schema) {
+                ->fillForm(fn (AttendanceDay $record): array => AttendanceCorrectionForm::initial($record))
+                ->schema(AttendanceCorrectionForm::fields(fn (Get $get, ?AttendanceDay $record) => $record))->action(function (AttendanceDay $record, array $data, Schema $schema) {
                     try {
                         app(AttendanceRateLimiter::class)->ensure('correction', 30);
                         app(AttendanceEntryService::class)->correct($record, auth()->user(), $data);

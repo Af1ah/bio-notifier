@@ -44,7 +44,7 @@ class ApprovalService
                         throw ValidationException::withMessages(['checkout_at' => 'Overtime is already approved. Resolve that approval before changing checkout.']);
                     }
                     Validator::make(['checkout_at' => $checkoutAt], ['checkout_at' => ['required', 'date']])->validate();
-                    $checkout = Carbon::parse($checkoutAt);
+                    $checkout = \App\Services\Support\TenantTimezone::parse($checkoutAt);
                     if (! $occurrence->first_in_at || $checkout->lte($occurrence->first_in_at) || $checkout->gt($occurrence->window_ends_at)) {
                         throw ValidationException::withMessages(['checkout_at' => 'Checkout must be after check-in and within the shift attendance window.']);
                     }

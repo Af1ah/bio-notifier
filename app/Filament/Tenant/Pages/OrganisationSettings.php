@@ -35,7 +35,7 @@ class OrganisationSettings extends Page implements HasForms
     public function form(Schema $schema): Schema
     {
         return $schema->components([
-            Section::make('Time display')->description('Choose the timezone for device activity and command timestamps. Existing attendance punch times are preserved.')
+            Section::make('Organisation time')->description('Used for attendance dates, shifts and displayed timestamps. Choose it before recording attendance; changing existing history requires a reviewed migration.')
                 ->schema([
                     Select::make('timezone')->label('Organisation timezone')
                         ->options(array_combine(\DateTimeZone::listIdentifiers(), \DateTimeZone::listIdentifiers()))

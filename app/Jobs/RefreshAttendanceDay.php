@@ -19,6 +19,11 @@ class RefreshAttendanceDay implements ShouldQueue
 
     public function __construct(public string $tenantId, public int $userId, public string $workDate) {}
 
+    public function signalId(): string
+    {
+        return 'refresh:'.$this->tenantId.':'.$this->userId.':'.$this->workDate;
+    }
+
     public function handle(AttendanceCalculationService $calculator): void
     {
         $tenant = Organisation::find($this->tenantId);

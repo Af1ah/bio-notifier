@@ -43,7 +43,7 @@ class TodayOverview extends StatsOverviewWidget
                 ->description(new \Illuminate\Support\HtmlString('No punch <span class="hidden md:inline">today</span>'))
                 ->descriptionIcon('heroicon-m-x-circle')
                 ->color('danger'),
-            Stat::make(new \Illuminate\Support\HtmlString('Devices <span class="hidden md:inline">Online</span>'), \App\Models\Device::where('status', 'online')->count())
+            Stat::make(new \Illuminate\Support\HtmlString('Devices <span class="hidden md:inline">Online</span>'), \App\Models\Device::connected()->count())
                 ->description(new \Illuminate\Support\HtmlString('Connected <span class="hidden md:inline">devices</span>'))
                 ->descriptionIcon('heroicon-m-signal')
                 ->color('info'),

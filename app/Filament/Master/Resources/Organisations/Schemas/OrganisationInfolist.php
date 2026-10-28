@@ -4,9 +4,13 @@ namespace App\Filament\Master\Resources\Organisations\Schemas;
 
 use App\Models\Organisation;
 use App\Services\Devices\DeviceIntegration;
-use Filament\Infolists\Components\TextEntry;
-use Filament\Infolists\Components\ImageEntry;
 use Filament\Infolists\Components\ColorEntry;
+use Filament\Infolists\Components\ImageEntry;
+use Filament\Infolists\Components\TextEntry;
+use Filament\Infolists\Components\ViewEntry;
+use Filament\Schemas\Components\Section;
+use Filament\Schemas\Components\Tabs;
+use Filament\Schemas\Components\Tabs\Tab;
 use Filament\Schemas\Schema;
 
 class OrganisationInfolist
@@ -15,13 +19,13 @@ class OrganisationInfolist
     {
         return $schema
             ->components([
-                \Filament\Schemas\Components\Section::make('General Information')
+                Section::make('General Information')
                     ->columnSpanFull()
                     ->schema([
                         TextEntry::make('name')
                             ->weight('bold')
                             ->size('lg'),
-                        \Filament\Infolists\Components\TextEntry::make('status')
+                        TextEntry::make('status')
                             ->badge()
                             ->color(fn (string $state): string => match ($state) {
                                 'active' => 'success',
@@ -50,44 +54,29 @@ class OrganisationInfolist
                             ->dateTime()
                             ->placeholder('-'),
                     ])->columns(2),
-                
-                \Filament\Schemas\Components\Tabs::make('Tabs')
+
+                Tabs::make('Tabs')
                     ->contained(false)
                     ->extraAttributes(['class' => 'flex justify-center w-full'])
                     ->tabs([
-                        \Filament\Schemas\Components\Tabs\Tab::make('eBioServer')
+                        Tab::make('eBioServer')
                             ->visible(fn (Organisation $record): bool => DeviceIntegration::usesEbio($record))
                             ->icon('heroicon-o-server')
                             ->schema([
-                                \Filament\Infolists\Components\ViewEntry::make('ebioserver_credentials')
+                                ViewEntry::make('ebioserver_credentials')
                                     ->label('')
-                                    ->view('infolists.components.ebioserver-table')
+                                    ->view('infolists.components.ebioserver-table'),
                             ]),
 
-                        \Filament\Schemas\Components\Tabs\Tab::make('ADMS gateway')
+                        Tab::make('ADMS gateway')
                             ->visible(fn (Organisation $record): bool => ! DeviceIntegration::usesEbio($record))
                             ->icon('heroicon-o-server')
                             ->schema([
                                 TextEntry::make('gateway_connection')
                                     ->label('Shared gateway')
-                                    ->state('Connection and provisioning are managed centrally. Remote actions require a connected gateway integration.'),
+                                    ->state('Company administrators add devices in their workspace. Registration connects them to the shared gateway automatically.'),
                             ]),
-                        
-                        \Filament\Schemas\Components\Tabs\Tab::make('Devices')
-                            ->icon('heroicon-o-cpu-chip')
-                            ->schema([
-                                \Filament\Infolists\Components\ViewEntry::make('devices')
-                                    ->label('')
-                                    ->view('infolists.components.tenant-devices')
-                            ]),
-                            
-                        \Filament\Schemas\Components\Tabs\Tab::make('Users')
-                            ->icon('heroicon-o-users')
-                            ->schema([
-                                \Filament\Infolists\Components\ViewEntry::make('users')
-                                    ->label('')
-                                    ->view('infolists.components.tenant-users')
-                            ]),
+
                     ])
                     ->columnSpanFull(),
             ]);

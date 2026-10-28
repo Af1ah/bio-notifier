@@ -1,35 +1,34 @@
-# Bio-Notifier Development Agenda & Quick Reference
+# Bio-Notifier agent context
 
-## 1. Project Overview
-**Bio-Notifier** is a multi-tenant Laravel 12 application using Filament v3 for administration. It manages biometric attendance devices, synchronizes users/fingerprints/faces, and triggers notifications (e.g., WAHA WhatsApp API) based on real-time attendance logs.
+Updated 28 October 2026. Read [the system handoff](docs/developer/system-handoff.md) before device, capacity, database or deployment work, and [Deploy.md](Deploy.md) before a rollout. The handoff contains verified hosts/ports, paths, tenant database layout, actual request destinations, service commands and outstanding tests. Verify drift-prone operational facts before acting.
 
-## 2. Tech Stack & Versions
-* **PHP:** 8.5.x
-* **Laravel:** 12.64.0
-* **Admin Panel:** Filament v3 (Livewire 3.x)
-* **Database:** PostgreSQL (Multi-tenant architecture)
-* **Biometric Middleware:** eBioServer New (SOAP API 1.1)
+## Project boundaries
 
-## 3. Core Architecture & Standards
-* **Multi-Tenancy:** The application is tenant-aware. Always initialize tenancy in background queue jobs using `tenancy()->initialize($this->organisation);` before querying any tenant-specific models.
-* **Legacy vs. New API:** The legacy ADMS direct integration (`DeviceCommandBuilder`) is **DEPRECATED**. All device communication MUST use the new eBioServer SOAP architecture via `app/Services/EbioSoapService.php`.
-* **SOAP Communication Rules:**
-  * **Method:** Always use `Http::send('POST', $url, ['body' => $xml])`. **NEVER** use `Http::post($url, $string)` as it alters the payload to `application/x-www-form-urlencoded`, which the eBioServer rejects.
-  * **Headers:** Always include `'Content-Type' => 'text/xml; charset=utf-8'` and the appropriate `'SOAPAction'`.
-  * **Identifiers:** The eBioServer `EmployeeCode` maps exactly to the `pin` attribute on the `User` model (`$user->pin`).
-  * **URL Construction:** Target `$url = rtrim($organisation->ebio_url, '/') . '/webservice.asmx';`
+- Laravel source: `/home/aflah/projects/bio-ebio/bio-notifier`; production `/var/www/bio-notifier`.
+- Go gateway source: `/home/aflah/projects/bio-ebio/device-gateway`; production `/opt/bio-device-gateway`. Separate Git repositories.
+- `/home/aflah/Downloads/eBioServerNew/Iclock` is vendor/reference material, not the app checkout.
+- Current architecture: Laravel 12 / Filament 4, PostgreSQL central plus one database per company, separate Go ADMS service and shared gateway database. eBio SOAP/webhooks remain supported per organisation. The old instruction that all device work must use eBio is superseded.
 
-## 4. Key Variables & Credentials
-When interacting with the eBioServer, always rely on these `Organisation` model properties:
-* `ebio_url`: The base URL for the server (e.g., `http://20.198.121.193:40010/iclock`).
-* `ebio_soap_username`: Authentication username for the SOAP payload.
-* `ebio_soap_password`: Authentication password for the SOAP payload.
+## Implementation and isolation
 
-## 5. Where to Find Things
-* **Device Communication Logic:** `app/Services/EbioSoapService.php` (SOAP XML generation & HTTP requests).
-* **Background Jobs:** `app/Jobs/` (e.g., `EbioDeviceCommandJob`, `EnrollEbioBiometricJob`). Ensure tenant initialization is at the top of the `handle()` method.
-* **Filament UI/Actions:** `app/Filament/Tenant/Resources/`
-  * `DeviceResource`: Device management and direct actions (reboot, clear logs).
-  * `UserResource`: User sync, biometric enrollment (finger/face), door blocking.
-  * `DeviceCommandResource`: Command queuing and history tracking.
-* **API Documentation:** The official SOAP API documentation is located at `reference/eBioServerNew-Web_API-Manual.txt`. Always consult this before writing new SOAP actions.
+Use DeviceCommandService and the current transport resolver; do not create parallel command paths. Tenant adds each terminal once, which automatically creates/syncs the binding. Preserve exact serial, company, device ID and binding version checks. Unknown serial requests are rejected by Go; there is no durable unknown-device payload inbox. Registered malformed uploads may enter encrypted quarantine. See the handoff before describing any request as saved.
+
+Initialize the original owning tenant before tenant model queries and end context in finally. Never resolve employees globally by PIN, infer identity from office IP or weaken server-side authorisation to expose a button. Model/algorithm compatibility and registered credential choices are separate checks. A selected fingerprint/face box does not prove transfer compatibility. Source IP restrictions have been removed; a serial is not cryptographic authentication.
+
+Preserve device raw punches and source provenance. Corrections belong in manual/correction records; replay must preserve them. Keep processed salary amounts unchanged during display fixes and late-punch processing. Respect existing approval and stale-evidence guards. Do not shift stored history to repair timezone presentation.
+
+## Redis and capacity
+
+Sizing target: 50 companies, 200 devices, 2,500 employees, 40 concurrent authenticated operators and 20 manual entries. This full scenario has not passed an end-to-end test. Report gateway, PDO, cache, UI, physical-device and production evidence separately.
+
+Production uses PostgreSQL-backed sessions, general cache and queues. Redis is limited to 30-second branch/department/task-group display lists with database fallback. Do not switch global CACHE_STORE, SESSION_DRIVER or QUEUE_CONNECTION casually. Tenant Redis values and locks have tenant prefixes; central locks remain global intentionally. Raw tenant Redis flush is blocked. Redis logical DB numbers do not create independent memory/failure boundaries.
+
+Gateway has a bounded processing/waiting queue and durable ACK-after-commit receipts. It retains the global admission lock; the two admission indexes are deployed and part of startup schema. Do not remove concurrency guards for a benchmark. Test backlog, duplicate/retry, cancellation, tenant fairness and outage/restart behavior when changing intake.
+
+## Work and release rules
+
+Read relevant installed documentation and current files first. Follow the user's current scope, preserve unrelated local changes and report newly found issues. Do not open a browser or perform interactive UI tests unless explicitly requested. No production load test or physical mutation merely to check health. Use isolated databases for destructive tests.
+
+Use reviewed release files, preserve relative paths when syncing, and verify remote paths/hashes. A previous flattened upload into app/ did not update the active classes. Keep production .env, storage, encryption keys and databases intact. Use a backup unless the user explicitly waives it for that rollout. No Git push/main update unless requested. Never print keys, tokens, private payloads or credentials. Ignore rules do not remove historical exposures.
+
+For retained eBio SOAP: use raw XML with Http::send('POST', ..., ['body' => $xml]), correct text/xml and SOAPAction, and exact employee PIN mapping. Configure its URL/credentials from Organisation; do not hardcode them. Do not rotate webhook credentials without coordinating the sender. Existing eBio functionality remains in scope.

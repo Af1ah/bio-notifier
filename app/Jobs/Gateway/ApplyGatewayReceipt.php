@@ -43,6 +43,14 @@ class ApplyGatewayReceipt implements ShouldQueue
             ->where(fn ($q) => $q->whereNull('next_attempt_at')->orWhere('next_attempt_at', '<=', now()))
             ->update(['state' => 'processing', 'lease_token' => $token, 'leased_until' => now()->addSeconds(180), 'attempts' => DB::raw('attempts + 1')]);
         if (! $claimed) {
+            // Recover the final projection if the worker stopped after central acceptance.
+            $applied = GatewayIngressReceipt::whereKey($this->receiptId)->where('state', 'applied')->first();
+            if ($applied) {
+                try {
+                    tenancy()->initialize(Organisation::findOrFail($applied->organisation_id));
+                    app(\App\Services\Devices\Gateway\CommandDataApplication::class)->applied($applied);
+                } finally { tenancy()->end(); }
+            }
             return;
         }
         $receipt = GatewayIngressReceipt::findOrFail($this->receiptId);
@@ -58,8 +66,8 @@ class ApplyGatewayReceipt implements ShouldQueue
                     report($exception);
                 }
             }
-            tenancy()->end();
             GatewayIngressReceipt::whereKey($receipt->id)->where('lease_token', $token)->update(['state' => 'applied', 'lease_token' => null, 'leased_until' => null, 'error_code' => null]);
+            app(\App\Services\Devices\Gateway\CommandDataApplication::class)->applied($receipt);
         } catch (\Throwable $exception) {
             tenancy()->end();
             GatewayIngressReceipt::whereKey($receipt->id)->where('lease_token', $token)->update([

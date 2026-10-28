@@ -6,6 +6,7 @@ use App\Models\AttendanceLog;
 use App\Models\Device;
 use App\Models\Organisation;
 use App\Models\WebhookReceipt;
+use App\Services\Attendance\AttendanceReplayReconciler;
 use App\Services\Devices\DeviceIntegration;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -62,6 +63,7 @@ class ProcessEbioWebhookJob implements ShouldQueue
             }
             DeviceIntegration::requireEbio($this->organisation);
             tenancy()->initialize($this->organisation);
+            $reconciler = new AttendanceReplayReconciler;
             foreach ($this->logs as $logData) {
                 if (! isset($logData['EmployeeCode']) || ! isset($logData['LogDate'])) {
                     continue;
@@ -110,7 +112,7 @@ class ProcessEbioWebhookJob implements ShouldQueue
                     }
 
                     // Save to tenant's AttendanceLog table
-                    AttendanceLog::firstOrCreate([
+                    $log = AttendanceLog::firstOrCreate([
                         'pin' => $logData['EmployeeCode'],
                         'punched_at' => Carbon::parse($logData['LogDate']),
                     ], [
@@ -120,6 +122,9 @@ class ProcessEbioWebhookJob implements ShouldQueue
                         'work_code' => isset($logData['WorkCode']) ? (int) $logData['WorkCode'] : null,
                         'raw_data' => $logData,
                     ]);
+                    if (! $log->wasRecentlyCreated) {
+                        $reconciler->recoverMissingDay($log);
+                    }
                 } catch (QueryException $e) {
                     throw $e;
                 } catch (\Exception $e) {

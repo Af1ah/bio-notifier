@@ -59,6 +59,13 @@ class RecoverGatewayWork extends Command
                 if (! Schema::hasTable('gateway_domain_effects')) {
                     continue;
                 }
+                if ($organisation->device_integration === \App\Services\Devices\DeviceIntegration::GATEWAY) {
+                    foreach (\App\Models\Device::whereNull('options->profile_policy_version')
+                        ->whereDoesntHave('commands', fn ($q) => $q->where('command_type', 'info')->where(fn ($q) => $q->whereIn('status', ['pending', 'sent', 'outcome_unknown'])->orWhere('created_at', '>=', now()->subDay())))
+                        ->orderBy('id')->limit($tenantLimit)->get() as $device) {
+                        app(\App\Services\Devices\Gateway\DeviceDiscovery::class)->request($device);
+                    }
+                }
                 foreach (DB::table('gateway_command_outbox')->whereNull('relayed_at')->orderBy('created_at')->limit($tenantLimit)->get() as $row) {
                     $commands->relay($organisation->id, $row->id);
                 }

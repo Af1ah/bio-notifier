@@ -2,6 +2,8 @@
 
 namespace App\Filament\Tenant\Resources\AttendanceApprovals\Tables;
 
+use App\Filament\Forms\Components\LocalDateTimePicker;
+
 use App\Models\AttendanceApproval;
 use App\Models\Branch;
 use App\Models\Department;
@@ -11,7 +13,6 @@ use Filament\Actions\Action;
 use Filament\Actions\BulkAction;
 use Filament\Actions\BulkActionGroup;
 use Filament\Forms\Components\DatePicker;
-use Filament\Forms\Components\DateTimePicker;
 use Filament\Forms\Components\Textarea;
 use Filament\Notifications\Notification;
 use Filament\Schemas\Schema;
@@ -41,7 +42,7 @@ class AttendanceApprovalsTable
                 Action::make('approve')->visible(fn (?AttendanceApproval $record): bool => $record?->state === 'pending')
                     ->modalHeading(fn (?AttendanceApproval $record): string => $record?->type === 'overtime' ? 'Approve overtime' : 'Approve attendance')->modalSubmitActionLabel('Approve')
                     ->schema([
-                        DateTimePicker::make('checkout_at')->label('Checkout time')->seconds(false)
+                        LocalDateTimePicker::make('checkout_at')->label('Checkout time')->seconds(false)
                             ->helperText('Defaults to the automatic checkout. Enter the actual departure date and time if different.')
                             ->visible(fn (?AttendanceApproval $record): bool => $record?->type === 'attendance' && ($record?->proposal['reason'] ?? null) === 'missing_checkout')
                             ->required(fn (?AttendanceApproval $record): bool => $record?->type === 'attendance' && ($record?->proposal['reason'] ?? null) === 'missing_checkout'),

@@ -10,8 +10,8 @@
             </h3>
             @php
                 $dateRange = $this->getTableFilterState('date_range') ?? [];
-                $fromDate = $dateRange['from_date'] ?? now()->format('Y-m-d');
-                $toDate = $dateRange['to_date'] ?? now()->format('Y-m-d');
+                $fromDate = $dateRange['from_date'] ?? now(\App\Services\Support\TenantTimezone::get())->format('Y-m-d');
+                $toDate = $dateRange['to_date'] ?? now(\App\Services\Support\TenantTimezone::get())->format('Y-m-d');
             @endphp
             <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
                 {{ \Carbon\Carbon::parse($fromDate)->format('M d, Y') }} - {{ \Carbon\Carbon::parse($toDate)->format('M d, Y') }}
@@ -27,7 +27,7 @@
                     <span class="font-bold">Company:</span> {{ \Filament\Facades\Filament::getTenant()?->name ?? 'Company Name' }}
                 </div>
                 <div>
-                    Printed On : {{ now()->format('M d Y H:i') }}
+                    Printed On : {{ \App\Services\Support\TenantTimezone::formatInstant(now(), 'M d Y H:i') }}
                 </div>
             </div>
         </div>

@@ -2,8 +2,8 @@
 
 namespace App\Livewire\Master;
 
-use App\Models\User;
 use App\Models\Organisation;
+use App\Models\User;
 use Filament\Actions\Concerns\InteractsWithActions;
 use Filament\Actions\Contracts\HasActions;
 use Filament\Forms\Concerns\InteractsWithForms;
@@ -14,11 +14,16 @@ use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Table;
 use Livewire\Component;
 
-class TenantUsersTable extends Component implements HasForms, HasTable, HasActions
+class TenantUsersTable extends Component implements HasActions, HasForms, HasTable
 {
     use InteractsWithActions;
     use InteractsWithForms;
     use InteractsWithTable;
+
+    public function boot(): void
+    {
+        abort(404); // Retired duplicate master component, including stale snapshots.
+    }
 
     public Organisation $organisation;
 

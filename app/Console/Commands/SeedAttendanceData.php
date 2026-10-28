@@ -2,20 +2,27 @@
 
 namespace App\Console\Commands;
 
-use Illuminate\Console\Command;
+use App\Models\AttendanceLog;
 use App\Models\Device;
 use App\Models\User;
-use App\Models\AttendanceLog;
 use Carbon\Carbon;
 use Carbon\CarbonPeriod;
+use Illuminate\Console\Command;
 
 class SeedAttendanceData extends Command
 {
     protected $signature = 'seed:attendance';
+
     protected $description = 'Seed dummy attendance data for the last 3 months';
 
     public function handle()
     {
+        if (! app()->environment(['local', 'testing']) || AttendanceLog::exists()) {
+            $this->error('Sample attendance requires an empty local or testing database. Existing raw punches are preserved.');
+
+            return self::FAILURE;
+        }
+
         $this->info('Starting attendance data generation...');
 
         // 1. Create 2 devices
@@ -24,7 +31,7 @@ class SeedAttendanceData extends Command
             $devices[] = Device::firstOrCreate(
                 ['serial_number' => $sn],
                 [
-                    'name' => 'Main Gate ' . ($index + 1),
+                    'name' => 'Main Gate '.($index + 1),
                     'status' => 'online',
                     'last_activity_at' => now(),
                     'branch_id' => 1,
@@ -37,10 +44,11 @@ class SeedAttendanceData extends Command
         $users = User::whereNotNull('pin')->get();
         if ($users->isEmpty()) {
             $this->error('No users found with a PIN!');
+
             return;
         }
 
-        $this->info('Found ' . $users->count() . ' users.');
+        $this->info('Found '.$users->count().' users.');
 
         // 3. Generate data for 3 months
         $startDate = Carbon::now()->subMonths(3)->startOfMonth();
@@ -48,9 +56,6 @@ class SeedAttendanceData extends Command
         $period = CarbonPeriod::create($startDate, $endDate);
 
         $totalLogs = 0;
-
-        // Clean up old logs to prevent duplicates
-        AttendanceLog::truncate();
 
         foreach ($period as $date) {
             // Skip weekends
@@ -61,7 +66,7 @@ class SeedAttendanceData extends Command
             foreach ($users as $user) {
                 // Randomize attendance status
                 $rand = rand(1, 100);
-                
+
                 if ($rand <= 10) {
                     // 10% chance of Absent (do nothing)
                     continue;
@@ -91,7 +96,7 @@ class SeedAttendanceData extends Command
                     $inTime->copy()->addMinutes(rand(180, 210)),
                     $inTime->copy()->addMinutes(rand(240, 270)),
                     $inTime->copy()->addMinutes(rand(300, 330)),
-                    $outTime
+                    $outTime,
                 ];
 
                 $statuses = [0, 2, 3, 2, 3, 1]; // In, Break Out, Break In, Break Out, Break In, Out

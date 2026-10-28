@@ -11,8 +11,8 @@ class ReportService
 {
     public function generateReport(array $userIds, string $fromDate, string $toDate): array
     {
-        $start = Carbon::parse($fromDate)->startOfDay();
-        $end = Carbon::parse($toDate)->endOfDay();
+        $start = \App\Services\Support\TenantTimezone::parse($fromDate)->startOfDay();
+        $end = \App\Services\Support\TenantTimezone::parse($toDate)->endOfDay();
         $period = CarbonPeriod::create($start, $end);
         $users = User::employees()->whereIn('id', $userIds)->get();
         $results = AttendanceDay::with('occurrences.schedule')->whereIn('user_id', $userIds)->whereDate('work_date', '>=', $start->toDateString())->whereDate('work_date', '<=', $end->toDateString())->get()->groupBy('user_id');

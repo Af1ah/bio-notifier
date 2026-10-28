@@ -16,7 +16,7 @@ class ManualAttendanceEntry extends Model
 
     protected function casts(): array
     {
-        return ['work_date' => 'date', 'in_at' => 'datetime', 'out_at' => 'datetime'];
+        return ['work_date' => 'date', 'in_at' => \App\Casts\TenantWallTime::class, 'out_at' => \App\Casts\TenantWallTime::class];
     }
 
     public function schedule()

@@ -6,7 +6,7 @@ use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
 use Filament\Http\Middleware\DisableBladeIconComponents;
 use Filament\Http\Middleware\DispatchServingFilamentEvent;
-use Filament\Pages\Dashboard;
+use App\Filament\Master\Pages\Dashboard;
 use Filament\Actions\Action;
 use Filament\Panel;
 use Filament\PanelProvider;
@@ -34,14 +34,13 @@ class MasterPanelProvider extends PanelProvider
             ->colors([
                 'primary' => Color::Amber,
             ])
-            ->discoverResources(in: app_path('Filament/Master/Resources'), for: 'App\Filament\Master\Resources')
+            ->resources([\App\Filament\Master\Resources\Organisations\OrganisationResource::class])
             ->discoverPages(in: app_path('Filament/Master/Pages'), for: 'App\Filament\Master\Pages')
             ->pages([
                 Dashboard::class,
             ])
             ->spa()
             ->unsavedChangesAlerts()
-            ->discoverWidgets(in: app_path('Filament/Master/Widgets'), for: 'App\Filament\Master\Widgets')
             ->widgets([
             ])
             ->middleware([

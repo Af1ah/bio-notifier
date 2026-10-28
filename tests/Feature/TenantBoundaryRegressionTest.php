@@ -54,6 +54,33 @@ class TenantBoundaryRegressionTest extends TestCase
         return $organisation;
     }
 
+    public function test_ebio_setup_displays_only_the_current_company_credential(): void
+    {
+        $a = $this->organisation('setup-a');
+        $b = $this->organisation('setup-b');
+        config(['app.url' => 'https://noti.example.test']);
+        tenancy()->initialize($a);
+        URL::defaults(['tenant' => $a->shortname]);
+        $admin = User::create(['name' => 'Setup admin', 'pin' => 'setup-admin', 'privilege' => 14, 'email' => 'setup@example.test', 'password' => bcrypt('test-only')]);
+        $this->actingAs($admin, 'web');
+        \Filament\Facades\Filament::setCurrentPanel(\Filament\Facades\Filament::getPanel('tenant'));
+        \Filament\Facades\Filament::bootCurrentPanel();
+        \Livewire\Livewire::test(\App\Filament\Tenant\Pages\OrganisationSettings::class)
+            ->assertSee('eBio setup')->assertSee('Copy URL')->assertSee('Success')
+            ->assertSee('https://noti.example.test/api/ebio/webhook/'.$a->ebio_webhook_token, escape: false)
+            ->assertDontSee($b->ebio_webhook_token);
+        $a->update(['device_integration' => 'adms_gateway']);
+        \Livewire\Livewire::test(\App\Filament\Tenant\Pages\OrganisationSettings::class)
+            ->assertDontSee('eBio setup')->assertDontSee($a->ebio_webhook_token);
+        $a->update(['device_integration' => 'ebio', 'ebio_webhook_token' => null]);
+        \Livewire\Livewire::test(\App\Filament\Tenant\Pages\OrganisationSettings::class)
+            ->assertSee('Webhook setup is not ready.')
+            ->assertDontSee('https://noti.example.test/api/ebio/webhook/'.$a->id, escape: false);
+        $admin->update(['privilege' => 0]);
+        \Livewire\Livewire::test(\App\Filament\Tenant\Pages\OrganisationSettings::class)->assertForbidden();
+        tenancy()->end();
+    }
+
     public function test_database_cache_reads_locks_and_flush_stay_inside_the_tenant(): void
     {
         config(['cache.default' => 'database', 'cache.stores.database.connection' => 'sqlite']);

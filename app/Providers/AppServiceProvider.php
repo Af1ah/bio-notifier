@@ -4,6 +4,9 @@ namespace App\Providers;
 
 use App\Services\Devices\Gateway\GatewayMonitor;
 use App\Services\Devices\Gateway\Queue\GatewayDatabaseConnector;
+use App\Services\Support\TenantTimezone;
+use Filament\Infolists\Components\TextEntry;
+use Filament\Tables\Columns\TextColumn;
 use Illuminate\Queue\Events\Looping;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Event;
@@ -31,6 +34,13 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        // Date/time presentation resolves the active company at render time.
+        TextColumn::configureUsing(fn ($column) => $column->timezone(
+            fn () => $column->isDateTime() && tenant() ? TenantTimezone::get() : config('app.timezone')
+        ));
+        TextEntry::configureUsing(fn ($entry) => $entry->timezone(
+            fn () => $entry->isDateTime() && tenant() ? TenantTimezone::get() : config('app.timezone')
+        ));
         URL::defaults(['fileTenant' => 'central']);
         Event::listen(TenancyInitialized::class, function ($event) {
             URL::defaults(['fileTenant' => (string) $event->tenancy->tenant->getTenantKey()]);

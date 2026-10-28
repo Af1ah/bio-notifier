@@ -210,7 +210,7 @@ class ListSalarySlips extends ListRecords
                 $global[$key] = $filters[$key]['values'] ?? [];
             }
             $query = SalarySlip::query()->whereHas('user', fn ($users) => PayrollEmployeeScope::apply($users, $global));
-            $status = $filters['status']['value'] ?? 'unpaid';
+            $status = $filters['status']['value'] ?? 'all';
             if ($status === 'unpaid') {
                 $query->where('status', '!=', 'paid');
             } elseif ($status !== 'all') {

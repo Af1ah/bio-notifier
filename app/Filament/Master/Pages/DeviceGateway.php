@@ -5,37 +5,41 @@ namespace App\Filament\Master\Pages;
 use App\Jobs\Gateway\ApplyDomainEffect;
 use App\Jobs\Gateway\ApplyGatewayReceipt;
 use App\Jobs\Gateway\SubmitGatewayCommand;
-use App\Jobs\Gateway\SyncGatewayBinding;
 use App\Models\GatewayCommandSubmission;
 use App\Models\GatewayConnection;
 use App\Models\GatewayDeviceBinding;
 use App\Models\GatewayIngressReceipt;
 use App\Models\Organisation;
 use App\Services\Devices\Gateway\GatewayClient;
-use Filament\Forms\Components\TextInput;
-use Filament\Forms\Components\Toggle;
-use Filament\Notifications\Notification;
 use Filament\Pages\Page;
-use Filament\Schemas\Components\Section;
-use Filament\Schemas\Schema;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
-use Illuminate\Validation\ValidationException;
 use Livewire\Attributes\Locked;
 
 class DeviceGateway extends Page
 {
     protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-server-stack';
 
-    protected static ?string $navigationLabel = 'Attendance service';
+    protected static ?string $navigationLabel = 'System status';
 
-    protected static ?string $title = 'Attendance service';
+    protected static ?string $title = 'System status';
 
-    protected static string|\UnitEnum|null $navigationGroup = 'Device operations';
+    protected static string|\UnitEnum|null $navigationGroup = 'Platform';
 
     protected string $view = 'filament.master.pages.device-gateway';
 
-    public array $connectionData = [];
+    #[Locked]
+    public array $summary = [];
+
+    #[Locked]
+    public bool $detailsLoaded = false;
+
+    public string $receiptState = 'parked';
+
+    #[Locked]
+    public string $activeReceiptState = 'parked';
+
+    public int $receiptPage = 1;
 
     public ?string $inspectionOrganisation = null;
 
@@ -75,46 +79,29 @@ class DeviceGateway extends Page
     public function mount(): void
     {
         $this->authorizeMaster();
-        $connection = GatewayConnection::first();
-        $this->connectionId = $connection?->id;
-        $this->connectionForm->fill(['name' => $connection?->name ?? 'Primary gateway', 'management_url' => $connection?->management_url,
-            'device_server_url' => $connection?->device_server_url,
-            'enabled' => $connection?->enabled ?? false]);
+        $this->connectionId = GatewayConnection::where('enabled', true)->value('id');
+        $this->refreshStatus();
     }
 
-    public function connectionForm(Schema $schema): Schema
-    {
-        return $schema->statePath('connectionData')->components([
-            Section::make('Server connection')->description('Configure the shared attendance service. Companies add and manage their devices from their own Devices page.')->schema([
-                TextInput::make('name')->required()->maxLength(255),
-                TextInput::make('device_server_url')->label('Device server address')->url()->maxLength(255)->helperText('The address companies enter in their device’s server settings.'),
-                TextInput::make('management_url')->label('Service address')->required()->url()->in(config('device_gateway.allowed_origins')),
-                TextInput::make('management_token')->label('Management token')->password()->minLength(32)->maxLength(255)->helperText('Leave blank to retain the saved token.'),
-                TextInput::make('events_token')->label('Event delivery token')->password()->minLength(32)->maxLength(255)->helperText('Leave blank to retain the saved token.'),
-                Toggle::make('enabled')->label('Enable connection'),
-            ])->columns(2),
-        ]);
-    }
-
-    public function saveConnection(): void
+    public function refreshStatus(): void
     {
         $this->authorizeMaster();
-        $data = $this->connectionForm->getState();
-        $connection = $this->connectionId ? GatewayConnection::findOrFail($this->connectionId) : new GatewayConnection;
-        foreach (['management_token', 'events_token'] as $key) {
-            if (blank($data[$key] ?? null)) {
-                unset($data[$key]);
-            }
-            if (! isset($data[$key]) && ! $connection->{$key}) {
-                throw ValidationException::withMessages(['connectionData.'.$key => 'Set a service token with at least 32 characters.']);
-            }
-        }
-        $connection->fill($data)->save();
-        $this->connectionId = $connection->id;
-        $this->connectionData['management_token'] = '';
-        $this->connectionData['events_token'] = '';
-        $this->audit('connection_saved', (string) $connection->id, ['enabled' => $connection->enabled]);
-        Notification::make()->title('Connection saved')->success()->send();
+        $this->summary = [
+            'receipts' => GatewayIngressReceipt::select('state')->selectRaw('count(*) as total')->groupBy('state')->pluck('total', 'state')->all(),
+            'commands' => GatewayCommandSubmission::select('state')->selectRaw('count(*) as total')->groupBy('state')->pluck('total', 'state')->all(),
+            'queues' => DB::connection(config('queue.connections.database.connection'))->table('jobs')->select('queue')->selectRaw('count(*) as total, min(created_at) as oldest')->groupBy('queue')->get()->map(fn ($row) => (array) $row)->all(),
+            'workers' => DB::connection(config('tenancy.database.central_connection'))->table('gateway_runtime_states')->whereNull('organisation_id')->orderBy('role')->limit(30)->get(['role', 'heartbeat_at'])->map(fn ($row) => (array) $row)->all(),
+            'refreshed_at' => now()->toIso8601String(),
+        ];
+    }
+
+    public function chooseConnection(int $id): void
+    {
+        $this->authorizeMaster();
+        abort_unless(GatewayConnection::whereKey($id)->where('enabled', true)->exists(), 422);
+        $this->connectionId = $id;
+        $this->health = $this->gatewayCommands = $this->gatewayEvents = [];
+        $this->detailsLoaded = false;
     }
 
     public function checkHealth(): void
@@ -123,21 +110,36 @@ class DeviceGateway extends Page
         try {
             $connection = GatewayConnection::findOrFail($this->connectionId);
             $this->health = app(GatewayClient::class)->call($connection, 'GET', '/v1/health');
-            $this->gatewayCommands = app(GatewayClient::class)->call($connection, 'GET', '/v1/commands');
-            $this->gatewayEvents = app(GatewayClient::class)->call($connection, 'GET', '/v1/events');
             $connection->update(['last_healthy_at' => now()]);
         } catch (\Throwable $exception) {
             $this->health = ['status' => 'unavailable'];
         }
     }
 
-    public function retryBinding(int $id): void
+    public function loadDetails(): void
     {
         $this->authorizeMaster();
-        $binding = GatewayDeviceBinding::findOrFail($id);
-        $binding->update(['last_error' => null, 'synced_at' => null]);
-        $this->audit('binding_retry', (string) $id);
-        SyncGatewayBinding::dispatch($id)->onConnection('gateway')->onQueue('device-commands');
+        $this->validate(['receiptState' => 'required|in:parked,retrying,pending,processing,applied']);
+        $this->detailsLoaded = true;
+        $this->activeReceiptState = $this->receiptState;
+        $this->receiptPage = 1;
+        $this->gatewayCommands = $this->gatewayEvents = [];
+        if ($this->connectionId) {
+            try {
+                $connection = GatewayConnection::findOrFail($this->connectionId);
+                $this->gatewayCommands = app(GatewayClient::class)->call($connection, 'GET', '/v1/commands');
+                $this->gatewayEvents = app(GatewayClient::class)->call($connection, 'GET', '/v1/events');
+            } catch (\Throwable $exception) {
+                $this->health = ['status' => 'unavailable'];
+            }
+        }
+    }
+
+    public function changeReceiptPage(int $page): void
+    {
+        $this->authorizeMaster();
+        abort_unless($this->detailsLoaded && $page >= 1 && $page <= 10000, 422);
+        $this->receiptPage = $page;
     }
 
     public function replayReceipt(string $id): void
@@ -158,7 +160,7 @@ class DeviceGateway extends Page
         $result = app(GatewayClient::class)->call(GatewayConnection::findOrFail($binding->gateway_connection_id), 'POST', '/v1/commands/'.$id.'/resolve');
         abort_unless(($result['accepted'] ?? false) === true, 422);
         $this->audit('unknown_command_resolved', $id);
-        $this->checkHealth();
+        $this->loadDetails();
     }
 
     public function retrySubmission(string $id): void
@@ -212,17 +214,13 @@ class DeviceGateway extends Page
     protected function getViewData(): array
     {
         $this->authorizeMaster();
+        abort_unless($this->receiptPage >= 1 && $this->receiptPage <= 10000, 422);
 
         return [
-            'bindingCount' => GatewayDeviceBinding::count(),
-            'inspectionCompanies' => Organisation::orderBy('name')->limit(100)->pluck('name', 'id'),
-            'bindings' => GatewayDeviceBinding::orderByDesc('updated_at')->limit(100)->get(),
-            'receipts' => GatewayIngressReceipt::orderByDesc('created_at')->limit(50)->get(['id', 'kind', 'state', 'attempts', 'error_code', 'created_at']),
-            'receiptCounts' => GatewayIngressReceipt::select('state')->selectRaw('count(*) as total')->groupBy('state')->pluck('total', 'state'),
-            'submissions' => GatewayCommandSubmission::where('state', 'parked')->orderByDesc('updated_at')->limit(50)->get(),
-            'commandCounts' => GatewayCommandSubmission::select('state')->selectRaw('count(*) as total')->groupBy('state')->pluck('total', 'state'),
-            'queues' => DB::connection(config('queue.connections.database.connection'))->table('jobs')->select('queue')->selectRaw('count(*) as total')->selectRaw('min(created_at) as oldest')->groupBy('queue')->get(),
-            'runtimeStates' => DB::connection(config('tenancy.database.central_connection'))->table('gateway_runtime_states')->orderBy('role')->limit(100)->get(),
+            'connections' => GatewayConnection::where('enabled', true)->orderBy('id')->get(['id', 'name']),
+            'inspectionCompanies' => $this->detailsLoaded ? Organisation::orderBy('name')->limit(100)->pluck('name', 'id') : collect(),
+            'receipts' => $this->detailsLoaded ? GatewayIngressReceipt::where('gateway_connection_id', $this->connectionId)->where('state', $this->activeReceiptState)->orderByDesc('created_at')->orderByDesc('id')->paginate(25, ['id', 'kind', 'state', 'attempts', 'error_code', 'created_at'], 'receiptPage', $this->receiptPage) : null,
+            'submissions' => $this->detailsLoaded ? GatewayCommandSubmission::whereIn('binding_id', GatewayDeviceBinding::where('gateway_connection_id', $this->connectionId)->select('id'))->where('state', 'parked')->orderByDesc('updated_at')->limit(25)->get(['id', 'error_code', 'expires_at']) : collect(),
         ];
     }
 }

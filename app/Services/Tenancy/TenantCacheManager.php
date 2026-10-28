@@ -6,6 +6,19 @@ use Stancl\Tenancy\CacheManager;
 
 class TenantCacheManager extends CacheManager
 {
+    protected function createRedisDriver(array $config)
+    {
+        $connection = $config['connection'] ?? 'default';
+        $store = new TenantRedisStore(
+            $this->app['redis'],
+            $this->getPrefix($config).'tenant:'.hash('sha256', (string) tenant('id')).':',
+            $connection,
+            $this->getSerializableClasses($config),
+        );
+
+        return $this->repository($store->setLockConnection($config['lock_connection'] ?? $connection), $config);
+    }
+
     protected function createDatabaseDriver(array $config)
     {
         $connection = $config['connection'] ?? config('tenancy.database.central_connection');

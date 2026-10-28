@@ -145,6 +145,19 @@ return [
 
     'redis' => [
 
+        // Optional cache only: fail quickly and read the authoritative database
+        // on outage. Do not use this connection for queues, sessions or locks.
+        'reference' => [
+            'host' => env('REDIS_REFERENCE_HOST', env('REDIS_HOST', '127.0.0.1')),
+            'username' => env('REDIS_REFERENCE_USERNAME', env('REDIS_USERNAME')),
+            'password' => env('REDIS_REFERENCE_PASSWORD', env('REDIS_PASSWORD')),
+            'port' => env('REDIS_REFERENCE_PORT', env('REDIS_PORT', '6379')),
+            'database' => env('REDIS_REFERENCE_DB', '2'),
+            'timeout' => 0.2,
+            'read_timeout' => 0.2,
+            'max_retries' => 0,
+        ],
+
         'client' => env('REDIS_CLIENT', 'phpredis'),
 
         'options' => [

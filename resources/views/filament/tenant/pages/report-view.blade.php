@@ -14,8 +14,8 @@
                 <th scope="col" class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900 dark:text-white">User</th>
                 @for ($i = 1; $i <= 7; $i++)
                     <th scope="col" class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900 dark:text-white">
-                        {{ now()->addDays($i)->format('D') }}<br>
-                        <span class="text-xs font-normal text-gray-500">{{ now()->addDays($i)->format('M d') }}</span>
+                        {{ now(\App\Services\Support\TenantTimezone::get())->addDays($i)->format('D') }}<br>
+                        <span class="text-xs font-normal text-gray-500">{{ now(\App\Services\Support\TenantTimezone::get())->addDays($i)->format('M d') }}</span>
                     </th>
                 @endfor
                 <th scope="col" class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900 dark:text-white">Total Hrs</th>

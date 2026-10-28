@@ -25,6 +25,7 @@ class SalarySlipsTable
     public static function configure(Table $table): Table
     {
         return $table
+            ->deferFilters(false)
             ->columns([
                 TextColumn::make('period_start')->label('Month')->date('M Y')->sortable(),
                 TextColumn::make('user.name')->label('Employee')->description(fn ($record): string => 'PIN '.$record->user->pin)->searchable()->sortable(),
@@ -64,8 +65,8 @@ class SalarySlipsTable
                     ->query(fn ($query, array $data) => $query->when($data['values'] ?? [], fn ($query, $ids) => $query->whereHas('user', fn ($users) => PayrollEmployeeScope::apply($users, ['department_ids' => $ids])))),
                 SelectFilter::make('task_group_ids')->label('Task groups')->multiple()->searchable()->options(fn () => TaskGroup::orderBy('name')->pluck('name', 'id'))
                     ->query(fn ($query, array $data) => $query->when($data['values'] ?? [], fn ($query, $ids) => $query->whereHas('user', fn ($users) => PayrollEmployeeScope::apply($users, ['task_group_ids' => $ids])))),
-                SelectFilter::make('status')->default('unpaid')->options(['unpaid' => 'Unpaid (hide paid)', 'all' => 'All statuses', 'draft' => 'Draft', 'reviewed' => 'Reviewed', 'approved' => 'Approved', 'paid' => 'Paid'])
-                    ->query(fn ($query, array $data) => ($data['value'] ?? 'unpaid') === 'unpaid' ? $query->where('status', '!=', 'paid') : $query->when(($data['value'] ?? 'all') !== 'all', fn ($q) => $q->where('status', $data['value']))),
+                SelectFilter::make('status')->default('all')->options(['unpaid' => 'Unpaid (hide paid)', 'all' => 'All statuses', 'draft' => 'Draft', 'reviewed' => 'Reviewed', 'approved' => 'Approved', 'paid' => 'Paid'])
+                    ->query(fn ($query, array $data) => ($data['value'] ?? 'all') === 'unpaid' ? $query->where('status', '!=', 'paid') : $query->when(($data['value'] ?? 'all') !== 'all', fn ($q) => $q->where('status', $data['value']))),
             ])
             ->groups([
                 Group::make('user.branch.name')->label('Branch')->collapsible(),

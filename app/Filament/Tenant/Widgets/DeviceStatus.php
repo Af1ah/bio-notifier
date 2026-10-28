@@ -28,12 +28,18 @@ class DeviceStatus extends TableWidget
                     ->sortable(),
                 \Filament\Tables\Columns\TextColumn::make('status')
                     ->badge()
+                    ->getStateUsing(fn (\App\Models\Device $record): string => $record->isOnline() ? 'online' : ($record->last_activity_at ? 'offline' : 'waiting'))
+                    ->formatStateUsing(fn (string $state): string => match ($state) {
+                        'online' => 'Connected',
+                        'offline' => 'Offline',
+                        default => 'Waiting for connection',
+                    })
                     ->color(fn (string $state): string => match ($state) {
                         'online' => 'success',
                         'offline' => 'danger',
-                        default => 'gray',
+                        default => 'warning',
                     }),
-                \Filament\Tables\Columns\TextColumn::make('last_ping')
+                \Filament\Tables\Columns\TextColumn::make('last_activity_at')->label('Last connected')
                     ->dateTime()
                     ->sortable(),
             ])

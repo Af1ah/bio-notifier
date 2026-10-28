@@ -7,6 +7,7 @@ use App\Models\Department;
 use App\Models\Report;
 use App\Models\User;
 use App\Services\Attendance\ReportService;
+use App\Services\Support\TenantTimezone;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
 use Filament\Actions\Action;
@@ -63,14 +64,14 @@ class Reports extends Page implements HasForms, HasTable
 
     public function mount()
     {
-        $this->tableFilters['date_range']['from_date'] = now()->format('Y-m-d');
-        $this->tableFilters['date_range']['to_date'] = now()->format('Y-m-d');
+        $this->tableFilters['date_range']['from_date'] = now(TenantTimezone::get())->format('Y-m-d');
+        $this->tableFilters['date_range']['to_date'] = now(TenantTimezone::get())->format('Y-m-d');
     }
 
     public function updatedActiveTab()
     {
         if (in_array($this->activeTab, ['daily', 'weekly', 'monthly'], true)) {
-            $this->selectReportDate(now()->toDateString());
+            $this->selectReportDate(now(TenantTimezone::get())->toDateString());
         }
     }
 
@@ -115,7 +116,7 @@ class Reports extends Page implements HasForms, HasTable
 
     protected function reportStartDate(): Carbon
     {
-        return Carbon::parse($this->tableFilters['date_range']['from_date'] ?? now()->toDateString());
+        return Carbon::parse($this->tableFilters['date_range']['from_date'] ?? now(TenantTimezone::get())->toDateString());
     }
 
     public function generateReportData()
@@ -146,8 +147,8 @@ class Reports extends Page implements HasForms, HasTable
 
         return $service->generateReport(
             $finalUserIds,
-            $dateRange['from_date'] ?? now()->format('Y-m-d'),
-            $dateRange['to_date'] ?? now()->format('Y-m-d')
+            $dateRange['from_date'] ?? now(TenantTimezone::get())->format('Y-m-d'),
+            $dateRange['to_date'] ?? now(TenantTimezone::get())->format('Y-m-d')
         );
     }
 
@@ -197,8 +198,8 @@ class Reports extends Page implements HasForms, HasTable
         }
 
         $dateRange = $this->getTableFilterState('date_range') ?? [];
-        $fromDate = $dateRange['from_date'] ?? now()->format('Y-m-d');
-        $toDate = $dateRange['to_date'] ?? now()->format('Y-m-d');
+        $fromDate = $dateRange['from_date'] ?? now(TenantTimezone::get())->format('Y-m-d');
+        $toDate = $dateRange['to_date'] ?? now(TenantTimezone::get())->format('Y-m-d');
 
         $pdf = Pdf::loadView('filament.tenant.pages.pdf.report-matrix', [
             'reportData' => $reportData,
@@ -210,7 +211,7 @@ class Reports extends Page implements HasForms, HasTable
 
         return response()->streamDownload(function () use ($pdf) {
             echo $pdf->output();
-        }, $this->activeTab.'_report_'.now()->format('Y-m-d').'.pdf');
+        }, $this->activeTab.'_report_'.now(TenantTimezone::get())->format('Y-m-d').'.pdf');
     }
 
     public function table(Table $table): Table

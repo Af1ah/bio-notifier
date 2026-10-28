@@ -13,7 +13,6 @@ use Filament\Forms\Components\ToggleButtons;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
-use Illuminate\Support\HtmlString;
 
 class OrganisationForm
 {
@@ -68,7 +67,7 @@ class OrganisationForm
                             ->in(array_keys(DeviceIntegration::options())),
                         Placeholder::make('gateway_connection')
                             ->label('Shared gateway')
-                            ->content('Manage the shared connection and approved device ownership in the master Device gateway page. Device actions become available after provisioning is synchronized.')
+                            ->content('Company administrators add devices in their workspace. Registration connects them to the shared gateway automatically; System status provides platform health and recovery.')
                             ->visible(fn (Get $get): bool => $get('device_integration') === DeviceIntegration::GATEWAY),
                     ]),
 
@@ -83,19 +82,7 @@ class OrganisationForm
                                 if (! $record) {
                                     return '-';
                                 }
-                                if (! $record->ebio_webhook_token) {
-                                    return 'Generate a webhook credential before enabling eBio delivery.';
-                                }
-                                $url = e(url('/api/ebio/webhook/'.$record->ebio_webhook_token));
-
-                                return new HtmlString('
-                                    <div class="flex items-center gap-2">
-                                        <code class="font-mono text-sm px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded">'.$url.'</code>
-                                        <button type="button" onclick="navigator.clipboard.writeText(\''.$url.'\')" class="text-primary-600 hover:text-primary-500" title="Copy URL">
-                                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
-                                        </button>
-                                    </div>
-                                ');
+                                return view('filament.components.ebio-webhook-setup', ['organisation' => $record]);
                             })
                             ->columnSpanFull(),
                         TextInput::make('ebio_url')

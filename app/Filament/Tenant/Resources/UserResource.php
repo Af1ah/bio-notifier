@@ -480,6 +480,7 @@ class UserResource extends Resource
                             Notification::make()->title('Device update queued')
                                 ->body("{$count} command(s) queued. Track their results in Device Commands.")->success()->send();
                         }),
+                    \App\Filament\Tenant\Actions\DeviceAccessPeriodAction::make(),
                     \App\Filament\Tenant\Actions\RefreshEbioPhotoAction::make(),
                     Action::make('fetchBiometric')
                         ->authorize(fn (): bool => tenant()?->device_integration === DeviceIntegration::GATEWAY)
@@ -514,6 +515,8 @@ class UserResource extends Resource
                                 ->options(collect(range(0, 9))->mapWithKeys(fn ($slot) => [$slot => self::fingerName((string) $slot)])->all())
                                 ->visible(fn ($get): bool => $get('source') === 'finger')
                                 ->required(fn ($get): bool => $get('source') === 'finger'),
+                            Select::make('template_algorithm')->label('Fingerprint algorithm')->options(['9' => 'ZKFinger 9', '10' => 'ZKFinger 10'])->helperText('Use the version reported by the enrollment reader.')
+                                ->visible(fn ($get): bool => $get('source') === 'finger')->required(fn ($get): bool => $get('source') === 'finger'),
                             Textarea::make('template_data')->label('Raw fingerprint template')
                                 ->helperText('Paste the template produced by your compatible fingerprint reader or enrollment software. A fingerprint image cannot be used here.')
                                 ->rows(4)->maxLength(8192)
@@ -536,7 +539,7 @@ class UserResource extends Resource
                             $service = app(EmployeeBiometrics::class);
                             match ($data['source']) {
                                 'device' => $service->fetch($record, Device::findOrFail($data['device_id'])),
-                                'finger' => $service->registerFingerprint($record, (string) $data['finger_index'], (string) $data['template_data']),
+                                'finger' => $service->registerFingerprint($record, (string) $data['finger_index'], (string) $data['template_data'], (string) $data['template_algorithm']),
                                 'ai_face' => ($data['photo_input'] ?? 'upload') === 'camera'
                                     ? $service->registerCameraPhoto($record, (string) $data['camera_photo'])
                                     : $service->registerPhoto($record, (string) $data['ai_face_photo_path']),
@@ -879,8 +882,11 @@ class UserResource extends Resource
             ->mapWithKeys(function (Device $device): array {
                 $label = $device->name ?: $device->serial_number;
                 $location = $device->options['location'] ?? null;
+                $connection = $device->isOnline() ? 'Connected' : ($device->last_activity_at ? 'Offline' : 'Waiting for connection');
 
-                return [$device->id => $location ? "{$label} ({$location})" : $label];
+                $label .= $location ? " ({$location})" : '';
+
+                return [$device->id => "{$label} — {$connection}"];
             })->all();
     }
 
@@ -892,7 +898,7 @@ class UserResource extends Resource
             if (! is_array($template) || blank($template['tmp'] ?? null)) {
                 continue;
             }
-            $slot = (string) (is_numeric($key) ? $key : ($template['fid'] ?? $template['finger_id'] ?? $key));
+            $slot = (string) (is_numeric($key) ? $key : ($template['slot'] ?? $template['fid'] ?? $template['finger_id'] ?? $key));
             $templates[$slot] = $template;
         }
 
@@ -907,7 +913,7 @@ class UserResource extends Resource
             if (! is_array($template) || blank($template['tmp'] ?? null)) {
                 continue;
             }
-            $slot = (string) (is_numeric($key) ? $key : ($template['fid'] ?? $key));
+            $slot = (string) (is_numeric($key) ? $key : ($template['slot'] ?? $template['fid'] ?? $key));
             $templates[$slot] = $template;
         }
 
@@ -951,7 +957,7 @@ class UserResource extends Resource
             return 'No transfer requested yet';
         }
         $status = match ($command->status) {
-            'acknowledged' => 'Completed',
+            'acknowledged' => $command->completionLabel(),
             'failed' => 'Could not complete',
             'expired' => 'Device did not respond',
             'sent' => 'Waiting for device',

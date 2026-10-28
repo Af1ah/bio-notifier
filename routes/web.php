@@ -44,6 +44,12 @@ Route::get('/manifest.json', function () {
     ]);
 });
 
+// Keep signed, single-use company login; issue grants only after the master clicks Login.
+Route::post('/master/organisations/{organisation}/quick-login', function (\App\Models\Organisation $organisation) {
+    abort_unless(auth('admin')->user()?->role === 'master', 403);
+    return redirect(app(QuickLoginService::class)->issue($organisation));
+})->name('master.company-login');
+
 Route::get('/{tenant}/impersonate', function () {
     $tenant = tenant();
     app(QuickLoginService::class)->consume($tenant, request()->query('grant'));

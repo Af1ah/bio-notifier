@@ -17,6 +17,9 @@ return [
 
     'default' => env('CACHE_STORE', 'database'),
 
+    // Only rebuildable branch/department/task-group display options use this.
+    'reference_enabled' => env('REFERENCE_CACHE_ENABLED', true),
+
     /*
     |--------------------------------------------------------------------------
     | Cache Stores
@@ -33,6 +36,13 @@ return [
     */
 
     'stores' => [
+
+        'reference' => [
+            'driver' => 'redis',
+            'connection' => 'reference',
+            'lock_connection' => 'reference',
+            'prefix' => env('CACHE_PREFIX', Str::slug((string) env('APP_NAME', 'laravel')).'-cache-').'reference-v1:',
+        ],
 
         'array' => [
             'driver' => 'array',

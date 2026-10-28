@@ -103,7 +103,7 @@ class AttendanceEditingAndPayrollPeriodsTest extends TestCase
     {
         $user = $this->employee();
         $shift = $this->shift();
-        Livewire::test(ListAttendanceDays::class)->callAction('manualAttendance', data: ['user_id' => $user->id, 'schedule_id' => $shift->id, 'work_date' => '2026-08-03', 'in_time' => '09:00', 'out_time' => '17:00', 'reason' => 'HR entered verified times'])->assertHasNoErrors();
+        Livewire::test(ListAttendanceDays::class)->mountAction('manualAttendance')->setActionData(['user_id' => $user->id, 'work_date' => '2026-08-03'])->setActionData(['schedule_id' => $shift->id, 'in_time' => '09:00', 'out_time' => '17:00', 'reason' => 'HR entered verified times'])->callMountedAction()->assertHasNoErrors();
         $this->assertSame(480, AttendanceDay::firstOrFail()->candidate_worked_minutes);
     }
 
@@ -213,13 +213,18 @@ class AttendanceEditingAndPayrollPeriodsTest extends TestCase
         return SalarySlip::create(['user_id' => $user->id, 'period_start' => $month.'-01', 'period_end' => Carbon::parse($month.'-01')->endOfMonth(), 'status' => $status, 'calculation_snapshot' => [], 'calculated_at' => now(), 'net_pay_minor' => 10000]);
     }
 
-    public function test_payslip_page_defaults_hide_paid_and_older_months(): void
+    public function test_payslip_page_shows_paid_slips_and_filters_older_months(): void
     {
         $user = $this->employee();
         $current = $this->slip($user, '2026-08');
         $paid = $this->slip($this->employee('paid'), '2026-08', 'paid');
         $old = $this->slip($this->employee('old'), '2026-07');
-        Livewire::test(ListSalarySlips::class)->assertCanSeeTableRecords([$current])->assertCanNotSeeTableRecords([$paid, $old]);
+        Livewire::test(ListSalarySlips::class)
+            ->assertCanSeeTableRecords([$current, $paid])
+            ->assertCanNotSeeTableRecords([$old])
+            ->filterTable('payroll_month', '2026-07')
+            ->assertCanSeeTableRecords([$old])
+            ->assertCanNotSeeTableRecords([$current, $paid]);
     }
 
     public function test_csv_export_requires_one_month_and_never_contains_another_month(): void
@@ -330,7 +335,7 @@ class AttendanceEditingAndPayrollPeriodsTest extends TestCase
     {
         $user = $this->employee();
         $shift = $this->shift();
-        Livewire::test(ListAttendanceDays::class)->callAction('manualAttendance', data: ['user_id' => $user->id, 'schedule_id' => $shift->id, 'work_date' => '2026-08-03', 'in_time' => '04:00', 'out_time' => '17:00', 'reason' => 'Outside shift'])
+        Livewire::test(ListAttendanceDays::class)->mountAction('manualAttendance')->setActionData(['user_id' => $user->id, 'work_date' => '2026-08-03'])->setActionData(['schedule_id' => $shift->id, 'in_time' => '04:00', 'out_time' => '17:00', 'reason' => 'Outside shift'])->callMountedAction()
             ->assertHasErrors(['mountedActions.0.data.in_time']);
         $this->assertDatabaseCount('manual_attendance_entries', 0);
     }
@@ -428,5 +433,29 @@ class AttendanceEditingAndPayrollPeriodsTest extends TestCase
         $this->assertFalse($review->approved($user, $period));
         $this->expectException(ValidationException::class);
         app(SalarySlipService::class)->generate($user, $period);
+    }
+
+    public function test_new_raw_evidence_keeps_pending_correction_then_reconciles_after_rejection(): void
+    {
+        $user = $this->employee();
+        $shift = $this->shift('Day', '09:00', '17:00', ['auto_checkout_enabled' => false, 'overtime_enabled' => false]);
+        app(ShiftAssignmentService::class)->assign('user', $user, ['schedule_ids' => [$shift->id], 'effective_from' => '2026-08-01']);
+        $this->punches($user, [['09:00', 0]]);
+        $calculator = app(AttendanceCalculationService::class);
+        $day = $calculator->calculate($user, Carbon::parse('2026-08-03'));
+        $correction = app(AttendanceEntryService::class)->correct($day, $this->actor, ['attendance_occurrence_id' => $day->occurrences->first()->id,
+            'proposed_in_at' => '2026-08-03 09:00', 'proposed_out_at' => '2026-08-03 16:00', 'reason' => 'Review manual departure']);
+        $approval = $day->approvals()->where('proposal->correction_id', $correction->id)->firstOrFail();
+        $revision = $day->calculation_revision;
+        $this->punches($user, [['17:00', 1]]);
+        $held = $calculator->calculate($user, Carbon::parse('2026-08-03'));
+        $this->assertSame($revision, $held->calculation_revision);
+        $this->assertSame('pending', $approval->fresh()->state);
+        $this->assertSame('pending', $correction->fresh()->state);
+        app(ApprovalService::class)->decide($approval, $this->actor, false, 'Use verified device checkout instead');
+        $reconciled = $calculator->calculate($user, Carbon::parse('2026-08-03'));
+        $this->assertSame(480, $reconciled->candidate_worked_minutes);
+        $this->assertSame('rejected', $correction->fresh()->state);
+        $this->assertSame(2, AttendanceLog::count());
     }
 }

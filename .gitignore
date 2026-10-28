@@ -28,3 +28,31 @@ Thumbs.db
 /testing
 /storage/tenant*
 
+# Credentials and private key material; retain distributable examples.
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+
+# Local diagnostics, database copies and capacity-test output.
+/scratch/
+/runtime/
+/backups/
+/dumps/
+*.dump
+*.backup
+*.sql.gz
+*.sql.zip
+*.sqlite
+*.sqlite3
+/database/tenant*
+/capacity-test-artifacts/
+/unspecified
+
+# Local operational context (server addresses and deployment details).
+/docs/developer/system-handoff.md
+

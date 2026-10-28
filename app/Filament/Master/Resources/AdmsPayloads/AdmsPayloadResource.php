@@ -15,6 +15,7 @@ use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Model;
 
 class AdmsPayloadResource extends Resource
 {
@@ -23,6 +24,37 @@ class AdmsPayloadResource extends Resource
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedRectangleStack;
 
     protected static ?string $recordTitleAttribute = 'serial_number';
+
+    // Retained for historical references; the retired UI is not accessible.
+    public static function canViewAny(): bool
+    {
+        return false;
+    }
+
+    public static function canCreate(): bool
+    {
+        return false;
+    }
+
+    public static function canView(Model $record): bool
+    {
+        return false;
+    }
+
+    public static function canEdit(Model $record): bool
+    {
+        return false;
+    }
+
+    public static function canDelete(Model $record): bool
+    {
+        return false;
+    }
+
+    public static function canDeleteAny(): bool
+    {
+        return false;
+    }
 
     public static function form(Schema $schema): Schema
     {
