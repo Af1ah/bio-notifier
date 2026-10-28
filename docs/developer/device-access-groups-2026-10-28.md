@@ -1,6 +1,6 @@
 # Per-device access groups and user sync
 
-Local source implementation, 28 October 2026. Not deployed or physically qualified. This supplements the device-user readback change; employee joining/end dates remain employment/payroll fields.
+Implemented and deployed on 28 October 2026 from Laravel work commit 88eff52 and gateway main commit 0480004. Physical device qualification remains incomplete. This supplements the device-user readback change; employee joining/end dates remain employment/payroll fields.
 
 ## Operator flow
 
@@ -28,8 +28,15 @@ The gateway persists raw/normalized access records through the existing encrypte
 
 Writes default off with DEVICE_ACCESS_GROUPS_ENABLED=false. The only source profile currently admitted is the investigated Magnum x 2008 / ZMM510_TFT / ZMM510-NF24VB-Ver2.2.1 combination. This limits dialect exposure; it does not certify group support. The earlier Magnum AccTimeZone query returned no usable inventory, so actual existing-group editing still depends on a successful supported readback. Unsupported devices must not be silently enabled.
 
-Before enabling writes, verify complete native group and period readback, preserve a known configuration, use approved unused test slots and a designated test user, then independently verify group inheritance, personal override, weekday boundary behavior, expiry/quota preservation, rejection, timeout and reread. Existing production approval covered read-only inspection only. No production setting writes were performed for this implementation.
+Before enabling writes, verify complete native group and period readback, preserve a known configuration, use approved unused test slots and a designated test user, then independently verify group inheritance, personal override, weekday boundary behavior, expiry/quota preservation, rejection, timeout and reread. The user subsequently authorized the coordinated source deployment on the named branches. Deployment did not enable the access-write gate or send terminal access-setting writes.
 
 Follow Deploy.md with backups. Deploy Laravel central capability migration, both tenant migrations, code and affected workers before replacing the Go sender; the old Laravel API rejects new event kinds. Coordinate runtime versions before exposing new reads. Refresh current device settings after deployment. Preserve all encryption keys. Enable the write flag only for the qualified installation and refresh configuration.
 
 Source: ZKTeco Attendance PUSH Communication Protocol, sections 12.1.1.1, 12.1.1.14 and 12.1.1.15, manufacturer-authored manual mirrored at https://studylib.net/doc/27718586/ilide.info-attendance-push-communication-protocol-2020032.... The document describes command forms; it is not Magnum firmware acceptance evidence.
+
+
+## Deployment verification
+
+The coordinated rollout completed with the central capability migration and both tenant migrations applied to both installed organisations. The 35 runtime source files matched the reviewed release hashes. Both private environment files were preserved unchanged. PHP-FPM, the Bio-Notifier workers/scheduler and the rebuilt gateway container were running; the authenticated private health endpoint reported two delivery workers. Database backups were verified by restoration into isolated temporary databases before rollout. Existing parked receipts were not replayed.
+
+Access writes remain disabled pending actual firmware readback and hardware qualification. Service health is not physical-device acceptance. No browser or interactive UI checks were performed.

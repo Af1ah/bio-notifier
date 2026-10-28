@@ -1,6 +1,6 @@
 # Device-user access readback
 
-Local implementation, 28 October 2026. Not deployed. The device-specific access screen belongs under Devices → Device users. The employee-page access-period action has been removed.
+Implemented and deployed on 28 October 2026 as part of the coordinated access-group release. The device-specific access screen belongs under Devices → Device users. The employee-page access-period action has been removed.
 
 ## Reported settings
 
@@ -20,6 +20,6 @@ A scoped read-only inspection found no saved device-user snapshot for the affect
 
 Back up and follow Deploy.md. Apply Laravel code and the tenant migration 2026_10_28_130000_add_access_settings_to_device_users first, refresh/restart its affected workers, then replace the Go runtime. An old Laravel API rejects the new access object, so do not deploy the new sender first. Preserve application/gateway keys. Refresh device users after both versions are active; old normalized receipts did not retain access fields and cannot populate this snapshot without original-source evidence.
 
-Software checks cover parser allowlisting, absent and zero fields, encrypted persistence, stale replay protection, device scoping and moving the action off the employee page. They do not establish hardware enforcement or resolve Ashkar’s rejection. No production source update or access-setting write is part of this implementation.
+Software checks cover parser allowlisting, absent and zero fields, encrypted persistence, stale replay protection, device scoping and moving the action off the employee page. They do not establish hardware enforcement or resolve Ashkar’s rejection. The later coordinated source rollout is recorded in the access-group guide. It did not send terminal access-setting writes.
 
 The subsequent [access-group implementation](device-access-groups-2026-10-28.md) adds separate per-device group/period tabs and per-user Save and sync. It supersedes the earlier statement that no schedule-write implementation exists; hardware qualification and the default-off write gate remain.
