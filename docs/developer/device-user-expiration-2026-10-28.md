@@ -27,3 +27,9 @@ Source references: manufacturer-authored Standalone SDK manual, SetUserValidDate
 ## Rollout
 
 Keep Laravel on work and gateway on main. Back up and coordinate both runtimes because the old gateway rejects the new modes. Expiration uses its own optional DEVICE_USER_EXPIRATION_ENABLED emergency switch and existing exact firmware/binding checks, independent from DEVICE_ACCESS_GROUPS_ENABLED. No schema migration is needed. Rebuild the gateway, update Laravel source/caches and restart affected workers before issuing a pilot command. Do not change production environment files or encryption keys as part of this update.
+
+## eSSL compatibility investigation, 29 October
+
+Physical testing of the modern update stored the requested future dates but left the terminal's native rule at None and allowed verification. A subsequent operator-selected date rule also allowed verification. These results do not establish a firmware defect; terminal-wide expiration enforcement and expired-user handling must be inspected separately.
+
+Static IL inspection of the supplied eBioServerLibrary.dll DeviceManagement.GetDeviceCommands and eTimeTrackLite App_global.asax.dll ExecuteDeviceCommands_AddUser confirms the vendor date-only command uses DATA USER, Expires=1, StartDatetime and EndDatetime, with no count field. An explicit internal dialect=essl_dates compatibility path reproduces that access-only command for controlled qualification. It is restricted to date mode, is not selected by the normal UI, and does not claim to clear a pre-existing count restriction. The ordinary command remains unchanged pending physical comparison. No identity, privilege, group, schedule or credential fields are included.

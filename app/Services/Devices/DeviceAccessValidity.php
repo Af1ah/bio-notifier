@@ -26,6 +26,12 @@ final class DeviceAccessValidity
         if (in_array($mode, ['entries', 'both'], true)) {
             $rules['entries'] = ['required', 'string', 'regex:/^[1-9][0-9]{0,4}$/', 'integer', 'between:1,65535'];
         }
+        if (array_key_exists('dialect', $input)) {
+            $rules['dialect'] = ['required', 'in:essl_dates'];
+            if ($mode !== 'dates') {
+                throw ValidationException::withMessages(['mode' => 'The eSSL compatibility command supports dates only.']);
+            }
+        }
         if (array_diff(array_keys($input), array_keys($rules))) {
             throw ValidationException::withMessages(['mode' => 'Send only the fields used by the selected expiration rule.']);
         }

@@ -1370,6 +1370,22 @@ class GatewayWorkflowTest extends TestCase
         app(DeviceAccessValidity::class)->apply($employee, $device, ['mode' => 'unrestricted']);
     }
 
+    public function test_essl_date_compatibility_is_explicit_and_does_not_allow_other_modes(): void
+    {
+        $parameters = ['pin' => '0007', 'mode' => 'dates', 'from' => '2026-10-30', 'until' => '2026-10-31', 'dialect' => 'essl_dates'];
+        $this->assertSame($parameters, DeviceAccessValidity::parameters($parameters));
+        foreach (['none', 'entries', 'both'] as $mode) {
+            try {
+                DeviceAccessValidity::parameters(['pin' => '0007', 'mode' => $mode, 'dialect' => 'essl_dates']);
+                $this->fail('Date-only compatibility accepted another expiration mode.');
+            } catch (ValidationException) {
+                $this->assertTrue(true);
+            }
+        }
+        $this->expectException(ValidationException::class);
+        DeviceAccessValidity::parameters(array_replace($parameters, ['dialect' => 'unknown']));
+    }
+
     public function test_expiration_modes_are_separate_from_daily_periods_and_clear_inactive_limits(): void
     {
         [$company, $binding] = $this->company('EXPIRYMODES01');
