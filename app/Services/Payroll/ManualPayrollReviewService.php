@@ -104,7 +104,7 @@ class ManualPayrollReviewService
 
     public function approve(User $user, User $actor, Carbon $period, string $reason, string $expectedSignature): void
     {
-        abort_unless($actor->privilege === 14, 403);
+        abort_unless($actor->hasManagementAccess(), 403);
         if (trim($reason) === '') {
             throw ValidationException::withMessages(['reason' => 'Record the reason for approving this manual payroll period.']);
         }

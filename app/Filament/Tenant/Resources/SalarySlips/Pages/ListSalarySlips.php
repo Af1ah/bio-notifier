@@ -49,7 +49,7 @@ class ListSalarySlips extends ListRecords
     {
         return [
             Action::make('reviewManualPeriod')->label('Review manual payroll period')->icon('heroicon-o-clipboard-document-check')
-                ->visible(fn () => auth()->user()?->privilege === 14)
+                ->visible(fn () => (bool) auth()->user()?->hasManagementAccess())
                 ->modalDescription('Review attendance, approvals, leave and employment dates for one manual or unassigned payroll period. Evidence changes invalidate this review.')
                 ->schema([
                     Select::make('user_id')->label('Employee')->options(fn () => User::employees()->whereHas('payrollProfile', fn ($q) => $q->where('payroll_enabled', true))->pluck('name', 'id'))->searchable()->required()->live()->afterStateUpdated(function ($state, Get $get, Set $set) {
@@ -90,7 +90,7 @@ class ListSalarySlips extends ListRecords
             Action::make('generate')
                 ->label('Generate salary slips')
                 ->icon('heroicon-o-calculator')
-                ->visible(fn (): bool => (int) auth()->user()?->privilege === 14)
+                ->visible(fn (): bool => (bool) auth()->user()?->hasManagementAccess())
                 ->modalWidth('lg')
                 ->modalDescription('Choose the month and employees. Payroll-disabled employees are excluded. Resolve any attendance issues before generating drafts.')
                 ->modalSubmitActionLabel('Check and generate')
@@ -167,7 +167,7 @@ class ListSalarySlips extends ListRecords
 
     protected function authorizePayrollManagement(): void
     {
-        abort_unless((int) auth()->user()?->privilege === 14, 403);
+        abort_unless((bool) auth()->user()?->hasManagementAccess(), 403);
     }
 
     protected function generationSchema(): array

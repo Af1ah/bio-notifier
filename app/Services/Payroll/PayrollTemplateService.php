@@ -13,7 +13,7 @@ class PayrollTemplateService
 {
     public function preview(PayrollTemplate $template, array $ids, User $actor, ?string $effectiveFrom = null, array $overrides = []): array
     {
-        abort_unless((int) $actor->privilege === 14, 403);
+        abort_unless($actor->hasManagementAccess(), 403);
         Validator::make(['users' => $ids], ['users' => 'required|array|min:1|max:1000', 'users.*' => 'integer|distinct|exists:users,id'])->validate();
         sort($ids);
 
@@ -24,6 +24,7 @@ class PayrollTemplateService
             if (($template->branch_id && (int) $template->branch_id !== (int) $user->branch_id) || ($template->role && $template->role !== $user->group)) throw ValidationException::withMessages(['users' => 'An employee does not match the template branch or designation.']);
             $profile = $user->payrollProfile;
             $after = array_intersect_key($template->settings, array_flip(array_merge(PayrollProfileHistoryService::MONEY, ['currency', 'pay_basis'])));
+            $after['currency'] = \App\Services\Support\TenantCurrency::get();
             foreach (array_intersect($overrides, PayrollProfileHistoryService::MONEY) as $field) $after[$field] = $profile?->$field ?? 0;
             if (($after['pay_basis'] ?? 'monthly') !== 'monthly') foreach (['housing_allowance_minor','transport_allowance_minor','other_allowance_minor','fixed_deduction_minor'] as $field) $after[$field] = 0;
             $rows[] = ['id' => $user->id, 'name' => $user->name, 'status' => $profile?->payroll_enabled ? 'will_update' : 'payroll_disabled', 'before' => $profile?->only(array_merge(PayrollProfileHistoryService::MONEY, ['currency','pay_basis'])) ?? [], 'after' => $after];

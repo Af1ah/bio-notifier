@@ -25,6 +25,11 @@ use Filament\Tables\Table;
 
 class DeviceCommandResource extends Resource
 {
+    public static function canViewAny(): bool
+    {
+        return (bool) auth('web')->user()?->canManageDevices();
+    }
+
     protected static ?string $model = DeviceCommand::class;
 
     protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-command-line';

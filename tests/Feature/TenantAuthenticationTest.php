@@ -59,6 +59,97 @@ class TenantAuthenticationTest extends TestCase
         Route::post('/livewire/update', fn () => response()->json(['tenant' => tenant('id'), 'id' => Auth::guard('web')->id()]))->middleware('web');
     }
 
+    private function hrAccount(): User
+    {
+        if (! tenancy()->initialized) {
+            tenancy()->initialize(Organisation::findOrFail('organisation-a'));
+        }
+        return User::create(['name' => 'HR operator', 'email' => 'hr@example.test', 'pin' => 'hr-operator', 'privilege' => User::HR_PRIVILEGE, 'password' => 'test-password']);
+    }
+
+    public function test_master_can_create_and_change_hr_access(): void
+    {
+        \Livewire\Livewire::setUpdateRoute(fn ($handle) => Route::post('/livewire/hr-master-test', $handle)->middleware('web'));
+        config(['database.connections.tenant' => config('database.connections.sqlite')]);
+        DB::connection('tenant')->setPdo(DB::connection('sqlite')->getPdo());
+        Filament::setCurrentPanel(Filament::getPanel('master'));
+        $page = \Livewire\Livewire::test(ManageOrganisationAdmins::class, ['record' => 'organisation-a']);
+        $page->callTableAction('create', data: ['name' => 'HR operator', 'email' => 'hr-created@example.test', 'password' => 'test-password', 'pin' => 'hr-created', 'privilege' => User::HR_PRIVILEGE])->assertHasNoTableActionErrors();
+        $hr = User::where('email', 'hr-created@example.test')->firstOrFail();
+        $this->assertTrue($hr->has_login);
+        $this->assertFalse($hr->canManageDevices());
+        $this->actingAs($hr, 'web');
+        $page->callTableAction('edit', $hr, data: ['name' => $hr->name, 'email' => $hr->email, 'privilege' => 14])->assertHasNoTableActionErrors();
+        $this->assertTrue($hr->fresh()->canManageDevices());
+    }
+
+    public function test_hr_can_login_and_has_business_access_but_no_device_access(): void
+    {
+        $hr = $this->hrAccount();
+        $this->assertSame('HR', $hr->privilege_label);
+        $this->assertTrue($hr->has_login);
+        $this->assertTrue($hr->canAccessPanel(Filament::getPanel('tenant')));
+        $this->assertSame([$hr->id], User::loginAccounts()->pluck('id')->all());
+        $this->assertFalse($hr->canManageDevices());
+        $this->actingAs($hr, 'web');
+        foreach ([\App\Models\AttendanceDay::class, \App\Models\AttendanceApproval::class, \App\Models\SalarySlip::class, \App\Models\EmployeeLeave::class, \App\Models\Schedule::class] as $model) {
+            $this->assertTrue($hr->can('viewAny', $model), $model);
+        }
+        foreach ([\App\Models\Device::class, \App\Models\DeviceCommand::class, \App\Models\AttendanceLog::class] as $model) {
+            $this->assertFalse($hr->can('viewAny', $model), $model);
+            $this->assertFalse($hr->can('create', $model), $model);
+            $this->assertFalse($hr->can('view', new $model), $model);
+            $this->assertFalse($hr->can('update', new $model), $model);
+            $this->assertFalse($hr->can('delete', new $model), $model);
+        }
+        $this->assertFalse(\App\Filament\Tenant\Widgets\DeviceStatus::canView());
+        $this->assertFalse(\App\Filament\Tenant\Widgets\ActionRequired::canView());
+        $this->assertTrue(\App\Filament\Tenant\Pages\LeaveBalances::canAccess());
+        $this->assertTrue(\App\Filament\Tenant\Resources\PayrollTemplates\PayrollTemplateResource::canAccess());
+    }
+
+    public function test_hr_device_urls_are_forbidden_on_the_server(): void
+    {
+        tenancy()->initialize(Organisation::findOrFail('organisation-a'));
+        $this->actingAs($this->hrAccount(), 'web');
+        foreach (['devices', 'device-commands', 'device-commands/create', 'attendance-logs'] as $path) {
+            $this->get('/alpha/admin/'.$path)->assertForbidden();
+        }
+    }
+
+    public function test_hr_cannot_send_device_commands_even_when_calling_the_service_directly(): void
+    {
+        $this->actingAs($this->hrAccount(), 'web');
+        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        app(\App\Services\Devices\DeviceCommandService::class)->request(new \App\Models\Device, 'reboot');
+    }
+
+    public function test_hr_cannot_change_employee_device_privileges(): void
+    {
+        $employee = User::create(['name' => 'Employee', 'pin' => 'employee']);
+        $this->actingAs($this->hrAccount(), 'web');
+        $employee->update(['name' => 'Updated employee']);
+        $this->assertSame('Updated employee', $employee->fresh()->name);
+        $this->expectException(\Illuminate\Validation\ValidationException::class);
+        $employee->update(['device_privilege' => 14]);
+    }
+
+    public function test_hr_cannot_promote_itself_to_admin(): void
+    {
+        $hr = $this->hrAccount();
+        $this->actingAs($hr, 'web');
+        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        $hr->update(['privilege' => 14]);
+    }
+
+    public function test_hr_cannot_reset_an_admin_password_to_gain_device_access(): void
+    {
+        $admin = User::create(['name' => 'Admin', 'email' => 'admin@example.test', 'pin' => 'admin-operator', 'privilege' => 14, 'password' => 'admin-password']);
+        $this->actingAs($this->hrAccount(), 'web');
+        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        $admin->update(['password' => 'new-password']);
+    }
+
     public function test_master_admin_page_initializes_tenancy_from_restored_record(): void
     {
         $organisation = Organisation::findOrFail('organisation-a');

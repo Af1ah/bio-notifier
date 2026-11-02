@@ -46,7 +46,7 @@ class LeavePolicyResource extends Resource
 
     public static function canAccess(): bool
     {
-        return (int) auth()->user()?->privilege === 14;
+        return (bool) auth()->user()?->hasManagementAccess();
     }
 
     public static function canViewAny(): bool
@@ -92,7 +92,7 @@ class LeavePolicyResource extends Resource
                 Select::make('leave_type_id')->label('Leave category')->options(fn () => LeaveType::where('active', true)->where('is_paid', true)->pluck('name', 'id'))->required()->searchable()
                     ->createOptionForm(fn (Schema $schema) => LeaveTypeForm::configure($schema->model(LeaveType::class), paidOnly: true))
                     ->createOptionUsing(function (array $data) {
-                        abort_unless((int) auth()->user()?->privilege === 14, 403);
+                        abort_unless((bool) auth()->user()?->hasManagementAccess(), 403);
 
                         return LeaveType::create(array_replace($data, ['is_paid' => true, 'annual_allowance_half_units' => 0]))->id;
                     })
@@ -113,7 +113,7 @@ class LeavePolicyResource extends Resource
                 Select::make('rules.unpaid_excess_deduction_method')->label('Unpaid excess deduction')->options([
                     'salary_day_rate' => 'Employee salary day rate', 'basic_salary_31_day_rate' => 'Basic salary ÷ actual calendar days', 'fixed_amount' => 'Fixed amount per full day',
                 ])->default('salary_day_rate')->required()->live()->visible(fn (Get $get) => $get('rules.allow_unpaid_excess')),
-                TextInput::make('rules.unpaid_excess_deduction_minor')->label('Unpaid excess deduction per full day')->numeric()->step(0.01)->minValue(0.01)->required()->default(0)
+                TextInput::make('rules.unpaid_excess_deduction_minor')->prefix(fn () => \App\Services\Support\TenantCurrency::get())->label('Unpaid excess deduction per full day')->numeric()->step(0.01)->minValue(0.01)->required()->default(0)
                     ->formatStateUsing(fn ($state) => number_format(((int) $state) / 100, 2, '.', ''))
                     ->dehydrateStateUsing(fn ($state) => (int) round(((float) $state) * 100))
                     ->visible(fn (Get $get) => $get('rules.allow_unpaid_excess') && $get('rules.unpaid_excess_deduction_method') === 'fixed_amount'),
@@ -136,8 +136,7 @@ class LeavePolicyResource extends Resource
                 $number('comp_expiry_days', 'Credit expires after availability', 730)->suffix('days')->visible(fn (Get $get) => $rewards($get) && $get('rules.comp_reward') !== 'payment' && $get('rules.comp_expiry_mode') !== 'work_month_end'),
                 $toggle('comp_same_day', 'Credit available on work date')->helperText('Work and leave overlap checks still apply.')->visible(fn (Get $get) => $rewards($get) && $get('rules.comp_reward') !== 'payment'),
                 $toggle('comp_allow_overtime', 'Allow approved overtime alongside this reward')->visible($rewards),
-                TextInput::make('rules.comp_payment_currency')->label('Payment currency')->default('INR')->required()->length(3)->dehydrateStateUsing(fn ($state) => strtoupper(trim($state)))->visible($payment),
-                TextInput::make('rules.comp_payment_full_minor')->label('Full-day reward payment')->helperText('Half-day pays half. Payment needs a positive amount and matching employee payroll currency.')->numeric()->step(0.01)->minValue(0)->maxValue(1000000)->required()->default(0)->formatStateUsing(fn ($state) => number_format(((int) $state) / 100, 2, '.', ''))->dehydrateStateUsing(fn ($state) => (int) round(((float) $state) * 100))->visible($payment),
+                TextInput::make('rules.comp_payment_full_minor')->prefix(fn () => \App\Services\Support\TenantCurrency::get())->label('Full-day reward payment')->helperText('Half-day pays half. Payment needs a positive amount and matching employee payroll currency.')->numeric()->step(0.01)->minValue(0)->maxValue(1000000)->required()->default(0)->formatStateUsing(fn ($state) => number_format(((int) $state) / 100, 2, '.', ''))->dehydrateStateUsing(fn ($state) => (int) round(((float) $state) * 100))->visible($payment),
             ])->columns(['default' => 1, 'md' => 2])->columnSpanFull(),
         ]);
     }

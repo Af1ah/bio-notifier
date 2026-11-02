@@ -17,7 +17,7 @@ class ApprovalService
 {
     public function decide(AttendanceApproval $approval, User $actor, bool $approve, ?string $reason = null, ?string $checkoutAt = null): void
     {
-        abort_unless($actor->privilege === 14, 403);
+        abort_unless($actor->hasManagementAccess(), 403);
         DB::transaction(function () use ($approval, $actor, $approve, $reason, $checkoutAt) {
             // Match calculation's day-before-approval lock order.
             $day = AttendanceDay::lockForUpdate()->findOrFail($approval->attendance_day_id);

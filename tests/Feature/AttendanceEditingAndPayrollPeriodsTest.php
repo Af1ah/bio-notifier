@@ -6,6 +6,7 @@ use App\Filament\Tenant\Resources\AttendanceDays\Pages\ListAttendanceDays;
 use App\Filament\Tenant\Resources\SalarySlips\Pages\ListSalarySlips;
 use App\Models\AttendanceApproval;
 use App\Models\AttendanceCalculationRun;
+use App\Models\AttendanceCorrection;
 use App\Models\AttendanceDay;
 use App\Models\AttendanceLog;
 use App\Models\Branch;
@@ -22,6 +23,7 @@ use App\Models\User;
 use App\Services\Attendance\ApprovalService;
 use App\Services\Attendance\AttendanceBaselineService;
 use App\Services\Attendance\AttendanceCalculationService;
+use App\Services\Attendance\AttendanceEntryContext;
 use App\Services\Attendance\AttendanceEntryService;
 use App\Services\Attendance\ShiftAssignmentService;
 use App\Services\Attendance\ShiftRuleService;
@@ -83,6 +85,16 @@ class AttendanceEditingAndPayrollPeriodsTest extends TestCase
         }
     }
 
+    public function test_hr_role_can_enter_and_approve_attendance(): void
+    {
+        $this->actor->update(['privilege' => User::HR_PRIVILEGE]);
+        $user = $this->employee();
+        $shift = $this->shift();
+        $day = app(AttendanceEntryService::class)->add($this->actor, ['user_id' => $user->id, 'schedule_id' => $shift->id, 'work_date' => '2026-08-03', 'in_at' => '2026-08-03 09:00', 'out_at' => '2026-08-03 17:00', 'reason' => 'Device unavailable']);
+        app(ApprovalService::class)->decide($day->approvals()->where('type', 'attendance')->firstOrFail(), $this->actor, true);
+        $this->assertSame(480, $day->fresh()->approved_worked_minutes);
+    }
+
     public function test_manual_entry_is_shift_linked_calculated_and_requires_approval(): void
     {
         $user = $this->employee();
@@ -99,12 +111,129 @@ class AttendanceEditingAndPayrollPeriodsTest extends TestCase
         $this->assertSame($day->id, app(AttendanceCalculationService::class)->calculate($user, Carbon::parse('2026-08-03'))->id);
     }
 
-    public function test_actual_manual_entry_action_uses_the_selected_shift(): void
+    public function test_actual_manual_entry_action_uses_the_default_shift(): void
     {
         $user = $this->employee();
         $shift = $this->shift();
-        Livewire::test(ListAttendanceDays::class)->mountAction('manualAttendance')->setActionData(['user_id' => $user->id, 'work_date' => '2026-08-03'])->setActionData(['schedule_id' => $shift->id, 'in_time' => '09:00', 'out_time' => '17:00', 'reason' => 'HR entered verified times'])->callMountedAction()->assertHasNoErrors();
+        app(ShiftAssignmentService::class)->setDefault($shift, '2026-08-01');
+        Livewire::test(ListAttendanceDays::class)->mountAction('manualAttendance')->setActionData(['user_id' => $user->id, 'work_date' => '2026-08-03'])->setActionData(['in_time' => '09:00', 'out_time' => '17:00', 'reason' => 'HR entered verified times'])->callMountedAction()->assertHasNoErrors();
         $this->assertSame(480, AttendanceDay::firstOrFail()->candidate_worked_minutes);
+    }
+
+    public function test_shared_form_prefills_raw_punches_and_corrects_them_without_shift_selectors(): void
+    {
+        $user = $this->employee();
+        $shift = $this->shift();
+        app(ShiftAssignmentService::class)->setDefault($shift, '2026-08-01');
+        $this->punches($user, [['09:00', 0], ['17:00', 1]]);
+        $page = Livewire::test(ListAttendanceDays::class)->mountAction('manualAttendance')
+            ->setActionData(['user_id' => $user->id, 'work_date' => '2026-08-03'])
+            ->assertActionDataSet(['in_time' => '09:00', 'out_time' => '17:00']);
+        $schema = $page->instance()->getSchema('mountedActionSchema0');
+        $this->assertNull($schema->getComponent('schedule_id', withHidden: true));
+        $this->assertNull($schema->getComponent('attendance_occurrence_id', withHidden: true));
+        $this->assertNull($schema->getComponent('proposed_status', withHidden: true));
+        $page->setActionData(['out_time' => '16:00', 'reason' => 'Confirmed earlier checkout'])->callMountedAction()->assertHasNoActionErrors();
+        $correction = AttendanceCorrection::firstOrFail();
+        $day = AttendanceDay::firstOrFail();
+        $this->assertSame('17:00', $day->occurrences()->firstOrFail()->last_out_at->format('H:i'));
+        $this->assertSame('2026-08-03 16:00:00', $correction->getRawOriginal('proposed_out_at'));
+        app(ApprovalService::class)->decide($day->approvals()->where('proposal->correction_id', $correction->id)->firstOrFail(), $this->actor, true);
+        $this->assertSame(420, $day->fresh()->approved_worked_minutes);
+        $this->assertSame(2, AttendanceLog::count());
+        $this->assertSame(0, ManualAttendanceEntry::count());
+    }
+
+    public function test_employee_night_shift_overrides_default_and_alone_advances_checkout_date(): void
+    {
+        $user = $this->employee();
+        $dayShift = $this->shift();
+        $night = $this->shift('Night', '22:00', '06:00', ['end_day_offset' => 1]);
+        app(ShiftAssignmentService::class)->setDefault($dayShift, '2026-08-01');
+        app(ShiftAssignmentService::class)->assign('user', $user, ['schedule_ids' => [$night->id], 'effective_from' => '2026-08-01']);
+        $service = app(AttendanceEntryService::class);
+        $service->addOrCorrect($this->actor, ['user_id' => $user->id, 'work_date' => '2026-08-03', 'entry_mode' => 'manual',
+            'schedule_id' => $dayShift->id, 'in_time' => '22:00', 'out_time' => '06:00', 'reason' => 'Confirmed night work']);
+        $entry = ManualAttendanceEntry::firstOrFail();
+        $this->assertSame($night->id, $entry->schedule_id);
+        $this->assertSame('2026-08-03 22:00:00', $entry->getRawOriginal('in_at'));
+        $this->assertSame('2026-08-04 06:00:00', $entry->getRawOriginal('out_at'));
+        $service->addOrCorrect($this->actor, ['user_id' => $user->id, 'work_date' => '2026-08-04', 'entry_mode' => 'manual',
+            'in_time' => '02:00', 'out_time' => '05:00', 'reason' => 'After-midnight night work']);
+        $entry = ManualAttendanceEntry::orderByDesc('id')->firstOrFail();
+        $this->assertSame('2026-08-05 02:00:00', $entry->getRawOriginal('in_at'));
+        $this->assertSame('2026-08-05 05:00:00', $entry->getRawOriginal('out_at'));
+    }
+
+    public function test_day_shift_does_not_turn_reversed_times_into_next_day_attendance(): void
+    {
+        $user = $this->employee();
+        app(ShiftAssignmentService::class)->setDefault($this->shift(), '2026-08-01');
+        $this->expectException(ValidationException::class);
+        app(AttendanceEntryService::class)->addOrCorrect($this->actor, ['user_id' => $user->id, 'work_date' => '2026-08-03', 'entry_mode' => 'manual',
+            'in_time' => '17:00', 'out_time' => '09:00', 'reason' => 'Invalid day times']);
+    }
+
+    public function test_checkout_only_evidence_prefills_checkout_without_inventing_checkin(): void
+    {
+        $user = $this->employee();
+        app(ShiftAssignmentService::class)->setDefault($this->shift(), '2026-08-01');
+        $this->punches($user, [['17:00', 1]]);
+        $this->assertSame(['in_time' => null, 'out_time' => '17:00'], app(AttendanceEntryContext::class)->initial($user, '2026-08-03'));
+    }
+
+    public function test_times_cannot_silently_pick_between_overlapping_shift_windows(): void
+    {
+        $user = $this->employee();
+        $first = $this->shift('First', '09:00', '12:00');
+        $second = $this->shift('Second', '13:00', '17:00');
+        $day = AttendanceDay::create(['user_id' => $user->id, 'work_date' => '2026-08-03', 'status' => 'pending']);
+        foreach ([$first, $second] as $index => $shift) {
+            $day->occurrences()->create(['schedule_id' => $shift->id, 'shift_rule_revision_id' => $shift->ruleRevisions()->firstOrFail()->id,
+                'position' => $index + 1, 'window_starts_at' => '2026-08-03 08:00:00', 'window_ends_at' => '2026-08-03 19:00:00']);
+        }
+        try {
+            app(AttendanceEntryService::class)->addOrCorrect($this->actor, ['user_id' => $user->id, 'work_date' => '2026-08-03', 'entry_mode' => 'correction',
+                'in_time' => '13:00', 'out_time' => '16:00', 'reason' => 'Ambiguous legacy windows']);
+            $this->fail('An ambiguous shift must not be selected silently.');
+        } catch (ValidationException $exception) {
+            $this->assertStringContainsString('more than one shift', $exception->errors()['in_time'][0]);
+        }
+        $this->assertSame(0, AttendanceCorrection::count());
+    }
+
+    public function test_times_match_the_second_shift_and_preserve_the_first(): void
+    {
+        $user = $this->employee();
+        $morning = $this->shift('Morning', '09:00', '12:00');
+        $afternoon = $this->shift('Afternoon', '13:00', '17:00');
+        app(ShiftAssignmentService::class)->assign('user', $user, ['schedule_ids' => [$morning->id, $afternoon->id], 'effective_from' => '2026-08-01']);
+        $this->punches($user, [['09:00', 0], ['12:00', 1], ['13:00', 0], ['17:00', 1]]);
+        $day = app(AttendanceCalculationService::class)->calculate($user, Carbon::parse('2026-08-03'));
+        $first = $day->occurrences->first();
+        $second = $day->occurrences->last();
+        $correction = app(AttendanceEntryService::class)->addOrCorrect($this->actor, ['user_id' => $user->id, 'work_date' => '2026-08-03', 'entry_mode' => 'correction',
+            'attendance_occurrence_id' => $first->id, 'in_time' => '13:00', 'out_time' => '16:00', 'reason' => 'Confirmed afternoon checkout']);
+        $this->assertSame($second->id, $correction->attendance_occurrence_id);
+        app(ApprovalService::class)->decide($day->approvals()->where('proposal->correction_id', $correction->id)->firstOrFail(), $this->actor, true);
+        $this->assertSame(180, $first->fresh()->candidate_worked_minutes);
+        $this->assertSame(180, $second->fresh()->candidate_worked_minutes);
+        $this->assertSame(4, AttendanceLog::count());
+    }
+
+    public function test_existing_off_day_without_occurrences_accepts_the_default_shift_times(): void
+    {
+        $user = $this->employee();
+        app(ShiftAssignmentService::class)->setDefault($this->shift(extra: ['weekdays' => [2, 3]]), '2026-08-01');
+        $day = app(AttendanceCalculationService::class)->calculate($user, Carbon::parse('2026-08-03'));
+        $this->assertSame('off', $day->status);
+        $this->assertSame(0, $day->occurrences()->count());
+        $result = app(AttendanceEntryService::class)->addOrCorrect($this->actor, ['user_id' => $user->id, 'work_date' => '2026-08-03', 'entry_mode' => 'correction',
+            'in_time' => '09:00', 'out_time' => '17:00', 'reason' => 'Confirmed off-day work']);
+        $this->assertSame($day->id, $result->id);
+        $this->assertSame(480, $result->candidate_worked_minutes);
+        $this->assertSame(0, $result->approved_worked_minutes);
+        $this->assertTrue($result->approvals()->where('type', 'attendance')->where('state', 'pending')->exists());
     }
 
     public function test_trailing_open_session_keeps_earlier_work_and_gaps_after_hr_checkout(): void
@@ -335,7 +464,8 @@ class AttendanceEditingAndPayrollPeriodsTest extends TestCase
     {
         $user = $this->employee();
         $shift = $this->shift();
-        Livewire::test(ListAttendanceDays::class)->mountAction('manualAttendance')->setActionData(['user_id' => $user->id, 'work_date' => '2026-08-03'])->setActionData(['schedule_id' => $shift->id, 'in_time' => '04:00', 'out_time' => '17:00', 'reason' => 'Outside shift'])->callMountedAction()
+        app(ShiftAssignmentService::class)->setDefault($shift, '2026-08-01');
+        Livewire::test(ListAttendanceDays::class)->mountAction('manualAttendance')->setActionData(['user_id' => $user->id, 'work_date' => '2026-08-03'])->setActionData(['in_time' => '04:00', 'out_time' => '17:00', 'reason' => 'Outside shift'])->callMountedAction()
             ->assertHasErrors(['mountedActions.0.data.in_time']);
         $this->assertDatabaseCount('manual_attendance_entries', 0);
     }

@@ -75,10 +75,10 @@ class SalarySlipsTable
             ->groupingSettingsHidden()
             ->headerActions([
                 Action::make('downloadPayslips')->label('Download payslips')->icon('heroicon-o-document-arrow-down')->color('gray')
-                    ->visible(fn (): bool => (int) auth()->user()?->privilege === 14)
+                    ->visible(fn (): bool => (bool) auth()->user()?->hasManagementAccess())
                     ->schema(self::exportFields())->action(fn ($livewire, array $data) => $livewire->downloadFilteredPayslips($data)),
                 Action::make('downloadPayroll')->label('Download payroll CSV')->icon('heroicon-o-arrow-down-tray')->color('gray')
-                    ->visible(fn (): bool => (int) auth()->user()?->privilege === 14)
+                    ->visible(fn (): bool => (bool) auth()->user()?->hasManagementAccess())
                     ->schema(self::exportFields())->action(fn ($livewire, array $data) => $livewire->downloadFilteredPayroll($data)),
             ])
             ->defaultSort('period_start', 'desc')

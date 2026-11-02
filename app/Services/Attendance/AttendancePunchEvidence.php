@@ -13,7 +13,7 @@ final class AttendancePunchEvidence
 {
     public function read(mixed $userId, mixed $date, ?AttendanceDay $day = null, mixed $scheduleId = null): array
     {
-        abort_unless((int) auth()->user()?->privilege === 14, 403);
+        abort_unless((bool) auth()->user()?->hasManagementAccess(), 403);
         if (Validator::make(['user_id' => $userId, 'date' => $date], ['user_id' => 'required|integer|min:1', 'date' => 'required|date_format:Y-m-d'])->fails()) {
             return ['logs' => collect(), 'truncated' => false];
         }
@@ -29,6 +29,9 @@ final class AttendancePunchEvidence
                 $windows[] = [TenantTimezone::parse($date.' '.$rule->start_time)->subMinutes($rule->earliest_arrival_minutes),
                     TenantTimezone::parse($date.' '.$rule->end_time)->addDays($overnight ? 1 : 0)->addMinutes($rule->checkout_cutoff_minutes)];
             }
+        }
+        if (! $windows) {
+            $windows = array_map(fn (array $candidate) => [$candidate['start'], $candidate['end']], app(AttendanceEntryContext::class)->candidates($user, $date));
         }
         $logs = AttendanceLog::with('device:id,name')->where('pin', $user->pin)
             ->where(function ($query) use ($date, $windows) {

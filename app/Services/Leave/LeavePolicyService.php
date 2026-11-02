@@ -20,13 +20,14 @@ class LeavePolicyService
             'leave_period_from' => null, 'leave_period_to' => null, 'balance_cap_half_units' => 24, 'expiry_months' => 3, 'fixed_expiry_month' => null, 'fixed_expiry_day' => null,
             'allow_unpaid_excess' => false, 'unpaid_excess_deduction_method' => 'salary_day_rate', 'unpaid_excess_deduction_minor' => 0, 'comp_enabled' => false, 'comp_holiday' => true, 'comp_off' => true,
             'comp_expiry_days' => 90, 'comp_expiry_mode' => 'days', 'reset_dates' => [],
-            'comp_same_day' => false, 'comp_allow_overtime' => false, 'comp_reward' => 'choice', 'comp_payment_currency' => 'INR', 'comp_payment_full_minor' => 0];
+            'comp_same_day' => false, 'comp_allow_overtime' => false, 'comp_reward' => 'choice', 'comp_payment_currency' => \App\Services\Support\TenantCurrency::get(), 'comp_payment_full_minor' => 0];
     }
 
     public function save(?LeavePolicy $policy, array $data, User $actor): LeavePolicy
     {
-        abort_unless((int) $actor->privilege === 14, 403);
+        abort_unless($actor->hasManagementAccess(), 403);
         $rules = array_replace(self::defaults(), $data['rules'] ?? []);
+        $rules['comp_payment_currency'] = \App\Services\Support\TenantCurrency::get();
         // These choices now have one source: shift rules and the explicit expiry rule.
         unset($rules['carry_roll_again'], $rules['comp_half_minutes'], $rules['comp_full_minutes']);
         if (! empty($rules['annual_cutoff_date']) && ($rules['expiry_method'] ?? 'fixed') === 'fixed' && $rules['carry_enabled'] && $rules['mode'] !== 'compensatory') {
@@ -120,7 +121,7 @@ class LeavePolicyService
 
         return DB::transaction(function () use ($policy, $v, $actor) {
             // Serialize policy creation/revision across administrators.
-            User::where('privilege', 14)->orderBy('id')->lockForUpdate()->get();
+            User::whereIn('privilege', [14, User::HR_PRIVILEGE])->orderBy('id')->lockForUpdate()->get();
             $date = Carbon::parse($v['effective_from'])->startOfDay();
             if ($policy) {
                 $policy = LeavePolicy::lockForUpdate()->findOrFail($policy->id);
@@ -188,7 +189,7 @@ class LeavePolicyService
 
     public function assign(LeavePolicy $policy, array $userIds, Carbon $start, ?Carbon $end, User $actor): void
     {
-        abort_unless((int) $actor->privilege === 14, 403);
+        abort_unless($actor->hasManagementAccess(), 403);
         if ($end && $end->lt($start)) {
             throw ValidationException::withMessages(['ends_on' => 'End must follow start.']);
         }
@@ -224,13 +225,14 @@ class LeavePolicyService
                     throw ValidationException::withMessages(['starts_on' => 'Assignment cannot replace already granted credits or approved leave. Use a later cutover.']);
                 }
                 DB::table('employee_leave_policy_assignments')->insert(['user_id' => $id, 'leave_policy_id' => $policy->id, 'starts_on' => $start->toDateString(), 'ends_on' => $end?->toDateString(), 'created_by_user_id' => $actor->id, 'created_at' => now(), 'updated_at' => now()]);
+                LeaveBalanceSummaryService::invalidate((int) $id);
             }
         });
     }
 
     public function endAssignment(int $assignmentId, Carbon $end, string $reason, User $actor): void
     {
-        abort_unless((int) $actor->privilege === 14, 403);
+        abort_unless($actor->hasManagementAccess(), 403);
         if ($end->lt(Carbon::today(LeaveSettingsService::timezone())) || trim($reason) === '') {
             throw ValidationException::withMessages(['ends_on' => 'Choose a future month end and record the reason for changing assignment.']);
         }
@@ -251,6 +253,7 @@ class LeavePolicyService
             $changes = json_decode($assignment->changes ?? '[]', true, 512, JSON_THROW_ON_ERROR);
             $changes[] = ['previous_end' => $assignment->ends_on, 'new_end' => $end->toDateString(), 'reason' => $reason, 'actor_id' => $actor->id, 'recorded_at' => now()->toIso8601String()];
             DB::table('employee_leave_policy_assignments')->where('id', $assignmentId)->update(['ends_on' => $end->toDateString(), 'changes' => json_encode($changes, JSON_THROW_ON_ERROR), 'updated_at' => now()]);
+            LeaveBalanceSummaryService::invalidate((int) $assignment->user_id);
         }, 3);
     }
 

@@ -21,7 +21,7 @@ class AttendanceBaselineService
 
     public function adopt(AttendanceDay $day, User $actor, string $reason, string $signature, bool $confirmed): void
     {
-        abort_unless($actor->privilege === 14, 403);
+        abort_unless($actor->hasManagementAccess(), 403);
         if (! $confirmed || trim($reason) === '') {
             throw ValidationException::withMessages(['reason' => 'Confirm the reviewed evidence and record why the original approval is valid.']);
         }

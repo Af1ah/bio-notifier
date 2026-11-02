@@ -1,6 +1,6 @@
 @php
     $month = \Carbon\Carbon::create($this->year, $this->month, 1);
-    $results = \App\Models\AttendanceDay::with('occurrences.schedule')
+    $results = \App\Models\AttendanceDay::with(['occurrences.schedule', 'approvals'])
         ->where('user_id', $record->id)
         ->whereBetween('work_date', [$month->copy()->startOfMonth(), $month->copy()->endOfMonth()])
         ->get()
@@ -72,20 +72,17 @@
                                     $key = $month->format('Y-m-').str_pad($number, 2, '0', STR_PAD_LEFT);
                                     $result = $results->get($key);
                                     $dayLogs = $logs->get($key, collect());
-                                    $status = $result?->status ?? 'not_calculated';
+                                    $display = \App\Services\Attendance\AttendanceDayDisplay::forDay($result);
+                                    $status = $display['status'];
                                     $colors = match ($status) {
                                         'present' => '#dcfce7', 'half_day' => '#fef3c7', 'absent' => '#fee2e2',
                                         'off', 'holiday', 'no_shift' => '#e5e7eb', default => '#f3f4f6',
                                     };
-                                    $label = match ($status) {
-                                        'present' => 'Present', 'half_day' => 'Half day', 'absent' => 'Absent',
-                                        'off', 'holiday' => 'Off', 'no_shift' => 'No shift', default => 'Not calculated',
-                                    };
-                                    $workedMinutes = $result?->approved_worked_minutes ?: $result?->candidate_worked_minutes;
+                                    $label = $display['label'];
                                     $payload = [
                                         'date' => \Carbon\Carbon::parse($key)->format('M d, Y'), 'status' => $label,
-                                        'worked' => $result ? sprintf('%dh %dm', intdiv($workedMinutes, 60), $workedMinutes % 60) : '—',
-                                        'ot' => $result?->approved_overtime_minutes ?? 0,
+                                        'worked' => $result ? $display['clock'].'h' : '—',
+                                        'ot' => $display['unapproved_checkout'] ? 0 : ($result?->approved_overtime_minutes ?? 0),
                                         'shifts' => $result?->occurrences->map(fn ($occurrence) => [
                                             'name' => $occurrence->schedule?->name, 'in' => $occurrence->first_in_at?->format('h:i A'),
                                             'out' => ($occurrence->last_out_at ?? $occurrence->assumed_out_at)?->format('h:i A'), 'status' => $occurrence->status,

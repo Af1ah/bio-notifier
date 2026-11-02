@@ -32,7 +32,7 @@ class ListDevices extends ListRecords
                 ->databaseTransaction(false)
                 ->label('Add device')
                 ->icon('heroicon-o-plus')
-                ->authorize(fn (): bool => tenant()?->device_integration === DeviceIntegration::GATEWAY && auth('web')->user()?->has_login)
+                ->authorize(fn (): bool => tenant()?->device_integration === DeviceIntegration::GATEWAY && auth('web')->user()?->canManageDevices())
                 ->modalHeading('Add attendance device')
                 ->modalDescription('Add the device once. The connection and available commands are set up automatically.')
                 ->schema([

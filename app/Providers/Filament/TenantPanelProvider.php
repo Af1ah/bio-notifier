@@ -2,6 +2,7 @@
 
 namespace App\Providers\Filament;
 
+use App\Filament\Tenant\Pages\OrganisationSettings;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
 use Filament\Http\Middleware\DisableBladeIconComponents;
@@ -36,6 +37,12 @@ class TenantPanelProvider extends PanelProvider
             ->path('{tenant}/admin')
             ->login()
             ->userMenuItems([
+                Action::make('organisationSettings')
+                    ->label('Organisation settings')
+                    ->icon('heroicon-o-cog-6-tooth')
+                    ->url(fn () => OrganisationSettings::getUrl(['tenant' => tenant('shortname')], panel: 'tenant'))
+                    ->visible(fn (): bool => OrganisationSettings::canAccess())
+                    ->sort(90),
                 Action::make('installApp')
                     ->label('Install app')
                     ->icon('heroicon-o-arrow-down-tray')

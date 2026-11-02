@@ -31,7 +31,7 @@ final class DeviceAccessPeriodAction
 
         return Action::make('deviceAccessPeriod')
             ->label('Expiration rule')->icon('heroicon-o-calendar-days')->modalWidth('lg')
-            ->authorize(fn (): bool => (bool) auth('web')->user()?->has_login && $available())
+            ->authorize(fn (): bool => (bool) auth('web')->user()?->canManageDevices() && ((bool) auth('web')->user()?->has_login && $available()))
             ->visible($available)
             ->modalDescription('Choose no expiration, dates, an entry limit, or both. Daily time periods and employee joining/end dates remain separate. Changing the rule replaces its previous limits.')
             ->fillForm(function (DeviceRosterEntry $record): array {

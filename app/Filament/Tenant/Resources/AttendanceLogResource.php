@@ -19,6 +19,11 @@ use Illuminate\Database\Eloquent\Model;
 
 class AttendanceLogResource extends Resource
 {
+    public static function canViewAny(): bool
+    {
+        return (bool) auth('web')->user()?->canManageDevices();
+    }
+
     protected static ?string $model = AttendanceLog::class;
 
     protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-clipboard-document-list';

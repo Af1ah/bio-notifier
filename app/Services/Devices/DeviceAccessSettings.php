@@ -65,7 +65,7 @@ final class DeviceAccessSettings
 
     private function binding(Device $device): GatewayDeviceBinding
     {
-        abort_unless(auth('web')->user()?->has_login && tenant()?->device_integration === DeviceIntegration::GATEWAY, 403);
+        abort_unless((auth('web')->user()?->has_login && auth('web')->user()?->canManageDevices()) && tenant()?->device_integration === DeviceIntegration::GATEWAY, 403);
         abort_unless(Device::whereKey($device->id)->where('serial_number', $device->serial_number)->exists(), 403);
 
         return GatewayDeviceBinding::where('organisation_id', tenant('id'))->where('device_id', $device->id)

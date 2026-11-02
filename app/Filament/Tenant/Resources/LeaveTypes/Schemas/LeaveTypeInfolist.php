@@ -28,7 +28,7 @@ class LeaveTypeInfolist
                             }),
                         TextEntry::make('deduction_amount_minor')
                             ->label('Fixed deduction')->visible(fn ($record) => ! $record->is_paid && $record->deduction_method === 'fixed_amount')
-                            ->formatStateUsing(fn ($state): string => 'INR '.number_format(((int) $state) / 100, 2)),
+                            ->formatStateUsing(fn ($state): string => \App\Services\Support\TenantCurrency::format((int) $state)),
                         IconEntry::make('active')->boolean(),
                         TextEntry::make('description')->placeholder('No description')->columnSpanFull(),
                     ])

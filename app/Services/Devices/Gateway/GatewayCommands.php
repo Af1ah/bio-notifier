@@ -89,6 +89,7 @@ final class GatewayCommands
 
     public function request(Device $device, string $operation, array $parameters = [], ?string $requestId = null, ?string $dependsOn = null): DeviceCommand
     {
+        \App\Services\Devices\DeviceIntegration::authorizeManagement();
         abort_unless($this->available($device, $operation), 403);
         $binding = GatewayDeviceBinding::where('organisation_id', tenant('id'))->where('device_id', $device->id)->firstOrFail();
         $id = $requestId ?? (string) Str::uuid();
@@ -150,6 +151,7 @@ final class GatewayCommands
 
     public function cancel(DeviceCommand $command): void
     {
+        \App\Services\Devices\DeviceIntegration::authorizeManagement();
         abort_unless(tenant() && tenant()->device_integration === DeviceIntegration::GATEWAY, 403);
         abort_unless(in_array($command->status, ['pending', 'sent', 'outcome_unknown'], true) && $command->gateway_command_id, 409);
         $submission = GatewayCommandSubmission::whereKey($command->gateway_command_id)

@@ -61,7 +61,7 @@ class OrganisationsTable
                     ->extraAttributes(['formtarget' => '_blank'])
                     ->openUrlInNewTab(),
                 Action::make('manage_admins')
-                    ->label('Manage Admins')
+                    ->label('Manage access')
                     ->icon('heroicon-o-users')
                     ->url(fn (Organisation $record) => OrganisationResource::getUrl('manage-admins', ['record' => $record])),
                 ViewAction::make(),

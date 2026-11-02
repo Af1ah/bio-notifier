@@ -78,5 +78,6 @@ class ShiftAssignmentService
         if (! $id) {
             throw ValidationException::withMessages(['last_day' => 'No active assignment exists on this date.']);
         }ShiftAssignmentSet::whereKey($id)->update(['effective_to' => $lastDay]);
+        \App\Services\Leave\LeaveBalanceSummaryService::invalidate();
     }
 }

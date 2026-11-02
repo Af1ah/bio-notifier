@@ -54,6 +54,145 @@ class TenantBoundaryRegressionTest extends TestCase
         return $organisation;
     }
 
+    public function test_saved_leave_summaries_stay_in_the_owning_tenant_database(): void
+    {
+        $expected = [];
+        foreach (['summary-a' => 4, 'summary-b' => 8] as $name => $units) {
+            $company = $this->organisation($name);
+            tenancy()->initialize($company);
+            $employee = User::create(['pin' => 'same-pin', 'name' => 'Employee']);
+            $actor = User::create(['pin' => 'hr', 'name' => 'HR', 'privilege' => 14]);
+            $type = \App\Models\LeaveType::create(['name' => 'Summary leave', 'code' => 'SUM', 'is_paid' => true, 'active' => true]);
+            app(\App\Services\Leave\LeaveBalanceService::class)->opening($employee, $type, $units, today()->subDay(), today()->addMonth(), 'Reviewed opening', $actor, 'same-key');
+            $balance = app(\App\Services\Leave\LeaveBalanceSummaryService::class)->get($employee, $type->id, today());
+            $this->assertSame($units, $balance['available_half_units']);
+            $expected[] = [$company, $employee->id, $type->id, $units];
+            tenancy()->end();
+        }
+        foreach ($expected as [$company, $employeeId, $typeId, $units]) {
+            tenancy()->initialize($company);
+            $balance = app(\App\Services\Leave\LeaveBalanceSummaryService::class)->get(User::findOrFail($employeeId), $typeId, today());
+            $this->assertSame($units, $balance['available_half_units']);
+            tenancy()->end();
+        }
+    }
+
+    public function test_device_sync_preserves_the_panel_transaction_and_commits_only_to_its_tenant(): void
+    {
+        $a = $this->organisation('sync-a');
+        $b = $this->organisation('sync-b');
+        TenantContext::run($b, fn () => \App\Models\Device::create(['serial_number' => 'OTHER-1', 'name' => 'Other company']));
+        $list = collect(range(1, 21))->map(fn ($n) => "Device {$n},SYNC-{$n},Branch {$n}")->implode(';').';';
+        Http::fake(fn ($request) => Http::response(
+            str_contains($request->body(), '<GetDeviceList ')
+                ? '<GetDeviceListResult>'.$list.'</GetDeviceListResult>'
+                : '<GetDeviceLastPingResult>2026-10-31 10:00:00</GetDeviceLastPingResult>', 200));
+        tenancy()->initialize($a);
+        $connection = \Illuminate\Support\Facades\DB::connection();
+        $connection->beginTransaction();
+        try {
+            $result = (new EbioSoapService)->syncDevices($a);
+            $this->assertSame(21, $result['synced']);
+            $this->assertSame($connection, \Illuminate\Support\Facades\DB::connection());
+            $this->assertSame(1, $connection->transactionLevel());
+            $connection->commit();
+        } finally {
+            if ($connection->transactionLevel() > 0) {
+                $connection->rollBack();
+            }
+        }
+        tenancy()->end();
+        $this->assertSame(21, TenantContext::run($a, fn () => \App\Models\Device::count()));
+        TenantContext::run($b, function () {
+            $this->assertSame(['OTHER-1'], \App\Models\Device::pluck('serial_number')->all());
+            $this->assertSame('Other company', \App\Models\Device::first()->name);
+        });
+        $this->assertNull(tenant());
+    }
+
+    public function test_same_tenant_nested_context_preserves_rollback_and_exception(): void
+    {
+        $a = $this->organisation('nested-a');
+        tenancy()->initialize($a);
+        $connection = \Illuminate\Support\Facades\DB::connection();
+        $connection->beginTransaction();
+        try {
+            // A fresh model instance with the same tenant key must not reconnect.
+            $copy = Organisation::findOrFail($a->id);
+            try {
+                TenantContext::run($copy, function () use ($a) {
+                    TenantContext::run($a, fn () => \App\Models\Device::create(['serial_number' => 'ROLLBACK-1', 'name' => 'Temporary']));
+                    throw new \RuntimeException('expected failure');
+                });
+                $this->fail('The callback exception must propagate.');
+            } catch (\RuntimeException $exception) {
+                $this->assertSame('expected failure', $exception->getMessage());
+            }
+            $this->assertSame($connection, \Illuminate\Support\Facades\DB::connection());
+            $this->assertSame(1, $connection->transactionLevel());
+            $this->assertSame(1, \App\Models\Device::count());
+        } finally {
+            if ($connection->transactionLevel() > 0) {
+                $connection->rollBack();
+            }
+        }
+        $this->assertSame(0, \App\Models\Device::count());
+        $this->assertSame($a->id, tenant()->getTenantKey());
+    }
+
+    public function test_switching_tenants_during_a_transaction_is_rejected_without_losing_writes(): void
+    {
+        $a = $this->organisation('guard-a');
+        $b = $this->organisation('guard-b');
+        tenancy()->initialize($a);
+        $connection = \Illuminate\Support\Facades\DB::connection();
+        $connection->beginTransaction();
+        $called = false;
+        try {
+            \App\Models\Device::create(['serial_number' => 'GUARDED-1', 'name' => 'Pending write']);
+            try {
+                TenantContext::run($b, function () use (&$called) {
+                    $called = true;
+                });
+                $this->fail('Switching with an open tenant transaction must be rejected.');
+            } catch (\LogicException $exception) {
+                $this->assertSame('Finish the active tenant transaction before switching organisations.', $exception->getMessage());
+            }
+            $this->assertFalse($called);
+            $this->assertSame($a->id, tenant()->getTenantKey());
+            $this->assertSame($connection, \Illuminate\Support\Facades\DB::connection());
+            $this->assertSame(1, $connection->transactionLevel());
+            $this->assertSame(1, \App\Models\Device::count());
+            $connection->commit();
+        } finally {
+            if ($connection->transactionLevel() > 0) {
+                $connection->rollBack();
+            }
+        }
+        tenancy()->end();
+        $this->assertSame(['GUARDED-1'], TenantContext::run($a, fn () => \App\Models\Device::pluck('serial_number')->all()));
+        $this->assertSame(0, TenantContext::run($b, fn () => \App\Models\Device::count()));
+    }
+
+    public function test_switching_tenants_restores_the_original_context_after_failure(): void
+    {
+        $a = $this->organisation('restore-a');
+        $b = $this->organisation('restore-b');
+        tenancy()->initialize($a);
+        \App\Models\Device::create(['serial_number' => 'A-1', 'name' => 'Company A']);
+        try {
+            TenantContext::run($b, function () use ($b) {
+                $this->assertSame($b->id, tenant()->getTenantKey());
+                $this->assertSame(0, \App\Models\Device::count());
+                throw new \RuntimeException('switch failure');
+            });
+        } catch (\RuntimeException $exception) {
+            $this->assertSame('switch failure', $exception->getMessage());
+        }
+        $this->assertSame($a->id, tenant()->getTenantKey());
+        $this->assertSame(['A-1'], \App\Models\Device::pluck('serial_number')->all());
+    }
+
     public function test_ebio_setup_displays_only_the_current_company_credential(): void
     {
         $a = $this->organisation('setup-a');

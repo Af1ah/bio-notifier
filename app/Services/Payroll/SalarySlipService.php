@@ -385,7 +385,7 @@ class SalarySlipService
 
     public function transition(SalarySlip $slip, User $actor, string $target): SalarySlip
     {
-        if ((int) $actor->privilege !== 14) {
+        if (! $actor->hasManagementAccess()) {
             throw ValidationException::withMessages(['authorization' => 'Only an administrator can change a salary slip status.']);
         }
 

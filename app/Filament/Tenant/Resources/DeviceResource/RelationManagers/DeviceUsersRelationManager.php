@@ -67,7 +67,7 @@ class DeviceUsersRelationManager extends RelationManager
             ->description('Access settings belong to this device user. Missing values do not mean unrestricted access. Use Read device users to refresh the snapshot.')
             ->headerActions([
                 Action::make('readDeviceUsers')->label('Read device users')->icon('heroicon-o-arrow-path')
-                    ->authorize(fn (): bool => (bool) auth('web')->user()?->has_login && app(DeviceCommandService::class)->available($this->getOwnerRecord(), 'query_users'))
+                    ->authorize(fn (): bool => (bool) auth('web')->user()?->canManageDevices() && app(DeviceCommandService::class)->available($this->getOwnerRecord(), 'query_users'))
                     ->action(function (): void {
                         app(DeviceCommandService::class)->request($this->getOwnerRecord(), 'query_users');
                         Notification::make()->title('Device user read queued')->body('The snapshot updates when the device responds.')->success()->send();
@@ -95,10 +95,10 @@ class DeviceUsersRelationManager extends RelationManager
                             ->getStateUsing(fn (DeviceRosterEntry $record): string => DeviceUserAccess::schedule($record)),
                         TextEntry::make('access_settings.Grp')->label('Reported access group')->placeholder('Not reported'),
                     ]),
-                Action::make('editDeviceUserAccess')->label('Daily time periods')->icon('heroicon-o-pencil-square')
-                    ->authorize(fn (): bool => (bool) auth('web')->user()?->has_login && $this->accessSyncAvailable())
+                Action::make('editDeviceUserAccess')->label('Edit access settings (Beta)')->icon('heroicon-o-pencil-square')
+                    ->authorize(fn (): bool => (bool) auth('web')->user()?->canManageDevices() && $this->accessSyncAvailable())
                     ->visible(fn (): bool => $this->accessSyncAvailable())
-                    ->modalHeading('Daily time periods')->modalSubmitActionLabel('Save and sync')
+                    ->modalHeading('Edit access settings (Beta)')->modalSubmitActionLabel('Save and sync')
                     ->modalDescription('Choose this user’s group or personal daily periods. Expiration rules are managed separately.')
                     ->fillForm(function (DeviceRosterEntry $record): array {
                         $access = $record->access_settings ?? [];

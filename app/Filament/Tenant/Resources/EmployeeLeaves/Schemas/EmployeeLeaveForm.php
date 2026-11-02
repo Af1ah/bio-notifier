@@ -56,7 +56,7 @@ class EmployeeLeaveForm
                         TextInput::make('deduction_override_minor')
                             ->label('Deduction override')
                             ->helperText('Optional. Enter the exact deduction for this leave record.')
-                            ->prefix('₹')
+                            ->prefix(fn () => \App\Services\Support\TenantCurrency::get())
                             ->numeric()
                             ->minValue(0)
                             ->step(0.01)

@@ -20,8 +20,9 @@ class LeaveSettingsService
 
     public function save(array $data, User $actor): void
     {
-        abort_unless((int) $actor->privilege === 14, 403);
+        abort_unless($actor->hasManagementAccess(), 403);
         $v = Validator::make($data, ['timezone' => 'required|timezone', 'expiry_warning_days' => 'required|integer|min:0|max:365'])->validate();
         DB::table('tenant_leave_settings')->updateOrInsert(['id' => 1], $v + ['updated_by_user_id' => $actor->id, 'updated_at' => now()]);
+        LeaveBalanceSummaryService::invalidate();
     }
 }

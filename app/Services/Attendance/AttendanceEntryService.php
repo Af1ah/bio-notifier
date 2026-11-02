@@ -17,8 +17,9 @@ class AttendanceEntryService
 {
     public function addOrCorrect(User $actor, array $data): AttendanceDay|AttendanceCorrection
     {
-        abort_unless($actor->privilege === 14, 403);
-        $selection = Validator::make($data, ['user_id' => 'required|integer|exists:users,id', 'work_date' => 'required|date_format:Y-m-d', 'entry_mode' => 'required|in:manual,correction'])->validate();
+        abort_unless($actor->hasManagementAccess(), 403);
+        $selection = Validator::make($data, ['user_id' => 'required|integer|exists:users,id', 'work_date' => 'required|date_format:Y-m-d', 'entry_mode' => 'required|in:manual,correction',
+            'in_time' => 'required|date_format:H:i', 'out_time' => 'required|date_format:H:i', 'reason' => 'required|string|max:2000'])->validate();
 
         return DB::transaction(function () use ($actor, $data, $selection) {
             $user = User::employees()->lockForUpdate()->findOrFail($selection['user_id']);
@@ -27,13 +28,27 @@ class AttendanceEntryService
                 throw ValidationException::withMessages(['work_date' => 'Attendance changed while this form was open. Select the date again before submitting.']);
             }
 
-            return $day ? $this->correct($day, $actor, $data) : $this->add($actor, $data);
+            $match = app(AttendanceEntryContext::class)->match($user, $selection['work_date'], $selection['in_time'], $selection['out_time']);
+            if (! $match['occurrence'] && $day && (app(ManualAttendanceProtection::class)->applies($day) || $day->approvals()->where('state', 'approved')->exists())) {
+                throw ValidationException::withMessages(['work_date' => 'This date has an approved decision without a shift record. Review its attendance baseline first.']);
+            }
+            // Existing punches need a calculated baseline so edits replace times through approval, rather than extending them.
+            if (! $match['occurrence'] && $user->attendanceLogs()->whereBetween('punched_at', [$match['start'], $match['end']])->exists()) {
+                $day = app(AttendanceCalculationService::class)->calculate($user, TenantTimezone::parse($selection['work_date']));
+                $match = app(AttendanceEntryContext::class)->match($user, $selection['work_date'], $selection['in_time'], $selection['out_time']);
+            }
+            if ($match['occurrence']) {
+                return $this->correct($day, $actor, ['attendance_occurrence_id' => $match['occurrence']->id,
+                    'proposed_in_at' => $match['in']->toDateTimeString(), 'proposed_out_at' => $match['out']->toDateTimeString(), 'reason' => $selection['reason']]);
+            }
+
+            return $this->add($actor, $selection + ['schedule_id' => $match['schedule_id']]);
         });
     }
 
     public function add(User $actor, array $data): AttendanceDay
     {
-        abort_unless($actor->privilege === 14, 403);
+        abort_unless($actor->hasManagementAccess(), 403);
         // Retain the service contract for imports and existing integrations while the UI submits one work date plus two times.
         $data['in_time'] ??= isset($data['in_at']) ? TenantTimezone::parse($data['in_at'])->format('H:i') : null;
         $data['out_time'] ??= isset($data['out_at']) ? TenantTimezone::parse($data['out_at'])->format('H:i') : null;
@@ -50,13 +65,16 @@ class AttendanceEntryService
             $in = TenantTimezone::parse($date->toDateString().' '.$data['in_time']);
             $out = TenantTimezone::parse($date->toDateString().' '.$data['out_time']);
             $overnight = (int) $rule->end_day_offset > 0 || $rule->end_time <= $rule->start_time;
+            $start = TenantTimezone::parse($date->toDateString().' '.$rule->start_time)->subMinutes($rule->earliest_arrival_minutes);
+            if ($overnight && $in->lt($start)) {
+                $in->addDay();
+            }
             if ($out->lte($in) && $overnight) {
                 $out->addDay();
             }
             if ($out->lte($in)) {
                 throw ValidationException::withMessages(['out_time' => 'Checkout must be after check-in. Choose a night shift when checkout is on the next day.']);
             }
-            $start = TenantTimezone::parse($date->toDateString().' '.$rule->start_time)->subMinutes($rule->earliest_arrival_minutes);
             $end = TenantTimezone::parse($date->toDateString().' '.$rule->end_time)->addDays($overnight ? 1 : 0)->addMinutes($rule->checkout_cutoff_minutes);
             if ($in->lt($start) || $out->gt($end)) {
                 throw ValidationException::withMessages(['in_time' => 'The time range must fit the selected '.($overnight ? 'night' : 'day').' shift window.']);
@@ -75,7 +93,7 @@ class AttendanceEntryService
 
     public function correct(AttendanceDay $day, User $actor, array $data): AttendanceCorrection
     {
-        abort_unless($actor->privilege === 14, 403);
+        abort_unless($actor->hasManagementAccess(), 403);
         $data = Validator::make($data, ['attendance_occurrence_id' => 'nullable|integer', 'proposed_in_at' => 'nullable|date|required_with:proposed_out_at', 'proposed_out_at' => 'nullable|date|required_with:proposed_in_at|after:proposed_in_at', 'proposed_status' => 'nullable|in:present,half_day,absent,off,holiday', 'reason' => 'required|string|max:2000'])->validate();
 
         return DB::transaction(function () use ($day, $actor, $data) {

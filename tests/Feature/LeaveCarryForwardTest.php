@@ -401,6 +401,8 @@ class LeaveCarryForwardTest extends TestCase
     {
         $this->policy(['mode' => 'compensatory', 'grant_half_units' => 0, 'comp_enabled' => true, 'comp_payment_full_minor' => 50000]);
         $this->user->payrollProfile()->create(['currency' => 'USD', 'effective_from' => '2026-08-01']);
+        // Retained profiles may predate the organisation currency setting.
+        DB::table('employee_payroll_profiles')->where('user_id', $this->user->id)->update(['currency' => 'USD']);
         $day = $this->holidayWork();
         $this->rejects(fn () => $this->award($day, 'payment'), 'currency must match');
     }

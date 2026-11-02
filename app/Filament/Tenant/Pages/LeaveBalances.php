@@ -7,6 +7,7 @@ use App\Models\LeaveCreditLot;
 use App\Models\LeaveType;
 use App\Models\User;
 use App\Services\Leave\LeaveBalanceService;
+use App\Services\Leave\LeaveBalanceSummaryService;
 use App\Services\Leave\LeaveSettingsService;
 use Carbon\Carbon;
 use Filament\Actions\Action;
@@ -39,32 +40,42 @@ class LeaveBalances extends Page implements HasTable
 
     protected string $view = 'filament.tenant.pages.leave-balances';
 
+    protected array $employeeBalances = [];
+
+    protected array $balanceSelections = [];
+
     public static function canAccess(): bool
     {
-        return (int) auth()->user()?->privilege === 14;
+        return (bool) auth()->user()?->hasManagementAccess();
     }
 
     public function selection(): array
     {
+        $key = json_encode($this->getTableFilterState('balance') ?? []);
+        if (isset($this->balanceSelections[$key])) {
+            return $this->balanceSelections[$key];
+        }
         if (! LeaveType::where('active', true)->where('is_paid', true)->exists()) {
-            return ['leave_type_id' => 0, 'as_of' => today(LeaveSettingsService::timezone())->toDateString()];
+            return $this->balanceSelections[$key] = ['leave_type_id' => 0, 'as_of' => today(LeaveSettingsService::timezone())->toDateString()];
         }
 
-        return Validator::make($this->getTableFilterState('balance') ?? [], ['leave_type_id' => 'required|integer|exists:leave_types,id', 'as_of' => 'required|date_format:Y-m-d'])->validate();
+        return $this->balanceSelections[$key] = Validator::make($this->getTableFilterState('balance') ?? [], ['leave_type_id' => 'required|integer|exists:leave_types,id', 'as_of' => 'required|date_format:Y-m-d'])->validate();
     }
 
     public function employeeBalance(User $user): array
     {
         $v = $this->selection();
 
-        return app(LeaveBalanceService::class)->balance($user, $v['leave_type_id'], Carbon::parse($v['as_of']));
+        $key = tenant('id').':'.$user->id.':'.$v['leave_type_id'].':'.$v['as_of'];
+
+        return $this->employeeBalances[$key] ??= app(LeaveBalanceSummaryService::class)->get($user, $v['leave_type_id'], Carbon::parse($v['as_of']));
     }
 
     public function table(Table $table): Table
     {
         return $table->query(User::employees())->columns([
             TextColumn::make('name')->label('Employee')->searchable()->description(fn ($record) => 'PIN '.$record->pin),
-            ...collect(['available' => 'Available', 'carried' => 'Carried', 'reserved' => 'Reserved', 'consumed' => 'Consumed', 'expiring' => 'Expiring soon'])
+            ...collect(['available' => 'Available', 'reserved' => 'Reserved'])
                 ->map(fn ($label, $key) => TextColumn::make($key)->label($label.' days')->state(fn (User $record) => $this->employeeBalance($record)[$key.'_half_units'] / 2))->values()->all(),
         ])->filters([
             Filter::make('balance')->schema([
@@ -74,10 +85,10 @@ class LeaveBalances extends Page implements HasTable
             SelectFilter::make('branch_id')->relationship('branch', 'name')->label('Branch'),
             SelectFilter::make('department_id')->relationship('department', 'name')->label('Department'),
         ])->recordActions([
-            Action::make('history')->label('History')->modalContent(function (User $record) {
+            Action::make('history')->label('Details')->modalContent(function (User $record) {
                 $v = $this->selection();
 
-                return view('filament.tenant.pages.leave-credit-history', ['lots' => LeaveCreditLot::with('entries')->where('user_id', $record->id)->where('leave_type_id', $v['leave_type_id'])->orderByDesc('id')->get()]);
+                return view('filament.tenant.pages.leave-credit-history', ['balance' => $this->employeeBalance($record), 'lots' => LeaveCreditLot::with('entries')->where('user_id', $record->id)->where('leave_type_id', $v['leave_type_id'])->orderByDesc('id')->get()]);
             })->modalSubmitAction(false),
             Action::make('reduce')->label('Reduce reviewed balance')->schema([
                 Select::make('lot_id')->label('Credit')->options(fn (User $record) => LeaveCreditLot::where('user_id', $record->id)->where('source_kind', '!=', 'compensatory')->orderByDesc('id')->get()->mapWithKeys(fn ($lot) => [$lot->id => $lot->leaveType->name.' — '.$lot->available_on->toDateString().' — expires '.$lot->expires_on->toDateString()]))->required()->searchable(),
@@ -85,6 +96,7 @@ class LeaveBalances extends Page implements HasTable
             ])->action(function (User $record, array $data, Schema $schema) {
                 $lot = LeaveCreditLot::where('user_id', $record->id)->findOrFail($data['lot_id']);
                 LeaveActionErrors::run($schema, fn () => app(LeaveBalanceService::class)->reduce($lot, (int) round($data['days'] * 2), $data['reason'], auth()->user(), $data['request_key']));
+                $this->employeeBalances = [];
             }),
             Action::make('opening')->label('Add reviewed balance')->schema([
                 Select::make('leave_type_id')->label('Leave type')->options(fn () => LeaveType::where('is_paid', true)->where('active', true)->pluck('name', 'id'))->required(),
@@ -93,6 +105,7 @@ class LeaveBalances extends Page implements HasTable
                 Textarea::make('reason')->label('Verified opening balance / adjustment reason')->required()->maxLength(1000), Hidden::make('request_key')->default(fn () => (string) Str::uuid()),
             ])->action(function (User $record, array $data, Schema $schema) {
                 LeaveActionErrors::run($schema, fn () => app(LeaveBalanceService::class)->opening($record, LeaveType::findOrFail($data['leave_type_id']), (int) $data['half_units'], Carbon::parse($data['available_on']), Carbon::parse($data['expires_on']), $data['reason'], auth()->user(), $data['request_key']));
+                $this->employeeBalances = [];
                 Notification::make()->title('Reviewed balance added')->success()->send();
             }),
         ])->emptyStateHeading('No employees or leave types')->emptyStateDescription('Create leave types and review Leave Settings before using balances.');

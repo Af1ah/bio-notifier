@@ -16,6 +16,7 @@
             <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
                 {{ \Carbon\Carbon::parse($fromDate)->format('M d, Y') }} - {{ \Carbon\Carbon::parse($toDate)->format('M d, Y') }}
             </p>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Worked time (HH:MM)</p>
         </div>
         <div id="print-only-header">
             <h2 class="text-center font-bold text-lg text-black">{{ ucfirst($activeTab) }} Status Report (Basic Report)</h2>
@@ -63,19 +64,11 @@
                             $dayData = $row['daily'][$d] ?? null;
                         @endphp
                         <td class="center">
-                            @if($dayData)
-                                <x-filament::badge :color="match($dayData['status']) { 'P' => 'success', 'H' => 'warning', 'A' => 'danger', 'O', 'HD', 'N' => 'gray', default => 'info' }" size="sm">
-                                    {{ $dayData['status'] }} · {{ $dayData['display'] }}{{ $dayData['exception'] ?? false ? ' ⚠' : '' }}
-                                </x-filament::badge>
-                            @else
-                                <x-filament::badge color="danger" size="sm">
-                                    A
-                                </x-filament::badge>
-                            @endif
+                            @include('filament.tenant.attendance.report-hours', ['hours' => $dayData ?? \App\Services\Attendance\AttendanceDayDisplay::forDay(null)])
                         </td>
                     @endforeach
-                    <td class="font-bold text-gray-950 dark:text-white">{{ $row['total_display'] }}</td>
-                    <td class="font-bold text-info-600">{{ $row['overtime_display'] }}</td>
+                    <td>@include('filament.tenant.attendance.report-hours', ['hours' => ['clock' => $row['total_display'], 'label' => 'Total hours']])</td>
+                    <td>@include('filament.tenant.attendance.report-hours', ['hours' => ['clock' => $row['overtime_display'], 'label' => 'Approved overtime']])</td>
                     <td class="font-bold text-success-600">{{ $row['present'] }}</td>
                     <td class="font-bold text-warning-600">{{ $row['half_day'] }}</td>
                     <td class="font-bold text-danger-600">{{ $row['absent'] }}</td>
@@ -86,6 +79,15 @@
     </div>
     
     <style>
+        .attendance-report-hours { font-size: .75rem; font-weight: 400; white-space: nowrap; font-variant-numeric: tabular-nums; }
+        .attendance-report-hours--success { color: #166534; }
+        .attendance-report-hours--warning { color: #92400e; }
+        .attendance-report-hours--danger { color: #991b1b; }
+        .attendance-report-hours--gray { color: #374151; }
+        .dark .attendance-report-hours--success { color: #86efac; }
+        .dark .attendance-report-hours--warning { color: #fcd34d; }
+        .dark .attendance-report-hours--danger { color: #fca5a5; }
+        .dark .attendance-report-hours--gray { color: #d1d5db; }
         .report-matrix-table {
             width: 100%;
             border-collapse: collapse;

@@ -27,8 +27,13 @@ final class DeviceAccessValidity
             $rules['entries'] = ['required', 'string', 'regex:/^[1-9][0-9]{0,4}$/', 'integer', 'between:1,65535'];
         }
         if (array_key_exists('dialect', $input)) {
-            $rules['dialect'] = ['required', 'in:essl_dates'];
-            if ($mode !== 'dates') {
+            $rules['dialect'] = ['required', 'in:essl_dates,wdms_modern,wdms_legacy'];
+            if (in_array($input['dialect'], ['wdms_modern', 'wdms_legacy'], true)) {
+                if ($mode !== 'none') {
+                    throw ValidationException::withMessages(['mode' => 'The full-user compatibility comparison supports No expiration only.']);
+                }
+                $rules['source_event'] = ['required', 'uuid'];
+            } elseif ($mode !== 'dates') {
                 throw ValidationException::withMessages(['mode' => 'The eSSL compatibility command supports dates only.']);
             }
         }

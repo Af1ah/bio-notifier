@@ -162,7 +162,7 @@ class Reports extends Page implements HasForms, HasTable
         $csvData = [];
         $header = ['Employee'];
         foreach ($reportData['period'] as $date) {
-            $header[] = $date['month_day'];
+            $header[] = $date['month_day'].' HH:MM';
         }
         $header[] = 'Total Hrs';
         $header[] = 'Approved OT';
@@ -175,7 +175,7 @@ class Reports extends Page implements HasForms, HasTable
             $csvRow = ['"'.$row['user_name'].'"'];
             foreach ($reportData['period'] as $date) {
                 $d = $date['date'];
-                $csvRow[] = $row['daily'][$d]['display'] ?? 'Absent';
+                $csvRow[] = $row['daily'][$d]['clock'] ?? '00:00';
             }
             $csvRow[] = $row['total_display'];
             $csvRow[] = $row['overtime_display'];

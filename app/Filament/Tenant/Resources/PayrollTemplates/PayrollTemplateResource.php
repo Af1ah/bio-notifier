@@ -29,7 +29,7 @@ class PayrollTemplateResource extends Resource
 
     public static function canAccess(): bool
     {
-        return (int) auth()->user()?->privilege === 14;
+        return (bool) auth()->user()?->hasManagementAccess();
     }
 
     public static function canViewAny(): bool
@@ -54,9 +54,9 @@ class PayrollTemplateResource extends Resource
 
     public static function form(Schema $schema): Schema
     {
-        $money = fn ($field, $label) => TextInput::make('settings.'.$field)->label($label)->numeric()->minValue(0)->maxValue(1000000)->step(0.01)->required()->default(0)->formatStateUsing(fn ($state) => number_format((int) $state / 100, 2, '.', ''))->dehydrateStateUsing(fn ($state) => (int) round((float) $state * 100));
+        $money = fn ($field, $label) => TextInput::make('settings.'.$field)->label($label)->prefix(fn () => \App\Services\Support\TenantCurrency::get())->numeric()->minValue(0)->maxValue(1000000)->step(0.01)->required()->default(0)->formatStateUsing(fn ($state) => number_format((int) $state / 100, 2, '.', ''))->dehydrateStateUsing(fn ($state) => (int) round((float) $state * 100));
 
-        return $schema->components([TextInput::make('name')->required()->maxLength(120), Select::make('branch_id')->relationship('branch', 'name')->searchable()->helperText('Blank applies to any branch.'), TextInput::make('role')->label('Employee designation')->maxLength(255)->helperText('Optional exact designation match.'), DatePicker::make('effective_from')->required()->default(today()), Select::make('settings.pay_basis')->label('Pay basis')->options(['monthly' => 'Monthly', 'daily' => 'Daily', 'hourly' => 'Hourly'])->default('monthly')->required(), TextInput::make('settings.currency')->label('Currency')->default('INR')->length(3)->required(), $money('basic_salary_minor', 'Monthly salary / daily or hourly rate'), $money('overtime_hourly_rate_minor', 'Employee overtime hourly rate'), $money('housing_allowance_minor', 'Monthly housing allowance'), $money('transport_allowance_minor', 'Monthly transport allowance'), $money('other_allowance_minor', 'Monthly other allowance'), $money('fixed_deduction_minor', 'Fixed monthly deduction')])->columns(2);
+        return $schema->components([TextInput::make('name')->required()->maxLength(120), Select::make('branch_id')->relationship('branch', 'name')->searchable()->helperText('Blank applies to any branch.'), TextInput::make('role')->label('Employee designation')->maxLength(255)->helperText('Optional exact designation match.'), DatePicker::make('effective_from')->required()->default(today()), Select::make('settings.pay_basis')->label('Pay basis')->options(['monthly' => 'Monthly', 'daily' => 'Daily', 'hourly' => 'Hourly'])->default('monthly')->required(), $money('basic_salary_minor', 'Monthly salary / daily or hourly rate'), $money('overtime_hourly_rate_minor', 'Employee overtime hourly rate'), $money('housing_allowance_minor', 'Monthly housing allowance'), $money('transport_allowance_minor', 'Monthly transport allowance'), $money('other_allowance_minor', 'Monthly other allowance'), $money('fixed_deduction_minor', 'Fixed monthly deduction')])->columns(2);
     }
 
     public static function table(Table $table): Table

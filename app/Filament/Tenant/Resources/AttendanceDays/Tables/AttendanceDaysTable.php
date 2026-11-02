@@ -6,21 +6,16 @@ use App\Filament\Tenant\Resources\AttendanceDays\Schemas\AttendanceCorrectionFor
 use App\Models\AttendanceDay;
 use App\Models\Schedule;
 use App\Services\Attendance\AttendanceBaselineService;
-use App\Services\Attendance\AttendanceEntryService;
-use App\Services\Attendance\AttendanceRateLimiter;
 use Filament\Actions\Action;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Hidden;
 use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\Toggle;
-use Filament\Schemas\Components\Utilities\Get;
-use Filament\Schemas\Schema;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\Filter;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
-use Illuminate\Validation\ValidationException;
 
 class AttendanceDaysTable
 {
@@ -53,19 +48,7 @@ class AttendanceDaysTable
                 ->query(fn ($query, array $data) => $query->when($data['value'] ?? null, fn ($q, $v) => $q->whereHas('occurrences', fn ($occ) => $occ->where('schedule_id', $v)))),
         ])->recordActions([
             ...CompensatoryAttendanceActions::actions(),
-            Action::make('correct')->label('Correct')->icon('heroicon-o-pencil')->modalDescription('The original row and device punches are preserved. Corrected times are calculated using the selected shift and take effect after approval.')
-                ->fillForm(fn (AttendanceDay $record): array => AttendanceCorrectionForm::initial($record))
-                ->schema(AttendanceCorrectionForm::fields(fn (Get $get, ?AttendanceDay $record) => $record))->action(function (AttendanceDay $record, array $data, Schema $schema) {
-                    try {
-                        app(AttendanceRateLimiter::class)->ensure('correction', 30);
-                        app(AttendanceEntryService::class)->correct($record, auth()->user(), $data);
-                    } catch (ValidationException $exception) {
-                        $errors = [];
-                        foreach ($exception->errors() as $field => $messages) {
-                            $errors[$schema->getStatePath().'.'.$field] = $messages;
-                        }throw ValidationException::withMessages($errors);
-                    }
-                }),
+            AttendanceCorrectionForm::action('correct')->label('Correct')->icon('heroicon-o-pencil'),
             Action::make('reviewLegacy')->label('Review legacy approval')->visible(fn (AttendanceDay $record) => empty($record->explanation['input_signature']) && $record->approvals()->where('state', 'approved')->exists())
                 ->modalDescription('Review the original approved result against today’s available shift and punch evidence. This records a new HR-reviewed baseline; it does not claim to reconstruct the historical inputs.')
                 ->fillForm(fn (AttendanceDay $record) => ['reviewed_signature' => app(AttendanceBaselineService::class)->evidence($record)['signature']])

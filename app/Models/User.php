@@ -17,6 +17,8 @@ use Illuminate\Validation\ValidationException;
 
 class User extends Authenticatable implements FilamentUser
 {
+    public const HR_PRIVILEGE = 13;
+
     public const DEFAULT_LOGIN_EMAIL = 'admin@zkteco.local';
 
     public function scopeEmployees(Builder $query): Builder
@@ -29,7 +31,7 @@ class User extends Authenticatable implements FilamentUser
 
     public function scopeLoginAccounts(Builder $query): Builder
     {
-        return $query->where('privilege', 14)
+        return $query->whereIn('privilege', [14, self::HR_PRIVILEGE])
             ->whereNotNull('email')->where('email', '!=', '')
             ->whereNotNull('password')->where('password', '!=', '');
     }
@@ -47,6 +49,9 @@ class User extends Authenticatable implements FilamentUser
         parent::boot();
 
         static::deleting(function ($user) {
+            $actor = self::restrictedHrActor();
+            abort_if($actor && $user->hasManagementAccess(), 403);
+
             $connection = $user->getConnection();
             if (! $connection->getSchemaBuilder()->hasTable('manual_attendance_entries')) {
                 return;
@@ -62,6 +67,19 @@ class User extends Authenticatable implements FilamentUser
         });
 
         static::saving(function ($user) {
+            $actor = self::restrictedHrActor();
+            if ($actor) {
+                $deviceFields = ['device_privilege', 'device_password', 'blocked_devices'];
+                foreach ($deviceFields as $field) {
+                    if ($user->isDirty($field) && ($user->exists || (filled($user->$field) && $user->$field != 0))) {
+                        throw ValidationException::withMessages([$field => 'Device settings require Admin access.']);
+                    }
+                }
+                abort_if($user->isDirty('privilege') && ($user->exists || (int) $user->privilege !== 0), 403);
+                $wasManager = in_array((int) $user->getOriginal('privilege'), [14, self::HR_PRIVILEGE], true);
+                abort_if($user->exists && $wasManager && $actor->id !== $user->id && $user->isDirty(['email', 'password']), 403);
+            }
+
             if ($user->email === self::DEFAULT_LOGIN_EMAIL) {
                 $user->is_system_account = true;
             }
@@ -159,13 +177,35 @@ class User extends Authenticatable implements FilamentUser
         return match ((int) $this->privilege) {
             0 => 'User',
             14 => 'Admin',
+            self::HR_PRIVILEGE => 'HR',
             default => 'Unknown',
         };
     }
 
+    private static function restrictedHrActor(): ?self
+    {
+        // Do not resolve a tenant session guard before tenancy is initialized.
+        if (! tenancy()->initialized || (\Filament\Facades\Filament::getCurrentPanel()?->getId() === 'master' && auth('admin')->user()?->role === 'master')) {
+            return null;
+        }
+        $actor = auth('web')->user();
+
+        return $actor instanceof self && (int) $actor->getRawOriginal('privilege') === self::HR_PRIVILEGE ? $actor : null;
+    }
+
+    public function hasManagementAccess(): bool
+    {
+        return in_array((int) $this->privilege, [14, self::HR_PRIVILEGE], true);
+    }
+
+    public function canManageDevices(): bool
+    {
+        return (int) $this->privilege === 14;
+    }
+
     public function getHasLoginAttribute(): bool
     {
-        return (int) $this->privilege === 14
+        return $this->hasManagementAccess()
             && filled($this->email)
             && filled($this->password);
     }

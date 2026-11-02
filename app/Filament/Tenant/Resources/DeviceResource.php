@@ -31,6 +31,11 @@ use Illuminate\Database\Eloquent\Model;
 
 class DeviceResource extends Resource
 {
+    public static function canViewAny(): bool
+    {
+        return (bool) auth('web')->user()?->canManageDevices();
+    }
+
     protected static ?string $model = Device::class;
 
     protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-cpu-chip';
@@ -43,12 +48,12 @@ class DeviceResource extends Resource
 
     public static function canCreate(): bool
     {
-        return true;
+        return (bool) auth('web')->user()?->canManageDevices();
     }
 
     public static function canEdit(Model $record): bool
     {
-        return true;
+        return (bool) auth('web')->user()?->canManageDevices();
     }
 
     public static function canDelete(Model $record): bool
@@ -276,12 +281,12 @@ class DeviceResource extends Resource
     {
         $actions = [Action::make('connectionSetup')
             ->label('Connection setup')->icon('heroicon-o-wifi')
-            ->authorize(fn (): bool => tenant()?->device_integration === DeviceIntegration::GATEWAY && auth('web')->user()?->has_login)
+            ->authorize(fn (): bool => tenant()?->device_integration === DeviceIntegration::GATEWAY && auth('web')->user()?->canManageDevices())
             ->modalHeading('Connect your device')->modalSubmitAction(false)->modalCancelActionLabel('Done')
             ->modalContent(fn (Device $record) => view('filament.tenant.devices.connection-setup', app(TenantDeviceRegistration::class)->setup($record)))];
         $actions[] = Action::make('repairConnection')->label('Repair connection')->icon('heroicon-o-arrow-path')
             ->visible(fn (Device $record): bool => app(TenantDeviceRegistration::class)->canRepair($record))
-            ->authorize(fn (): bool => tenant()?->device_integration === DeviceIntegration::GATEWAY && auth('web')->user()?->has_login)
+            ->authorize(fn (): bool => tenant()?->device_integration === DeviceIntegration::GATEWAY && auth('web')->user()?->canManageDevices())
             ->requiresConfirmation()->modalDescription('Retry this device registration without changing its owner or resetting attendance.')
             ->action(function (Device $record) {
                 app(TenantDeviceRegistration::class)->repair($record);
@@ -290,7 +295,7 @@ class DeviceResource extends Resource
         $actions[] = Action::make('syncTime')->label('Sync time')->icon('heroicon-o-clock')
             ->visible(fn (Device $record): bool => tenant()?->device_integration === DeviceIntegration::GATEWAY
                 && app(DeviceCommandService::class)->available($record, 'sync_time'))
-            ->authorize(fn (): bool => (bool) auth('web')->user()?->has_login)
+            ->authorize(fn (): bool => (bool) auth('web')->user()?->canManageDevices())
             ->requiresConfirmation()->modalHeading('Sync device time')
             ->modalDescription(fn (Device $record): string => 'Set the device clock to the current time in '.app(GatewayCommands::class)->timezone($record).'. Saved attendance is unchanged.')
             ->action(function (Device $record) {
@@ -300,7 +305,7 @@ class DeviceResource extends Resource
         $actions[] = Action::make('clearDeviceAttendance')->label('Clear device attendance')->icon('heroicon-o-trash')->color('danger')
             ->visible(fn (Device $record): bool => tenant()?->device_integration === DeviceIntegration::GATEWAY
                 && app(DeviceCommandService::class)->available($record, 'clear_logs'))
-            ->authorize(fn (): bool => (bool) auth('web')->user()?->has_login)
+            ->authorize(fn (): bool => (bool) auth('web')->user()?->canManageDevices())
             ->modalHeading('Clear attendance from this device')
             ->modalDescription('Saved server punches and manual corrections stay unchanged. Attendance that has not reached the server will be lost. Confirm the full upload has finished before continuing.')
             ->modalSubmitActionLabel('Clear device attendance')

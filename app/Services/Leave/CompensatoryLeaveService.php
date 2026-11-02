@@ -48,7 +48,7 @@ class CompensatoryLeaveService
 
     public function award(AttendanceDay $day, int $typeId, string $reward, string $reason, string $expectedSignature, User $actor): CompensatoryAward
     {
-        abort_unless((int) $actor->privilege === 14, 403);
+        abort_unless($actor->hasManagementAccess(), 403);
         if (! in_array($reward, ['leave', 'payment', 'both']) || trim($reason) === '') {
             throw ValidationException::withMessages(['reason' => 'Choose a reward and provide an approval reason.']);
         }
@@ -158,7 +158,7 @@ class CompensatoryLeaveService
 
     public function reverse(CompensatoryAward $award, User $actor, string $reason): void
     {
-        abort_unless((int) $actor->privilege === 14, 403);
+        abort_unless($actor->hasManagementAccess(), 403);
         if (trim($reason) === '') {
             throw ValidationException::withMessages(['reason' => 'Provide a reversal reason.']);
         }

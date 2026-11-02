@@ -11,12 +11,15 @@ use App\Models\SalarySlip;
 use App\Models\TaskGroup;
 use App\Models\User;
 use App\Services\Payroll\PayrollProfileHistoryService;
+use App\Services\Support\TenantCurrency;
+use App\Services\Support\TenantTimezone;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 final class UserCsvImportService
@@ -42,7 +45,7 @@ final class UserCsvImportService
     {
         abort_unless(tenancy()->initialized && Auth::guard('web')->user() instanceof User, 403);
         // Reload from the active tenant, not an actor supplied by the browser.
-        abort_unless((int) User::find(Auth::guard('web')->id())?->privilege === 14, 403);
+        abort_unless((bool) User::find(Auth::guard('web')->id())?->hasManagementAccess(), 403);
     }
 
     private function content(string $upload): string
@@ -61,18 +64,54 @@ final class UserCsvImportService
         return file_get_contents($path);
     }
 
-    /** @return array{created:int, updated:int, payroll:int, delimiter:string, fingerprint:string} */
+    /** @return array{created:int, updated:int, payroll:int, delimiter:string, fingerprint:string, review:array} */
     public function preview(string $upload, string $mode): array
     {
         $content = $this->content($upload);
         [$rows, $delimiter] = $this->parse($content);
         $users = $this->validateRows($rows, $mode);
 
+        $reviewRows = array_map(function (UserImportRow $row) use ($users): array {
+            $values = ['pin' => $row->pin, ...$row->attributes, ...$row->payroll];
+            foreach (self::MONEY as $field) {
+                if (isset($values[$field.'_minor'])) {
+                    $minor = $values[$field.'_minor'];
+                    $values[$field] = intdiv($minor, 100).'.'.str_pad((string) ($minor % 100), 2, '0', STR_PAD_LEFT);
+                    unset($values[$field.'_minor']);
+                }
+            }
+            foreach (['is_enabled', 'payroll_enabled'] as $field) {
+                if (isset($values[$field])) {
+                    $values[$field] = $values[$field] ? 'Enabled' : 'Disabled';
+                }
+            }
+            if (isset($values['device_password'])) {
+                $values['device_password'] = '••••••';
+            }
+            if ($row->taskGroupIds !== null) {
+                $values['task_group_ids'] = implode('|', $row->taskGroupIds);
+            }
+
+            return ['line' => $row->line, 'action' => $users->has($row->pin) ? 'Update' : 'New', 'values' => $values];
+        }, $rows);
+        $columns = [];
+        foreach ([...self::USER_COLUMNS, ...self::PAYROLL_COLUMNS] as $field) {
+            if (collect($reviewRows)->contains(fn (array $row): bool => array_key_exists($field, $row['values']))) {
+                $columns[$field] = match ($field) {
+                    'pin' => 'PIN', 'name' => 'Employee', 'is_enabled' => 'Status', 'payroll_enabled' => 'Payroll',
+                    'branch_id' => 'Branch ID', 'department_id' => 'Department ID', 'task_group_ids' => 'Task group IDs',
+                    'group' => 'Designation', 'basic_salary' => 'Basic pay / rate',
+                    default => ucfirst(str_replace('_', ' ', $field)),
+                };
+            }
+        }
+
         return [
             'created' => count(array_filter($rows, fn (UserImportRow $row) => ! $users->has($row->pin))),
             'updated' => count(array_filter($rows, fn (UserImportRow $row) => $users->has($row->pin))),
             'payroll' => count(array_filter($rows, fn (UserImportRow $row) => $row->payroll !== [])),
-            'fingerprint' => hash('sha256', $mode."\0".$content),
+            'fingerprint' => hash('sha256', $mode."\0".TenantCurrency::get()."\0".$content),
+            'review' => ['columns' => $columns, 'rows' => $reviewRows],
             'delimiter' => match ($delimiter) {
                 ';' => 'semicolon', "\t" => 'tab', default => 'comma'
             },
@@ -85,8 +124,8 @@ final class UserCsvImportService
     public function import(string $upload, string $mode, ?string $expectedFingerprint = null): array
     {
         $content = $this->content($upload);
-        if ($expectedFingerprint !== null && ! hash_equals($expectedFingerprint, hash('sha256', $mode."\0".$content))) {
-            $this->fail('The file or import mode changed. Return to the upload step and validate again before confirming.');
+        if ($expectedFingerprint !== null && ! hash_equals($expectedFingerprint, hash('sha256', $mode."\0".TenantCurrency::get()."\0".$content))) {
+            $this->fail('The file, import mode or organisation currency changed. Return to the upload step and validate again before confirming.');
         }
         [$rows] = $this->parse($content);
         usort($rows, fn (UserImportRow $a, UserImportRow $b) => strcmp($a->pin, $b->pin));
@@ -192,7 +231,7 @@ final class UserCsvImportService
                     'is_enabled' => ['nullable', 'in:0,1,true,false,yes,no'],
                     'payroll_enabled' => ['nullable', 'in:0,1,true,false,yes,no'],
                     'pay_basis' => ['nullable', 'in:monthly,daily,hourly'],
-                    'currency' => ['nullable', 'in:INR'],
+                    'currency' => ['nullable', Rule::in([TenantCurrency::get()])],
                     'effective_from' => ['nullable', 'date_format:Y-m-d'],
                     'branch_id' => ['nullable', 'regex:/^[1-9][0-9]{0,9}$/'],
                     'department_id' => ['nullable', 'regex:/^[1-9][0-9]{0,9}$/'],
@@ -205,6 +244,9 @@ final class UserCsvImportService
                 $attributes = array_intersect_key($data, array_flip(self::USER_COLUMNS));
                 unset($attributes['pin'], $attributes['task_group_ids']);
                 $payroll = array_intersect_key($data, array_flip(self::PAYROLL_COLUMNS));
+                if ($payroll !== []) {
+                    $payroll['currency'] = TenantCurrency::get();
+                }
                 foreach (self::MONEY as $field) {
                     if (isset($payroll[$field])) {
                         [$whole, $fraction] = array_pad(explode('.', $payroll[$field], 2), 2, '');
@@ -267,7 +309,7 @@ final class UserCsvImportService
             if ($user?->is_system_account || $user?->email === User::DEFAULT_LOGIN_EMAIL || ($row->attributes['email'] ?? null) === User::DEFAULT_LOGIN_EMAIL) {
                 $this->fail("Record {$row->line}: the default login account cannot be imported or changed.");
             }
-            if ((int) $user?->privilege === 14 && isset($row->attributes['email']) && $row->attributes['email'] !== strtolower((string) $user->email)) {
+            if ($user?->hasManagementAccess() && isset($row->attributes['email']) && $row->attributes['email'] !== strtolower((string) $user->email)) {
                 $this->fail("Record {$row->line}: change an application admin's login email through the user editor, not CSV.");
             }
             $email = $row->attributes['email'] ?? $user?->email;
@@ -306,13 +348,61 @@ final class UserCsvImportService
         throw ValidationException::withMessages(['file' => $message]);
     }
 
-    public function template(bool $payroll): string
+    public function template(bool $payroll, bool $blank = false): string
     {
-        $header = $payroll ? [...self::USER_COLUMNS, ...self::PAYROLL_COLUMNS] : self::USER_COLUMNS;
-        $sample = ['pin' => '1001', 'name' => 'Example Employee', 'is_enabled' => '1', 'payroll_enabled' => '0', 'pay_basis' => 'monthly', 'currency' => 'INR', 'effective_from' => today()->format('Y-m-d'), 'basic_salary' => '8000.00'];
+        $header = $payroll ? [...self::USER_COLUMNS, ...array_diff(self::PAYROLL_COLUMNS, ['currency'])] : self::USER_COLUMNS;
+        $sample = ['pin' => '1001', 'name' => 'Example Employee', 'is_enabled' => '1', 'payroll_enabled' => '0', 'pay_basis' => 'monthly', 'currency' => TenantCurrency::get(), 'effective_from' => today()->format('Y-m-d'), 'basic_salary' => '8000.00'];
+
+        return $this->csv($header, $blank ? [] : [$sample]);
+    }
+
+    public function exampleTemplate(): string
+    {
+        $this->authorize();
+        $branches = Branch::with(['departments' => fn ($query) => $query->orderBy('departments.id')])->orderBy('id')->limit(2)->get();
+        $groups = TaskGroup::orderBy('id')->limit(2)->pluck('id')->all();
+        $date = now(TenantTimezone::get())->startOfMonth()->toDateString();
+        $rows = [
+            ['name' => 'Aisha Example', 'group' => 'Office staff'],
+            ['name' => 'Daniel Example', 'group' => 'Inactive staff', 'is_enabled' => '0'],
+            ['name' => 'Fatima Example', 'group' => 'Accounts', 'payroll_enabled' => '1', 'pay_basis' => 'monthly', 'basic_salary' => '8000.00', 'housing_allowance' => '500.00', 'transport_allowance' => '250.00', 'other_allowance' => '100.00', 'fixed_deduction' => '50.00', 'overtime_hourly_rate' => '100.00'],
+            ['name' => 'James Example', 'group' => 'Supervisor', 'payroll_enabled' => '1', 'pay_basis' => 'monthly', 'basic_salary' => '12000.00', 'overtime_hourly_rate' => '150.00'],
+            ['name' => 'Meera Example', 'group' => 'Office staff', 'payroll_enabled' => '1', 'pay_basis' => 'monthly', 'basic_salary' => '9500.50', 'overtime_hourly_rate' => '0.00'],
+            ['name' => 'Omar Example', 'group' => 'Daily staff', 'payroll_enabled' => '1', 'pay_basis' => 'daily', 'basic_salary' => '450.00', 'overtime_hourly_rate' => '80.00'],
+            ['name' => 'Priya Example', 'group' => 'Daily technician', 'payroll_enabled' => '1', 'pay_basis' => 'daily', 'basic_salary' => '600.00', 'overtime_hourly_rate' => '100.00'],
+            ['name' => 'Rahul Example', 'group' => 'Hourly staff', 'payroll_enabled' => '1', 'pay_basis' => 'hourly', 'basic_salary' => '85.05', 'overtime_hourly_rate' => '100.10'],
+            ['name' => 'Sara Example', 'group' => 'Hourly technician', 'payroll_enabled' => '1', 'pay_basis' => 'hourly', 'basic_salary' => '150.00', 'overtime_hourly_rate' => '0.00'],
+            ['name' => 'Thomas Example', 'group' => 'Device administrator', 'device_privilege' => '14', 'payroll_enabled' => '0', 'pay_basis' => 'monthly', 'basic_salary' => '0.00', 'effective_from' => $date],
+        ];
+        foreach ($rows as $index => &$row) {
+            $number = str_pad((string) ($index + 1), 2, '0', STR_PAD_LEFT);
+            $row += ['pin' => 'EXAMPLE'.$number, 'email' => 'employee'.$number.'@example.test', 'card_number' => '9000'.$number, 'is_enabled' => '1', 'device_privilege' => '0'];
+            if ($index >= 2 && ($branch = $branches->get($index % max(1, $branches->count())))) {
+                $row['branch_id'] = $branch->id;
+                $row['department_id'] = $branch->departments->first()?->id ?? '';
+            }
+            if ($index >= 3 && $groups !== []) {
+                $row['task_group_ids'] = implode('|', $index % 2 ? $groups : array_slice($groups, 0, 1));
+            }
+            if (($row['payroll_enabled'] ?? null) === '1') {
+                $row['effective_from'] = $date;
+                foreach (self::MONEY as $field) {
+                    $row[$field] ??= '0.00';
+                }
+            }
+        }
+        unset($row);
+
+        return $this->csv([...self::USER_COLUMNS, ...array_diff(self::PAYROLL_COLUMNS, ['currency'])], $rows);
+    }
+
+    private function csv(array $header, array $rows): string
+    {
         $stream = fopen('php://temp', 'w+');
         fputcsv($stream, $header, ',', '"', '');
-        fputcsv($stream, array_map(fn ($field) => $sample[$field] ?? '', $header), ',', '"', '');
+        foreach ($rows as $row) {
+            fputcsv($stream, array_map(fn ($field) => $row[$field] ?? '', $header), ',', '"', '');
+        }
         rewind($stream);
         $content = stream_get_contents($stream);
         fclose($stream);

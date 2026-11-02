@@ -9,7 +9,7 @@ class EmployeeLeavePolicy
 {
     private function admin(User $user): bool
     {
-        return (int) $user->privilege === 14;
+        return $user->hasManagementAccess();
     }
 
     public function viewAny(User $user): bool

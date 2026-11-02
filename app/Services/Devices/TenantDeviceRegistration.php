@@ -20,7 +20,7 @@ final class TenantDeviceRegistration
     public function register(array $input): Device
     {
         $company = tenant();
-        abort_unless($company instanceof Organisation && auth('web')->user()?->has_login, 403);
+        abort_unless($company instanceof Organisation && (auth('web')->user()?->has_login && auth('web')->user()?->canManageDevices()), 403);
         abort_unless($company->fresh()->device_integration === DeviceIntegration::GATEWAY, 403);
         $data = Validator::make($input, [
             'serial_number' => ['required', 'string', 'regex:/^[A-Za-z0-9_-]{1,64}$/'],
@@ -82,7 +82,7 @@ final class TenantDeviceRegistration
 
     public function canRepair(Device $device): bool
     {
-        if (! tenant() || ! auth('web')->user()?->has_login || tenant()->device_integration !== DeviceIntegration::GATEWAY) {
+        if (! tenant() || ! (auth('web')->user()?->has_login && auth('web')->user()?->canManageDevices()) || tenant()->device_integration !== DeviceIntegration::GATEWAY) {
             return false;
         }
         $key = 'gateway-registration-status:'.tenant('id');
@@ -99,7 +99,7 @@ final class TenantDeviceRegistration
     public function repair(Device $device): void
     {
         $company = tenant();
-        abort_unless($company instanceof Organisation && auth('web')->user()?->has_login && $company->fresh()->device_integration === DeviceIntegration::GATEWAY, 403);
+        abort_unless($company instanceof Organisation && (auth('web')->user()?->has_login && auth('web')->user()?->canManageDevices()) && $company->fresh()->device_integration === DeviceIntegration::GATEWAY, 403);
         $binding = GatewayDeviceBinding::where('organisation_id', $company->id)->where('device_id', $device->id)->where('serial', $device->serial_number)->where('enabled', true)->firstOrFail();
         abort_unless($binding->last_error || ! $binding->synced_at, 409);
         $binding->update(['last_error' => null, 'synced_at' => null]);
@@ -113,7 +113,7 @@ final class TenantDeviceRegistration
 
     public function setup(Device $device): array
     {
-        abort_unless(tenant() && auth('web')->user()?->has_login, 403);
+        abort_unless(tenant() && (auth('web')->user()?->has_login && auth('web')->user()?->canManageDevices()), 403);
         $binding = GatewayDeviceBinding::where('organisation_id', tenant('id'))->where('device_id', $device->id)->where('serial', $device->serial_number)->first();
         $url = $binding ? GatewayConnection::find($binding->gateway_connection_id)?->device_server_url : null;
         $parts = $url ? parse_url($url) : [];

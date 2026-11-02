@@ -34,6 +34,20 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        foreach ([\App\Models\Device::class, \App\Models\DeviceCommand::class, \App\Models\AttendanceLog::class] as $model) {
+            \Illuminate\Support\Facades\Gate::policy($model, \App\Policies\DeviceManagementPolicy::class);
+        }
+        foreach ([
+            \App\Models\User::class, \App\Models\EmployeePayrollProfile::class,
+            \App\Models\AttendanceLog::class, \App\Models\AttendanceDay::class, \App\Models\AttendanceOccurrence::class,
+            \App\Models\Schedule::class, \App\Models\ShiftRuleRevision::class, \App\Models\ShiftAssignmentSet::class,
+            \App\Models\Branch::class, \App\Models\Department::class, \App\Models\TaskGroup::class,
+            \App\Models\Holiday::class, \App\Models\LeaveType::class, \App\Models\LeavePolicy::class,
+            \App\Models\LeavePolicyRevision::class, \App\Models\LeaveCreditLot::class, \App\Models\LeaveLedgerEntry::class,
+            \App\Models\EmployeeLeave::class, \App\Models\CompensatoryAward::class,
+        ] as $model) {
+            $model::observe(\App\Observers\LeaveBalanceSummaryObserver::class);
+        }
         // Date/time presentation resolves the active company at render time.
         TextColumn::configureUsing(fn ($column) => $column->timezone(
             fn () => $column->isDateTime() && tenant() ? TenantTimezone::get() : config('app.timezone')

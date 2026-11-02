@@ -1386,6 +1386,25 @@ class GatewayWorkflowTest extends TestCase
         DeviceAccessValidity::parameters(array_replace($parameters, ['dialect' => 'unknown']));
     }
 
+    public function test_wdms_comparison_requires_none_and_a_snapshot_without_caller_credentials(): void
+    {
+        foreach (['wdms_modern', 'wdms_legacy'] as $dialect) {
+            $parameters = ['pin' => '0007', 'mode' => 'none', 'dialect' => $dialect,
+                'source_event' => '11111111-2222-4333-8444-555555555555'];
+            $this->assertSame($parameters, DeviceAccessValidity::parameters($parameters));
+            foreach ([array_diff_key($parameters, ['source_event' => true]),
+                array_replace($parameters, ['mode' => 'entries', 'entries' => '3']),
+                $parameters + ['name' => 'forged'], $parameters + ['password' => 'forged']] as $invalid) {
+                try {
+                    DeviceAccessValidity::parameters($invalid);
+                    $this->fail('Unsafe full-user comparison accepted.');
+                } catch (ValidationException) {
+                    $this->assertTrue(true);
+                }
+            }
+        }
+    }
+
     public function test_expiration_modes_are_separate_from_daily_periods_and_clear_inactive_limits(): void
     {
         [$company, $binding] = $this->company('EXPIRYMODES01');

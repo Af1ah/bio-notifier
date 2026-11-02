@@ -24,12 +24,12 @@ class ListAttendanceCalculationRuns extends ListRecords
     protected function getHeaderActions(): array
     {
         return [
-            Action::make('recalculate')->label('Recalculate')->icon('heroicon-o-arrow-path')->visible(fn () => (int) auth()->user()?->privilege === 14)
+            Action::make('recalculate')->label('Recalculate')->icon('heroicon-o-arrow-path')->visible(fn () => (bool) auth()->user()?->hasManagementAccess())
                 ->modalDescription('Choose up to 31 days per calculation. For a longer period, calculate one month at a time.')
                 ->modalSubmitActionLabel('Queue calculation')->schema([
                     DatePicker::make('from_date')->required()->default(today()), DatePicker::make('to_date')->required()->default(today())->afterOrEqual('from_date')->helperText('Maximum range: 31 days, including both dates.'), Select::make('user_ids')->label('Employees (blank means all)')->options(fn () => User::employees()->pluck('name', 'id'))->multiple()->searchable(),
                 ])->action(function (array $data, Schema $schema) {
-                    abort_unless((int) auth()->user()?->privilege === 14, 403);
+                    abort_unless((bool) auth()->user()?->hasManagementAccess(), 403);
                     if (AttendanceCalculationRun::whereIn('state', ['queued', 'running'])->exists()) {
                         $this->rejectCalculation($schema, 'from_date', 'Another recalculation is already active for this tenant.');
                     }

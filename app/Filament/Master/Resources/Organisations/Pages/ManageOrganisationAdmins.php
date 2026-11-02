@@ -27,7 +27,7 @@ class ManageOrganisationAdmins extends Page implements HasTable, HasForms
 
     protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-users';
     
-    protected static ?string $title = 'Manage Admins';
+    protected static ?string $title = 'Manage access';
 
     protected string $view = 'filament.master.resources.organisations.pages.manage-organisation-admins';
 
@@ -67,6 +67,7 @@ class ManageOrganisationAdmins extends Page implements HasTable, HasForms
                     ->label('Application Access')
                     ->formatStateUsing(fn ($state) => match ((int) $state) {
                         14 => 'Admin',
+                        User::HR_PRIVILEGE => 'HR',
                         0 => 'User',
                         default => 'Unknown',
                     })
@@ -99,10 +100,11 @@ class ManageOrganisationAdmins extends Page implements HasTable, HasForms
                             ->label('Application Access')
                             ->options([
                                 14 => 'Admin',
+                        User::HR_PRIVILEGE => 'HR',
                                 0 => 'User',
                             ])
                             ->default(14)
-                            ->helperText('Admin access requires an email address and password.')
+                            ->helperText('Admin and HR access require an email address and password.')
                             ->required(),
                         Forms\Components\Hidden::make('pin')
                             ->default(fn () => (string) rand(10000, 99999)),
@@ -135,9 +137,10 @@ class ManageOrganisationAdmins extends Page implements HasTable, HasForms
                             ->label('Application Access')
                             ->options([
                                 14 => 'Admin',
+                        User::HR_PRIVILEGE => 'HR',
                                 0 => 'User',
                             ])
-                            ->helperText('Admin access requires an email address and password.')
+                            ->helperText('Admin and HR access require an email address and password.')
                             ->required(),
                         Forms\Components\Hidden::make('pin')
                             ->default(fn () => (string) rand(10000, 99999)),

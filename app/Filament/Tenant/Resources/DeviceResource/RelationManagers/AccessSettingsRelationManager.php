@@ -23,6 +23,10 @@ use Illuminate\Database\Eloquent\Model;
 
 abstract class AccessSettingsRelationManager extends RelationManager
 {
+    protected static ?string $badge = 'Beta';
+
+    protected static ?string $badgeColor = 'warning';
+
     protected static string $accessKind;
 
     public static function canViewForRecord(Model $ownerRecord, string $pageClass): bool
@@ -34,7 +38,7 @@ abstract class AccessSettingsRelationManager extends RelationManager
 
     private function editable(): bool
     {
-        return (bool) auth('web')->user()?->has_login && self::canViewForRecord($this->getOwnerRecord(), static::class);
+        return (bool) auth('web')->user()?->canManageDevices() && self::canViewForRecord($this->getOwnerRecord(), static::class);
     }
 
     private function fields(bool $creating): array

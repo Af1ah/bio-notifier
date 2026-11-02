@@ -3,8 +3,11 @@
 namespace App\Models;
 
 use App\Services\Devices\DeviceIntegration;
+use App\Services\Support\TenantCurrency;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Stancl\Tenancy\Contracts\TenantWithDatabase;
 use Stancl\Tenancy\Database\Concerns\HasDatabase;
@@ -29,6 +32,7 @@ class Organisation extends BaseTenant implements TenantWithDatabase
         'device_integration',
         'gateway_source_cidr',
         'timezone',
+        'currency',
         'ebio_url',
         'ebio_webhook_token',
         'ebio_aes_password',
@@ -81,6 +85,12 @@ class Organisation extends BaseTenant implements TenantWithDatabase
 
     protected static function booted()
     {
+        static::saving(function ($tenant) {
+            Validator::make(
+                ['currency' => $tenant->currency],
+                ['currency' => ['nullable', Rule::in(array_keys(TenantCurrency::OPTIONS))]],
+            )->validate();
+        });
         static::updating(function ($tenant) {
             // Virtual-column event decoding resets originals before this event. Compare persisted settings.
             $previous = $tenant->fresh()?->timezone ?: config('attendance.timezone', 'Asia/Kolkata');

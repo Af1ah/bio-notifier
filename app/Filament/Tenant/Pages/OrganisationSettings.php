@@ -2,6 +2,7 @@
 
 namespace App\Filament\Tenant\Pages;
 
+use App\Services\Support\TenantCurrency;
 use App\Services\Support\TenantTimezone;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Concerns\InteractsWithForms;
@@ -10,15 +11,22 @@ use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
+use Illuminate\Validation\Rule;
 
 class OrganisationSettings extends Page implements HasForms
 {
     use InteractsWithForms;
 
+    protected static bool $shouldRegisterNavigation = false;
+
     protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-cog-6-tooth';
+
     protected static string|\UnitEnum|null $navigationGroup = 'Organisation Management';
+
     protected static ?int $navigationSort = 99;
+
     protected string $view = 'filament.tenant.pages.organisation-settings';
+
     public ?array $data = [];
 
     public static function canAccess(): bool
@@ -29,12 +37,18 @@ class OrganisationSettings extends Page implements HasForms
     public function mount(): void
     {
         abort_unless(static::canAccess(), 403);
-        $this->form->fill(['timezone' => TenantTimezone::get()]);
+        $this->form->fill(['timezone' => TenantTimezone::get(), 'currency' => TenantCurrency::get()]);
     }
 
     public function form(Schema $schema): Schema
     {
         return $schema->components([
+            Section::make('Organisation currency')
+                ->description('Used automatically for new salary, overtime and leave-payment settings. Saved payroll history keeps its recorded currency.')
+                ->schema([
+                    Select::make('currency')->label('Currency')->options(TenantCurrency::OPTIONS)
+                        ->searchable()->required()->rules([Rule::in(array_keys(TenantCurrency::OPTIONS))]),
+                ]),
             Section::make('Organisation time')->description('Used for attendance dates, shifts and displayed timestamps. Choose it before recording attendance; changing existing history requires a reviewed migration.')
                 ->schema([
                     Select::make('timezone')->label('Organisation timezone')
@@ -47,7 +61,8 @@ class OrganisationSettings extends Page implements HasForms
     public function save(): void
     {
         abort_unless(static::canAccess(), 403);
-        tenant()->update(['timezone' => $this->form->getState()['timezone']]);
-        Notification::make()->title('Timezone saved')->success()->send();
+        $data = $this->form->getState();
+        tenant()->update(['timezone' => $data['timezone'], 'currency' => $data['currency']]);
+        Notification::make()->title('Organisation settings saved')->success()->send();
     }
 }

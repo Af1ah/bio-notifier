@@ -19,7 +19,7 @@ class EmployeeLeaveService
 {
     public function save(?EmployeeLeave $leave, array $data, User $actor): EmployeeLeave
     {
-        abort_unless((int) $actor->privilege === 14, 403);
+        abort_unless($actor->hasManagementAccess(), 403);
         $v = Validator::make($data, ['user_id' => 'required|integer|exists:users,id', 'leave_type_id' => 'required|integer|exists:leave_types,id',
             'leave_date' => 'required|date', 'duration' => 'required|in:full,half', 'state' => 'required|in:pending,approved,rejected,cancelled',
             'deduction_override_minor' => 'nullable|integer|min:0', 'notes' => 'nullable|string|max:1000'])->validate();

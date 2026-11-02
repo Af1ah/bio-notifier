@@ -298,7 +298,7 @@ class AttendanceCalculationService
         }
     }
 
-    private function pair(Collection $p, string $method): array
+    public function pair(Collection $p, string $method): array
     {
         if ($method === 'device') {
             $stack = null;

@@ -9,7 +9,7 @@ class SchedulePolicy
 {
     private function admin(User $u): bool
     {
-        return (int) $u->privilege === 14;
+        return $u->hasManagementAccess();
     }
 
     public function viewAny(User $u): bool

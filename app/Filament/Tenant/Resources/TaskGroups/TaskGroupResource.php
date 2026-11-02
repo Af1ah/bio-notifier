@@ -36,7 +36,7 @@ class TaskGroupResource extends Resource
 
     public static function canAccess(): bool
     {
-        return (int) auth()->user()?->privilege === 14;
+        return (bool) auth()->user()?->hasManagementAccess();
     }
 
     public static function canViewAny(): bool
