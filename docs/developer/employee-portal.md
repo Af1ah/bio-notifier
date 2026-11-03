@@ -6,7 +6,7 @@ The employee panel lives at `/{tenant}/ess`, with sign-in at `/{tenant}/ess/logi
 
 Employees sign in directly using their email and stored biometric device password of at least six characters. No per-employee activation is needed. The employee-only authentication provider checks that credential, then initializes a hashed portal credential under a row lock and requires a password change. The existing `portal_enabled` database flag now tracks credential initialization, not permission. It does not change the terminal password or send a command to the terminal.
 
-The employee signs in with their email and initial device password, then chooses a portal password with at least twelve characters, uppercase, lowercase, a number and a symbol. Other portal pages and request services are blocked until this is complete. Later password changes require the current portal password.
+The employee signs in with their email and initial device password, then chooses a portal password with at least eight characters, uppercase, lowercase, a number and a symbol. Other portal pages and request services are blocked until this is complete. Later password changes require the current portal password.
 
 **Reset portal password** uses the employee's current stored device password again, rotates the remember token and requires another password change. Native session password checks invalidate sessions using the old credential. Short or missing device passwords must be corrected by an Admin before initial login or reset. Disabling the employee blocks portal access. Once a portal password is chosen, the biometric password cannot be used again unless HR/Admin resets the portal password.
 

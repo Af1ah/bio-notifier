@@ -29,8 +29,8 @@ class ChangePassword extends Page
                 ->visible(fn () => ! PortalAccess::employee(allowPasswordChange: true)->requires_password_change)
                 ->required(fn () => ! PortalAccess::employee(allowPasswordChange: true)->requires_password_change),
             TextInput::make('password')->label('New password')->password()->revealable()->autocomplete('new-password')
-                ->required()->rule(Password::min(12)->mixedCase()->numbers()->symbols())->confirmed()
-                ->helperText('At least 12 characters, with uppercase, lowercase, a number and a symbol.'),
+                ->required()->rule(Password::min(8)->mixedCase()->numbers()->symbols())->confirmed()
+                ->helperText('At least 8 characters, with uppercase, lowercase, a number and a symbol.'),
             TextInput::make('password_confirmation')->label('Confirm password')->password()->required()->autocomplete('new-password'),
         ])->statePath('data');
     }

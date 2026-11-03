@@ -655,4 +655,21 @@ class EmployeePortalTest extends TestCase
         $this->assertSame('pending', $missing->fresh()->state);
         $this->assertSame(1, AttendanceLog::count());
     }
+
+    public function test_employee_password_minimum_is_eight_characters_in_the_form_and_service(): void
+    {
+        $this->enable(change: false);
+        Livewire::test(ChangePassword::class)->fillForm(['password' => 'Abc123!', 'password_confirmation' => 'Abc123!'])
+            ->call('save')->assertHasFormErrors(['password']);
+        try {
+            app(PortalAccess::class)->changePassword($this->employee, ['password' => 'Abc123!', 'password_confirmation' => 'Abc123!']);
+            $this->fail('Seven-character password was accepted');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('password', $exception->errors());
+        }
+        Livewire::test(ChangePassword::class)->fillForm(['password' => 'Abcd123!', 'password_confirmation' => 'Abcd123!'])
+            ->call('save')->assertHasNoFormErrors();
+        $this->assertTrue(Hash::check('Abcd123!', $this->employee->fresh()->password));
+        $this->assertFalse($this->employee->fresh()->requires_password_change);
+    }
 }

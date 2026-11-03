@@ -30,8 +30,8 @@ final class PortalAccess
     public function changePassword(User $employee, array $data): void
     {
         $currentRequired = ! $employee->fresh()->requires_password_change;
-        $data = Validator::make($data, ['current_password' => $currentRequired ? 'required|current_password:employee' : 'nullable', 'password' => ['required', 'string', 'confirmed', Password::min(12)->mixedCase()->numbers()->symbols()]], [
-            'password.min' => 'Use at least 12 characters, including uppercase, lowercase, a number and a symbol.',
+        $data = Validator::make($data, ['current_password' => $currentRequired ? 'required|current_password:employee' : 'nullable', 'password' => ['required', 'string', 'confirmed', Password::min(8)->mixedCase()->numbers()->symbols()]], [
+            'password.min' => 'Use at least 8 characters, including uppercase, lowercase, a number and a symbol.',
         ])->validate();
         DB::transaction(function () use ($employee, $data) {
             $employee = User::lockForUpdate()->findOrFail($employee->id);
