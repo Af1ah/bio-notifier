@@ -2,24 +2,33 @@
 
 namespace Tests\Feature;
 
+use App\Filament\Tenant\Pages\OrganisationSettings;
 use App\Jobs\ProcessEbioWebhookJob;
 use App\Jobs\PushEbioUserJob;
 use App\Jobs\SyncEbioUsersJob;
+use App\Models\Device;
+use App\Models\DeviceCommand;
+use App\Models\LeaveType;
 use App\Models\Organisation;
 use App\Models\User;
 use App\Models\WebhookReceipt;
 use App\Services\EbioSoapService;
+use App\Services\Leave\LeaveBalanceService;
+use App\Services\Leave\LeaveBalanceSummaryService;
 use App\Services\Tenancy\TenantContext;
+use Filament\Facades\Filament;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Contracts\Queue\Job;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\URL;
+use Livewire\Livewire;
 use Tests\TestCase;
 
 class TenantBoundaryRegressionTest extends TestCase
@@ -54,6 +63,33 @@ class TenantBoundaryRegressionTest extends TestCase
         return $organisation;
     }
 
+    public function test_native_command_notifications_stay_private_with_overlapping_tenant_user_ids(): void
+    {
+        $saved = [];
+        foreach (['notice-a', 'notice-b'] as $name) {
+            $company = $this->organisation($name);
+            tenancy()->initialize($company);
+            $actor = User::create(['id' => 77, 'name' => 'Operator', 'pin' => 'operator', 'email' => 'operator@example.test', 'password' => 'password', 'privilege' => 14]);
+            auth('web')->setUser($actor);
+            $device = Device::create(['serial_number' => 'SAME-SERIAL', 'name' => $name]);
+            $command = DeviceCommand::create(['device_id' => $device->id, 'command_type' => 'reboot', 'command_content' => 'Reboot', 'status' => 'pending']);
+            $command->markAsAcknowledged();
+            $notification = $actor->notifications()->firstOrFail();
+            $this->assertStringContainsString('/'.$name.'/admin/device-commands/', $notification->data['actions'][0]['url']);
+            $saved[] = [$company, $notification->id];
+            tenancy()->end();
+            auth()->forgetGuards();
+        }
+        foreach ($saved as $index => [$company, $notificationId]) {
+            tenancy()->initialize($company);
+            $actor = User::findOrFail(77);
+            $this->assertSame([$notificationId], $actor->notifications()->pluck('id')->all());
+            $foreignId = $saved[1 - $index][1];
+            $this->assertFalse($actor->notifications()->where('id', $foreignId)->exists());
+            tenancy()->end();
+        }
+    }
+
     public function test_saved_leave_summaries_stay_in_the_owning_tenant_database(): void
     {
         $expected = [];
@@ -62,16 +98,16 @@ class TenantBoundaryRegressionTest extends TestCase
             tenancy()->initialize($company);
             $employee = User::create(['pin' => 'same-pin', 'name' => 'Employee']);
             $actor = User::create(['pin' => 'hr', 'name' => 'HR', 'privilege' => 14]);
-            $type = \App\Models\LeaveType::create(['name' => 'Summary leave', 'code' => 'SUM', 'is_paid' => true, 'active' => true]);
-            app(\App\Services\Leave\LeaveBalanceService::class)->opening($employee, $type, $units, today()->subDay(), today()->addMonth(), 'Reviewed opening', $actor, 'same-key');
-            $balance = app(\App\Services\Leave\LeaveBalanceSummaryService::class)->get($employee, $type->id, today());
+            $type = LeaveType::create(['name' => 'Summary leave', 'code' => 'SUM', 'is_paid' => true, 'active' => true]);
+            app(LeaveBalanceService::class)->opening($employee, $type, $units, today()->subDay(), today()->addMonth(), 'Reviewed opening', $actor, 'same-key');
+            $balance = app(LeaveBalanceSummaryService::class)->get($employee, $type->id, today());
             $this->assertSame($units, $balance['available_half_units']);
             $expected[] = [$company, $employee->id, $type->id, $units];
             tenancy()->end();
         }
         foreach ($expected as [$company, $employeeId, $typeId, $units]) {
             tenancy()->initialize($company);
-            $balance = app(\App\Services\Leave\LeaveBalanceSummaryService::class)->get(User::findOrFail($employeeId), $typeId, today());
+            $balance = app(LeaveBalanceSummaryService::class)->get(User::findOrFail($employeeId), $typeId, today());
             $this->assertSame($units, $balance['available_half_units']);
             tenancy()->end();
         }
@@ -81,19 +117,19 @@ class TenantBoundaryRegressionTest extends TestCase
     {
         $a = $this->organisation('sync-a');
         $b = $this->organisation('sync-b');
-        TenantContext::run($b, fn () => \App\Models\Device::create(['serial_number' => 'OTHER-1', 'name' => 'Other company']));
+        TenantContext::run($b, fn () => Device::create(['serial_number' => 'OTHER-1', 'name' => 'Other company']));
         $list = collect(range(1, 21))->map(fn ($n) => "Device {$n},SYNC-{$n},Branch {$n}")->implode(';').';';
         Http::fake(fn ($request) => Http::response(
             str_contains($request->body(), '<GetDeviceList ')
                 ? '<GetDeviceListResult>'.$list.'</GetDeviceListResult>'
                 : '<GetDeviceLastPingResult>2026-10-31 10:00:00</GetDeviceLastPingResult>', 200));
         tenancy()->initialize($a);
-        $connection = \Illuminate\Support\Facades\DB::connection();
+        $connection = DB::connection();
         $connection->beginTransaction();
         try {
             $result = (new EbioSoapService)->syncDevices($a);
             $this->assertSame(21, $result['synced']);
-            $this->assertSame($connection, \Illuminate\Support\Facades\DB::connection());
+            $this->assertSame($connection, DB::connection());
             $this->assertSame(1, $connection->transactionLevel());
             $connection->commit();
         } finally {
@@ -102,10 +138,10 @@ class TenantBoundaryRegressionTest extends TestCase
             }
         }
         tenancy()->end();
-        $this->assertSame(21, TenantContext::run($a, fn () => \App\Models\Device::count()));
+        $this->assertSame(21, TenantContext::run($a, fn () => Device::count()));
         TenantContext::run($b, function () {
-            $this->assertSame(['OTHER-1'], \App\Models\Device::pluck('serial_number')->all());
-            $this->assertSame('Other company', \App\Models\Device::first()->name);
+            $this->assertSame(['OTHER-1'], Device::pluck('serial_number')->all());
+            $this->assertSame('Other company', Device::first()->name);
         });
         $this->assertNull(tenant());
     }
@@ -114,29 +150,29 @@ class TenantBoundaryRegressionTest extends TestCase
     {
         $a = $this->organisation('nested-a');
         tenancy()->initialize($a);
-        $connection = \Illuminate\Support\Facades\DB::connection();
+        $connection = DB::connection();
         $connection->beginTransaction();
         try {
             // A fresh model instance with the same tenant key must not reconnect.
             $copy = Organisation::findOrFail($a->id);
             try {
                 TenantContext::run($copy, function () use ($a) {
-                    TenantContext::run($a, fn () => \App\Models\Device::create(['serial_number' => 'ROLLBACK-1', 'name' => 'Temporary']));
+                    TenantContext::run($a, fn () => Device::create(['serial_number' => 'ROLLBACK-1', 'name' => 'Temporary']));
                     throw new \RuntimeException('expected failure');
                 });
                 $this->fail('The callback exception must propagate.');
             } catch (\RuntimeException $exception) {
                 $this->assertSame('expected failure', $exception->getMessage());
             }
-            $this->assertSame($connection, \Illuminate\Support\Facades\DB::connection());
+            $this->assertSame($connection, DB::connection());
             $this->assertSame(1, $connection->transactionLevel());
-            $this->assertSame(1, \App\Models\Device::count());
+            $this->assertSame(1, Device::count());
         } finally {
             if ($connection->transactionLevel() > 0) {
                 $connection->rollBack();
             }
         }
-        $this->assertSame(0, \App\Models\Device::count());
+        $this->assertSame(0, Device::count());
         $this->assertSame($a->id, tenant()->getTenantKey());
     }
 
@@ -145,11 +181,11 @@ class TenantBoundaryRegressionTest extends TestCase
         $a = $this->organisation('guard-a');
         $b = $this->organisation('guard-b');
         tenancy()->initialize($a);
-        $connection = \Illuminate\Support\Facades\DB::connection();
+        $connection = DB::connection();
         $connection->beginTransaction();
         $called = false;
         try {
-            \App\Models\Device::create(['serial_number' => 'GUARDED-1', 'name' => 'Pending write']);
+            Device::create(['serial_number' => 'GUARDED-1', 'name' => 'Pending write']);
             try {
                 TenantContext::run($b, function () use (&$called) {
                     $called = true;
@@ -160,9 +196,9 @@ class TenantBoundaryRegressionTest extends TestCase
             }
             $this->assertFalse($called);
             $this->assertSame($a->id, tenant()->getTenantKey());
-            $this->assertSame($connection, \Illuminate\Support\Facades\DB::connection());
+            $this->assertSame($connection, DB::connection());
             $this->assertSame(1, $connection->transactionLevel());
-            $this->assertSame(1, \App\Models\Device::count());
+            $this->assertSame(1, Device::count());
             $connection->commit();
         } finally {
             if ($connection->transactionLevel() > 0) {
@@ -170,8 +206,8 @@ class TenantBoundaryRegressionTest extends TestCase
             }
         }
         tenancy()->end();
-        $this->assertSame(['GUARDED-1'], TenantContext::run($a, fn () => \App\Models\Device::pluck('serial_number')->all()));
-        $this->assertSame(0, TenantContext::run($b, fn () => \App\Models\Device::count()));
+        $this->assertSame(['GUARDED-1'], TenantContext::run($a, fn () => Device::pluck('serial_number')->all()));
+        $this->assertSame(0, TenantContext::run($b, fn () => Device::count()));
     }
 
     public function test_switching_tenants_restores_the_original_context_after_failure(): void
@@ -179,18 +215,18 @@ class TenantBoundaryRegressionTest extends TestCase
         $a = $this->organisation('restore-a');
         $b = $this->organisation('restore-b');
         tenancy()->initialize($a);
-        \App\Models\Device::create(['serial_number' => 'A-1', 'name' => 'Company A']);
+        Device::create(['serial_number' => 'A-1', 'name' => 'Company A']);
         try {
             TenantContext::run($b, function () use ($b) {
                 $this->assertSame($b->id, tenant()->getTenantKey());
-                $this->assertSame(0, \App\Models\Device::count());
+                $this->assertSame(0, Device::count());
                 throw new \RuntimeException('switch failure');
             });
         } catch (\RuntimeException $exception) {
             $this->assertSame('switch failure', $exception->getMessage());
         }
         $this->assertSame($a->id, tenant()->getTenantKey());
-        $this->assertSame(['A-1'], \App\Models\Device::pluck('serial_number')->all());
+        $this->assertSame(['A-1'], Device::pluck('serial_number')->all());
     }
 
     public function test_ebio_setup_displays_only_the_current_company_credential(): void
@@ -202,21 +238,21 @@ class TenantBoundaryRegressionTest extends TestCase
         URL::defaults(['tenant' => $a->shortname]);
         $admin = User::create(['name' => 'Setup admin', 'pin' => 'setup-admin', 'privilege' => 14, 'email' => 'setup@example.test', 'password' => bcrypt('test-only')]);
         $this->actingAs($admin, 'web');
-        \Filament\Facades\Filament::setCurrentPanel(\Filament\Facades\Filament::getPanel('tenant'));
-        \Filament\Facades\Filament::bootCurrentPanel();
-        \Livewire\Livewire::test(\App\Filament\Tenant\Pages\OrganisationSettings::class)
+        Filament::setCurrentPanel(Filament::getPanel('tenant'));
+        Filament::bootCurrentPanel();
+        Livewire::test(OrganisationSettings::class)
             ->assertSee('eBio setup')->assertSee('Copy URL')->assertSee('Success')
             ->assertSee('https://noti.example.test/api/ebio/webhook/'.$a->ebio_webhook_token, escape: false)
             ->assertDontSee($b->ebio_webhook_token);
         $a->update(['device_integration' => 'adms_gateway']);
-        \Livewire\Livewire::test(\App\Filament\Tenant\Pages\OrganisationSettings::class)
+        Livewire::test(OrganisationSettings::class)
             ->assertDontSee('eBio setup')->assertDontSee($a->ebio_webhook_token);
         $a->update(['device_integration' => 'ebio', 'ebio_webhook_token' => null]);
-        \Livewire\Livewire::test(\App\Filament\Tenant\Pages\OrganisationSettings::class)
+        Livewire::test(OrganisationSettings::class)
             ->assertSee('Webhook setup is not ready.')
             ->assertDontSee('https://noti.example.test/api/ebio/webhook/'.$a->id, escape: false);
         $admin->update(['privilege' => 0]);
-        \Livewire\Livewire::test(\App\Filament\Tenant\Pages\OrganisationSettings::class)->assertForbidden();
+        Livewire::test(OrganisationSettings::class)->assertForbidden();
         tenancy()->end();
     }
 

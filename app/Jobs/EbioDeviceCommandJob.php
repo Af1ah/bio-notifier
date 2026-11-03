@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Jobs\Concerns\TracksQueuedDeviceCommand;
 use App\Models\DeviceCommand;
 use App\Models\Organisation;
 use App\Services\EbioSoapService;
@@ -16,6 +17,7 @@ use Illuminate\Support\Facades\Log;
 class EbioDeviceCommandJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+    use TracksQueuedDeviceCommand;
 
     public $organisation;
 
@@ -31,6 +33,9 @@ class EbioDeviceCommandJob implements ShouldQueue
         $this->serialNumber = $serialNumber;
         $this->commandType = $commandType;
         $this->commandId = $commandId;
+        if ($commandId) {
+            $this->afterCommit();
+        }
     }
 
     public function handle(EbioSoapService $service): void

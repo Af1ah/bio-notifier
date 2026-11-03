@@ -17,6 +17,13 @@ use Illuminate\Validation\ValidationException;
 
 class User extends Authenticatable implements FilamentUser
 {
+    public const GENDER_OPTIONS = [
+        'male' => 'Male',
+        'female' => 'Female',
+        'other' => 'Other',
+        'prefer_not_to_say' => 'Prefer not to say',
+    ];
+
     public const HR_PRIVILEGE = 13;
 
     public const DEFAULT_LOGIN_EMAIL = 'admin@zkteco.local';
@@ -107,6 +114,7 @@ class User extends Authenticatable implements FilamentUser
     protected $hidden = [
         'password',
         'remember_token',
+        'bank_account_number',
     ];
 
     /**
@@ -118,6 +126,8 @@ class User extends Authenticatable implements FilamentUser
     {
         return [
             'email_verified_at' => 'datetime',
+            'date_of_birth' => 'date:Y-m-d',
+            'bank_account_number' => 'encrypted',
             'password' => 'hashed',
             'privilege' => 'integer',
             'device_privilege' => 'integer',

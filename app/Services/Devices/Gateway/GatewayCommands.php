@@ -174,6 +174,9 @@ final class GatewayCommands
         DeviceCommand::whereKey($command->id)->where('gateway_command_id', $submission->id)
             ->whereIn('status', ['pending', 'sent', 'outcome_unknown'])
             ->update(['status' => 'cancelled', 'response' => 'Cancelled by operator. A command already sent may have executed.']);
+        if ($updated = $command->fresh()) {
+            app(\App\Services\Support\QueuedActionNotifications::class)->send($updated);
+        }
     }
 
     public function relay(string $organisationId, string $id): void

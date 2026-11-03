@@ -15,6 +15,13 @@ class EditUser extends EditRecord
 {
     protected static string $resource = UserResource::class;
 
+    protected function mutateFormDataBeforeFill(array $data): array
+    {
+        $data['bank_account_number'] = $this->record->bank_account_number;
+
+        return $data;
+    }
+
     protected function getHeaderActions(): array
     {
         return [

@@ -96,6 +96,14 @@ class UserResource extends Resource
                         ->autocomplete('off'),
                     TextInput::make('name')
                         ->autocomplete('off'),
+                    DatePicker::make('date_of_birth')
+                        ->label('Date of birth')
+                        ->maxDate(fn () => now(\App\Services\Support\TenantTimezone::get())->toDateString())
+                        ->nullable(),
+                    Select::make('gender')
+                        ->options(User::GENDER_OPTIONS)
+                        ->in(array_keys(User::GENDER_OPTIONS))
+                        ->nullable(),
                     TextInput::make('email')
                         ->email()
                         ->unique(ignoreRecord: true)
@@ -134,6 +142,17 @@ class UserResource extends Resource
                         ->nullable(),
                     Toggle::make('is_enabled')
                         ->default(true),
+                ])
+                ->columns(2)
+                ->columnSpanFull(),
+            Section::make('Bank details')
+                ->schema([
+                    TextInput::make('bank_account_holder')->label('Account holder name')->maxLength(255)->nullable(),
+                    TextInput::make('bank_name')->label('Bank name')->maxLength(255)->nullable(),
+                    TextInput::make('bank_account_number')->label('Account number')->maxLength(64)->autocomplete('off')->nullable(),
+                    TextInput::make('bank_branch')->label('Branch')->maxLength(255)->nullable(),
+                    TextInput::make('bank_ifsc_code')->label('IFSC code')->maxLength(32)->nullable(),
+                    TextInput::make('bank_swift_code')->label('SWIFT / BIC code')->maxLength(32)->nullable(),
                 ])
                 ->columns(2)
                 ->columnSpanFull(),
@@ -264,6 +283,8 @@ class UserResource extends Resource
                                 ->size('lg'),
                             TextEntry::make('pin')
                                 ->label('PIN'),
+                            TextEntry::make('date_of_birth')->label('Date of birth')->date('d M Y')->placeholder('—'),
+                            TextEntry::make('gender')->formatStateUsing(fn ($state) => User::GENDER_OPTIONS[$state] ?? $state)->placeholder('—'),
                             TextEntry::make('whatsapp_number')
                                 ->label('WhatsApp Number')
                                 ->default('Not Provided'),
@@ -303,6 +324,15 @@ class UserResource extends Resource
                                 ->default('Not reported'),
                         ])->columns(['default' => 2, 'sm' => 2, 'md' => 2]),
 
+                    Section::make('Bank details')
+                        ->schema([
+                            TextEntry::make('bank_account_holder')->label('Account holder name')->placeholder('—'),
+                            TextEntry::make('bank_name')->label('Bank name')->placeholder('—'),
+                            TextEntry::make('bank_account_number')->label('Account number')->placeholder('—'),
+                            TextEntry::make('bank_branch')->label('Branch')->placeholder('—'),
+                            TextEntry::make('bank_ifsc_code')->label('IFSC code')->placeholder('—'),
+                            TextEntry::make('bank_swift_code')->label('SWIFT / BIC code')->placeholder('—'),
+                        ])->columns(2),
                     Section::make('Shift Details')
                         ->schema([
                             TextEntry::make('shift')

@@ -36,6 +36,8 @@ class TenantPanelProvider extends PanelProvider
             // ->path('admin')
             ->path('{tenant}/admin')
             ->login()
+            ->databaseNotifications(livewireComponent: \App\Livewire\Tenant\ResultNotifications::class)
+            ->databaseNotificationsPolling('15s')
             ->userMenuItems([
                 Action::make('organisationSettings')
                     ->label('Organisation settings')

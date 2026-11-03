@@ -34,6 +34,9 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        foreach ([\App\Models\DeviceCommand::class, \App\Models\AttendanceCalculationRun::class] as $model) {
+            $model::observe(\App\Observers\QueuedActionNotificationObserver::class);
+        }
         foreach ([\App\Models\Device::class, \App\Models\DeviceCommand::class, \App\Models\AttendanceLog::class] as $model) {
             \Illuminate\Support\Facades\Gate::policy($model, \App\Policies\DeviceManagementPolicy::class);
         }

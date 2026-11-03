@@ -152,6 +152,7 @@ class DeviceCommand extends Model
         $this->update([
             'status' => 'pending',
             'retry_count' => $this->retry_count + 1,
+            'requested_by_user_id' => auth('web')->user()?->has_login ? auth('web')->id() : $this->requested_by_user_id,
             'response' => null,
             'sent_at' => null,
             'acknowledged_at' => null,

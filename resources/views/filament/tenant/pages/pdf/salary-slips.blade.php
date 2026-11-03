@@ -60,7 +60,12 @@
                 </tbody>
             </table>
             @if (isset($slip->calculation_snapshot['eligible_start']))
-                <p>Eligible pay dates: {{ $slip->calculation_snapshot['eligible_start'] }}–{{ $slip->calculation_snapshot['eligible_end'] }} · {{ $slip->calculation_snapshot['eligible_days'] }} calendar days@if (($slip->calculation_snapshot['pay_basis'] ?? 'monthly') === 'monthly') of {{ $slip->calculation_snapshot['calendar_day_divisor'] }} in this month@endif</p>
+                <p>
+                    Eligible pay dates: {{ $slip->calculation_snapshot['eligible_start'] }}–{{ $slip->calculation_snapshot['eligible_end'] }} · {{ $slip->calculation_snapshot['eligible_days'] }} calendar days
+                    @if (($slip->calculation_snapshot['pay_basis'] ?? 'monthly') === 'monthly')
+                        of {{ $slip->calculation_snapshot['calendar_day_divisor'] }} in this month
+                    @endif
+                </p>
             @endif
             <p>Working days: {{ $slip->scheduled_days }} · Full days: {{ $slip->full_days }} · Half days: {{ $slip->half_days }} · Absent days: {{ $slip->absent_days + (($slip->calculation_snapshot['leave_other_half_absent_days'] ?? 0) / 2) }}</p>
             @if (($slip->calculation_snapshot['compensatory_payment_minor'] ?? 0) > 0)

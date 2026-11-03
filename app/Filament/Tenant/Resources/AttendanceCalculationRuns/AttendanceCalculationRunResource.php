@@ -14,6 +14,8 @@ use Filament\Tables\Table;
 
 class AttendanceCalculationRunResource extends Resource
 {
+    protected static bool $shouldRegisterNavigation = false;
+
     protected static ?string $model = AttendanceCalculationRun::class;
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedArrowPath;
@@ -21,6 +23,11 @@ class AttendanceCalculationRunResource extends Resource
     protected static \UnitEnum|string|null $navigationGroup = 'Organisation Management';
 
     protected static ?string $navigationLabel = 'Recalculation runs';
+
+    public static function canViewAny(): bool
+    {
+        return (bool) auth('web')->user()?->hasManagementAccess();
+    }
 
     public static function form(Schema $schema): Schema
     {

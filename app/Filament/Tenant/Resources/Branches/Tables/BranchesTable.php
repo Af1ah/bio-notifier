@@ -14,6 +14,7 @@ class BranchesTable
     {
         return $table
             ->columns([
+                TextColumn::make('id')->label('ID')->sortable(),
 
                 TextColumn::make('name')
                     ->searchable(),
