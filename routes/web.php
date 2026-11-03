@@ -131,7 +131,9 @@ Route::get('/{tenant}/employee/{page?}', fn (string $tenant, ?string $page = nul
     ->where('page', 'login|calendar|attendance|leave-requests|salary-slips|change-password');
 
 Route::get('/{tenant}', function ($tenant) {
-    return redirect('/'.$tenant.'/admin');
+    $organisation = \App\Models\Organisation::where('shortname', $tenant)->orWhere('id', $tenant)->firstOrFail();
+
+    return redirect('/'.($organisation->shortname ?: $organisation->id).'/admin');
 })->where('tenant', '^(?!master|manifest\.json|iclock|magic-login|api|livewire|_debugbar)[^/]+$');
 
 Route::get('/{tenant}/punch-photos/{punch}', \App\Http\Controllers\PunchPhotoController::class)

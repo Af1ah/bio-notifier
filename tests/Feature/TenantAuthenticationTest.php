@@ -390,4 +390,12 @@ class TenantAuthenticationTest extends TestCase
         $this->assertAuthenticated('web');
         $this->assertSame(1, DB::table('quick_login_grants')->whereNotNull('used_at')->count());
     }
+    public function test_unknown_tenant_paths_return_404_instead_of_repeatedly_appending_admin(): void
+    {
+        foreach (['/alpha/hel..', '/alpha/hel../admin', '/alpha/missing/admin/admin', '/unknown-company'] as $path) {
+            $this->get('http://localhost'.$path)->assertNotFound()->assertHeaderMissing('Location');
+        }
+        $this->get('http://localhost/alpha')->assertRedirect('/alpha/admin');
+    }
+
 }
