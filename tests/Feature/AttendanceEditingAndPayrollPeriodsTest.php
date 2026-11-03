@@ -353,7 +353,9 @@ class AttendanceEditingAndPayrollPeriodsTest extends TestCase
             ->assertCanNotSeeTableRecords([$old])
             ->filterTable('payroll_month', '2026-07')
             ->assertCanSeeTableRecords([$old])
-            ->assertCanNotSeeTableRecords([$current, $paid]);
+            ->assertCanNotSeeTableRecords([$current, $paid])
+            ->filterTable('payroll_month', 'all')
+            ->assertCanSeeTableRecords([$current, $paid, $old]);
     }
 
     public function test_csv_export_requires_one_month_and_never_contains_another_month(): void

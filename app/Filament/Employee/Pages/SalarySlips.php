@@ -2,6 +2,7 @@
 
 namespace App\Filament\Employee\Pages;
 
+use App\Filament\Shared\Filters\PayrollMonthFilter;
 use App\Filament\Tenant\Resources\SalarySlips\Schemas\SalarySlipInfolist;
 use App\Models\SalarySlip;
 use App\Services\EmployeePortal\PortalAccess;
@@ -40,6 +41,7 @@ class SalarySlips extends PortalPage implements HasTable
                 TextColumn::make('status')->badge()->color(fn ($state) => $state === 'paid' ? 'success' : 'primary'),
                 TextColumn::make('approved_at')->label('Approved')->date('d M Y')->visibleFrom('md'),
             ])
+            ->filters([PayrollMonthFilter::make(fn () => $this->availableSlips())])
             ->recordActions([ActionGroup::make([
                 ViewAction::make()->slideOver()->modalWidth('5xl')
                     ->schema(fn (Schema $schema) => SalarySlipInfolist::configure($schema)),

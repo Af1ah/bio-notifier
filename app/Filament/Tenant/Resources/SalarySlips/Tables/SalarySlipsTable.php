@@ -2,6 +2,7 @@
 
 namespace App\Filament\Tenant\Resources\SalarySlips\Tables;
 
+use App\Filament\Shared\Filters\PayrollMonthFilter;
 use App\Filament\Tenant\Actions\SalarySlipActions;
 use App\Filament\Tenant\PayrollSelectionFields;
 use App\Models\Branch;
@@ -9,11 +10,10 @@ use App\Models\Department;
 use App\Models\SalarySlip;
 use App\Models\TaskGroup;
 use App\Services\Payroll\PayrollEmployeeScope;
-use Carbon\Carbon;
 use Filament\Actions\Action;
 use Filament\Actions\ViewAction;
-use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Radio;
+use Filament\Forms\Components\Select;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\Filter;
 use Filament\Tables\Filters\SelectFilter;
@@ -55,9 +55,7 @@ class SalarySlipsTable
                             ->live(),
                     ])
                     ->query(fn ($query) => $query),
-                SelectFilter::make('payroll_month')->label('Payroll month')->default(now()->format('Y-m'))
-                    ->options(fn () => SalarySlip::orderByDesc('period_start')->get()->mapWithKeys(fn ($slip) => [$slip->period_start->format('Y-m') => $slip->period_start->format('F Y')])->all())
-                    ->query(fn ($query, array $data) => $query->when($data['value'] ?? null, fn ($q, $month) => $q->whereDate('period_start', Carbon::createFromFormat('!Y-m', $month)))),
+                PayrollMonthFilter::make(fn () => SalarySlip::query()),
                 SelectFilter::make('user_id')->label('Employee')->relationship('user', 'name')->searchable()->preload(),
                 SelectFilter::make('branch_ids')->label('Branches')->multiple()->searchable()->options(fn () => Branch::orderBy('name')->pluck('name', 'id'))
                     ->query(fn ($query, array $data) => $query->when($data['values'] ?? [], fn ($query, $ids) => $query->whereHas('user', fn ($users) => PayrollEmployeeScope::apply($users, ['branch_ids' => $ids])))),

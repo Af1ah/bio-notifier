@@ -377,7 +377,7 @@ class EmployeePortalTest extends TestCase
         }
         $foreign = $slips['approved']->replicate()->fill(['user_id' => $this->manager->id]);
         $foreign->save();
-        $page = Livewire::test(SalarySlips::class)->assertCanSeeTableRecords([$slips['approved'], $slips['paid']])
+        $page = Livewire::test(SalarySlips::class)->filterTable('payroll_month', 'all')->assertCanSeeTableRecords([$slips['approved'], $slips['paid']])
             ->assertCanNotSeeTableRecords([$slips['draft'], $slips['reviewed'], $foreign]);
         $page->mountTableAction('view', $slips['approved'])->assertActionMounted()->assertMountedActionModalSee('Payslip summary')->assertMountedActionModalSee('1,234.56');
         $page->unmountAction();
@@ -387,6 +387,27 @@ class EmployeePortalTest extends TestCase
         $slips['approved']->update(['status' => 'draft']);
         $page->mountTableAction('view', $slips['approved'])->assertActionNotMounted();
         $this->get('http://localhost/portal/ess/salary-slips')->assertOk();
+    }
+
+    public function test_salary_month_defaults_to_this_month_and_all_keeps_employee_scope(): void
+    {
+        Carbon::setTestNow('2026-08-15 10:00:00');
+        try {
+            $this->enable();
+            $attributes = ['user_id' => $this->employee->id, 'period_start' => '2026-08-01', 'period_end' => '2026-08-31', 'status' => 'approved', 'currency' => 'INR', 'net_pay_minor' => 100, 'calculation_snapshot' => [], 'calculated_at' => now()];
+            $current = SalarySlip::create($attributes);
+            $older = SalarySlip::create(array_replace($attributes, ['period_start' => '2026-07-01', 'period_end' => '2026-07-31']));
+            $foreign = SalarySlip::create(array_replace($attributes, ['user_id' => $this->manager->id]));
+            $draft = SalarySlip::create(array_replace($attributes, ['period_start' => '2026-06-01', 'period_end' => '2026-06-30', 'status' => 'draft']));
+            Livewire::test(SalarySlips::class)->assertCanSeeTableRecords([$current])
+                ->assertCanNotSeeTableRecords([$older, $foreign, $draft])
+                ->filterTable('payroll_month', 'all')->assertCanSeeTableRecords([$current, $older])
+                ->assertCanNotSeeTableRecords([$foreign, $draft])
+                ->filterTable('payroll_month', '2026-07')->assertCanSeeTableRecords([$older])
+                ->assertCanNotSeeTableRecords([$current]);
+        } finally {
+            Carbon::setTestNow();
+        }
     }
 
     private function fence(): WorkLocation
@@ -709,20 +730,45 @@ class EmployeePortalTest extends TestCase
         $this->assertSame(1, AttendanceLog::count());
     }
 
-    public function test_server_enforces_the_current_geofence_setting_even_for_stale_forms(): void
+    public function test_optional_site_starts_empty_and_punch_records_gps_without_a_site(): void
     {
         $this->enable();
         Queue::fake();
         $location = $this->fence();
         $data = $this->gps($location);
+        Livewire::test(LocationPunch::class)->assertSet('data.location_id', null)
+            ->assertSee('Work location (optional)')->assertSee('Check in');
         unset($data['location_id']);
+        $data['latitude'] = 40.7128;
+        $request = app(GeofencedPunchService::class)->record($data);
+        $this->assertNull($request->work_location_id);
+        $this->assertEquals(40.7128, $request->evidence['latitude']);
+        $this->assertSame('pending', $request->state);
+    }
+
+    public function test_selected_site_is_checked_against_the_current_geofence_setting(): void
+    {
+        $this->enable();
+        Queue::fake();
+        $location = $this->fence();
+        $data = $this->gps($location);
+        $data['latitude'] = 40.7128;
         try {
             app(GeofencedPunchService::class)->record($data);
-            $this->fail('GPS was not required');
+            $this->fail('Selected site radius was not enforced');
         } catch (ValidationException $exception) {
-            $this->assertArrayHasKey('location_id', $exception->errors());
+            $this->assertArrayHasKey('location', $exception->errors());
         }
         $this->assertSame(0, PortalPunch::count());
+    }
+
+    public function test_punch_is_available_when_no_sites_are_configured(): void
+    {
+        $this->enable();
+        EmployeePortalSetting::whereKey(1)->update(['geofencing_enabled' => true]);
+        Livewire::test(LocationPunch::class)->assertSet('data.location_id', null)
+            ->assertSee('Check in')->assertSee('Work location (optional)')
+            ->assertDontSee('needs to add a work location');
     }
 
     public function test_location_is_required_even_when_geofencing_is_disabled(): void

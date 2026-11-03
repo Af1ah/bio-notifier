@@ -1,8 +1,5 @@
 <x-filament-widgets::widget>
     <x-filament::section heading="Check in or out">
-        @if ($this->geofenceEnabled && ! $this->hasLocations())
-            <p class="text-sm text-gray-500">HR or Admin needs to add a work location before you can punch.</p>
-        @else
             <div style="width: 100%; max-width: 32rem; margin-inline: auto;" x-data="{
                 location: $wire.$entangle('data.location_id'), busy: false, starting: false, error: '', request: null,
                 cameraOpen: false, stream: null, kind: null, disposed: false,
@@ -35,7 +32,7 @@
                         canvas.width = Math.round(video.videoWidth * scale); canvas.height = Math.round(video.videoHeight * scale);
                         canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
                         const gps = { latitude: position.coords.latitude, longitude: position.coords.longitude, accuracy: position.coords.accuracy, captured_at: position.timestamp };
-                        if ($wire.geofenceEnabled) gps.location_id = Number(this.location);
+                        if ($wire.geofenceEnabled && this.location !== null && this.location !== '') gps.location_id = Number(this.location);
                         const saved = await $wire.punch({ kind: this.kind, request_id: this.request.id, ...gps, photo: canvas.toDataURL('image/jpeg', 0.8) });
                         canvas.width = 0; canvas.height = 0;
                         if (saved) { this.request = null; this.stopCamera(); }
@@ -45,7 +42,10 @@
                 destroy() { this.disposed = true; this.stopCamera(); }
             }" x-on:pagehide.window="stopCamera()" x-on:visibilitychange.document="if (document.hidden) stopCamera()">
                 @if ($this->geofenceEnabled)
-                    <div style="margin-bottom: 1rem;">{{ $this->form }}</div>
+                    <div style="margin-bottom: 1rem;">
+                        {{ $this->form }}
+                        <p class="text-sm text-gray-500" style="margin-top: .5rem;">If selected, you must be within its allowed radius.</p>
+                    </div>
                 @endif
 
                 <div x-show="!cameraOpen" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr)); gap: .75rem;">
@@ -74,6 +74,5 @@
                     </div>
                 @endif
             </div>
-        @endif
     </x-filament::section>
 </x-filament-widgets::widget>

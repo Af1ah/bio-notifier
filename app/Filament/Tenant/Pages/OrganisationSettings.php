@@ -46,8 +46,8 @@ class OrganisationSettings extends Page implements HasForms
     {
         return $schema->components([
             Section::make('Employee attendance')->schema([
-                Toggle::make('geofencing_enabled')->label('Require a work location for employee punches')
-                    ->helperText('Employees must be inside an active work location when this is enabled.'),
+                Toggle::make('geofencing_enabled')->label('Enable work location verification')
+                    ->helperText('Verify the allowed radius when an employee selects a work location.'),
             ]),
             Section::make('Organisation currency')
                 ->description('Used automatically for new salary, overtime and leave-payment settings. Saved payroll history keeps its recorded currency.')

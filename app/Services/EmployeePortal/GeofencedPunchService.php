@@ -54,7 +54,7 @@ final class GeofencedPunchService
                 if (abs(now()->getTimestampMs() - $gps['captured_at']) > 120000) {
                     throw ValidationException::withMessages(['location' => 'Your location has expired. Please try again.']);
                 }
-                if ($setting->geofencing_enabled) {
+                if ($setting->geofencing_enabled && filled($input['location_id'] ?? null)) {
                     $selection = Validator::make($input, ['location_id' => 'required|integer'])->validate();
                     $location = WorkLocation::where('is_active', true)->sharedLock()->find($selection['location_id']);
                     if (! $location) {
