@@ -16,8 +16,10 @@ class CreateUser extends CreateRecord
      */
     protected function mutateFormDataBeforeCreate(array $data): array
     {
-        // Set default password using card_number or fallback to pin
-        $defaultPassword = $data['card_number'] ?? $data['pin'];
+        // Set default password using device_password, card_number or fallback to pin
+        $defaultPassword = ! empty($data['device_password'])
+            ? $data['device_password']
+            : ($data['card_number'] ?? $data['pin']);
         $data['password'] = Hash::make($defaultPassword);
         
         // Force the user to change password upon first login

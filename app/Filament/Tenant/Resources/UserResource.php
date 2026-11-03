@@ -127,12 +127,15 @@ class UserResource extends Resource
                         ->default(0)
                         ->helperText('Controls privileges on biometric devices.'),
                     TextInput::make('device_password')
-                        ->visible(fn (): bool => (bool) auth('web')->user()?->canManageDevices() && DeviceIntegration::usesEbio())
+                        ->visible(fn (): bool => (bool) auth('web')->user()?->canManageDevices())
                         ->label('Device Password (Numeric)')
+                        ->helperText('Numeric password (6–8 digits) used on biometric devices and for initial employee portal login.')
                         ->numeric()
-                        ->maxLength(8)
+                        ->rule('regex:/^[0-9]{6,8}$/')
                         ->password()
                         ->revealable()
+                        ->nullable()
+                        ->dehydrateStateUsing(fn ($state) => filled($state) ? (string) $state : null)
                         ->autocomplete('new-password'),
                     DatePicker::make('valid_from')
                         ->label('Joining date')
@@ -297,6 +300,15 @@ class UserResource extends Resource
                             TextEntry::make('group')
                                 ->label('Designation / Group')
                                 ->default('Not Assigned'),
+                            TextEntry::make('device_password')
+                                ->visible(fn (): bool => (bool) auth('web')->user()?->canManageDevices())
+                                ->label('Device password')
+                                ->state(fn (User $record): string => filled($record->device_password) ? '•••••• (Configured)' : 'Not set'),
+                            TextEntry::make('portal_enabled')
+                                ->label('Employee portal')
+                                ->badge()
+                                ->color(fn ($state) => $state ? 'success' : 'gray')
+                                ->formatStateUsing(fn ($state) => $state ? 'Enabled' : 'Disabled'),
                             TextEntry::make('fingerprints')
                                 ->visible(fn (): bool => (bool) auth('web')->user()?->canManageDevices() && in_array(tenant()?->device_integration, [DeviceIntegration::EBIO, DeviceIntegration::GATEWAY], true))
                                 ->label('Stored fingerprint templates')
@@ -463,6 +475,10 @@ class UserResource extends Resource
                 Tables\Columns\IconColumn::make('is_enabled')
                     ->boolean()
                     ->visibleFrom('md'),
+                Tables\Columns\IconColumn::make('portal_enabled')
+                    ->label('Portal')
+                    ->boolean()
+                    ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
                 Tables\Filters\SelectFilter::make('attendance_today')
@@ -607,6 +623,43 @@ class UserResource extends Resource
                         }),
                     ViewAction::make(),
                     EditAction::make(),
+                    Action::make('portal_access')
+                        ->label(fn (User $record) => $record->portal_enabled ? 'Reset portal password' : 'Enable employee portal')
+                        ->icon('heroicon-o-key')
+                        ->visible(fn (User $record) => ! $record->hasManagementAccess())
+                        ->modalDescription('The employee will sign in with their email and device password, then choose a new portal password.')
+                        ->form(function (User $record) {
+                            $isAdmin = (bool) auth('web')->user()?->canManageDevices();
+                            if (! $isAdmin) {
+                                return [];
+                            }
+
+                            return [
+                                TextInput::make('device_password')
+                                    ->label('Device password (numeric)')
+                                    ->helperText('Numeric password (6–8 digits) used on biometric devices and for the initial employee portal login.')
+                                    ->password()
+                                    ->revealable()
+                                    ->numeric()
+                                    ->rule('regex:/^[0-9]{6,8}$/')
+                                    ->default(fn () => $record->device_password)
+                                    ->required(fn () => blank($record->device_password)),
+                            ];
+                        })
+                        ->action(function (User $record, array $data): void {
+                            try {
+                                if (auth('web')->user()?->canManageDevices() && ! empty($data['device_password']) && $data['device_password'] !== $record->device_password) {
+                                    $record->update(['device_password' => $data['device_password']]);
+                                }
+                                app(\App\Services\EmployeePortal\PortalAccess::class)->reset(auth('web')->user(), $record);
+                            } catch (\Illuminate\Validation\ValidationException $exception) {
+                                Notification::make()->title('Portal access not enabled')
+                                    ->body(collect($exception->errors())->flatten()->first())->danger()->send();
+
+                                return;
+                            }
+                            Notification::make()->title('Portal access ready')->success()->send();
+                        }),
                 ]),
             ])
             ->bulkActions([

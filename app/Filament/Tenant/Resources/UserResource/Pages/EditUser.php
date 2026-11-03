@@ -34,9 +34,29 @@ class EditUser extends EditRecord
                 ->label(fn () => $this->record->portal_enabled ? 'Reset portal password' : 'Enable employee portal')
                 ->visible(fn () => ! $this->record->hasManagementAccess())
                 ->modalDescription('The employee will sign in with their email and device password, then choose a new portal password.')
-                ->requiresConfirmation()
-                ->action(function () {
+                ->form(function () {
+                    $isAdmin = (bool) auth('web')->user()?->canManageDevices();
+                    if (! $isAdmin) {
+                        return [];
+                    }
+
+                    return [
+                        \Filament\Forms\Components\TextInput::make('device_password')
+                            ->label('Device password (numeric)')
+                            ->helperText('Numeric password (6–8 digits) used on biometric devices and for the initial employee portal login.')
+                            ->password()
+                            ->revealable()
+                            ->numeric()
+                            ->rule('regex:/^[0-9]{6,8}$/')
+                            ->default(fn () => $this->record->device_password)
+                            ->required(fn () => blank($this->record->device_password)),
+                    ];
+                })
+                ->action(function (array $data) {
                     try {
+                        if (auth('web')->user()?->canManageDevices() && ! empty($data['device_password']) && $data['device_password'] !== $this->record->device_password) {
+                            $this->record->update(['device_password' => $data['device_password']]);
+                        }
                         app(PortalAccess::class)->reset(auth()->user(), $this->record);
                     } catch (ValidationException $exception) {
                         Notification::make()->title('Portal access not enabled')
