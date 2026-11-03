@@ -43,7 +43,7 @@ class AttendanceDaysTable
         ])->filters([
             Filter::make('work_date')->schema([DatePicker::make('from')->label('From date'), DatePicker::make('to')->label('To date')->afterOrEqual('from')])
                 ->query(fn ($query, array $data) => $query->when($data['from'] ?? null, fn ($q, $v) => $q->whereDate('work_date', '>=', $v))->when($data['to'] ?? null, fn ($q, $v) => $q->whereDate('work_date', '<=', $v))),
-            SelectFilter::make('source')->options(['device' => 'Device', 'manual' => 'Manual', 'mixed' => 'Device + manual correction']),
+            SelectFilter::make('source')->options(['device' => 'Device', 'portal' => 'Includes portal punches', 'manual' => 'Manual', 'mixed' => 'Device + manual correction']),
             SelectFilter::make('shift')->label('Shift')->options(fn () => Schedule::orderBy('name')->pluck('name', 'id'))->searchable()
                 ->query(fn ($query, array $data) => $query->when($data['value'] ?? null, fn ($q, $v) => $q->whereHas('occurrences', fn ($occ) => $occ->where('schedule_id', $v)))),
         ])->recordActions([

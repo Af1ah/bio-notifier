@@ -27,10 +27,10 @@ class EmployeePanelProvider extends PanelProvider
 {
     public function panel(Panel $panel): Panel
     {
-        $panel = TenantPanel::make()->id('employee')->path('{tenant}/employee')->authGuard('employee')->login(Login::class)
+        $panel = TenantPanel::make()->id('employee')->path('{tenant}/ess')->authGuard('employee')->login(Login::class)
             ->brandName(fn () => tenant()?->name ?? 'BIO-Notifier')
             ->favicon(asset('icon-192-v3.png'))->colors(['primary' => Color::Amber])
-            ->pages([Pages\Dashboard::class, Pages\Calendar::class, Pages\Attendance::class, Pages\LeaveRequests::class, Pages\ChangePassword::class])
+            ->pages([Pages\Dashboard::class, Pages\Calendar::class, Pages\Attendance::class, Pages\LeaveRequests::class, Pages\SalarySlips::class, Pages\ChangePassword::class])
             ->userMenuItems([
                 Action::make('password')->label('Change password')->icon('heroicon-o-key')
                     ->url(fn () => Pages\ChangePassword::getUrl(['tenant' => tenant('shortname')], panel: 'employee')),
@@ -43,6 +43,6 @@ class EmployeePanelProvider extends PanelProvider
                 SubstituteBindings::class, DisableBladeIconComponents::class, DispatchServingFilamentEvent::class])
             ->authMiddleware([Authenticate::class, RequireEmployeePasswordChange::class], isPersistent: true);
 
-        return PanelPwa::configure($panel, 'employee');
+        return PanelPwa::configure($panel, 'ess');
     }
 }

@@ -42,7 +42,7 @@ return [
     'guards' => [
         'employee' => [
             'driver' => 'tenant-session',
-            'provider' => 'users',
+            'provider' => 'employees',
         ],
 
         'web' => [
@@ -79,6 +79,11 @@ return [
     */
 
     'providers' => [
+        'employees' => [
+            'driver' => 'employee-eloquent',
+            'model' => User::class,
+        ],
+
         'users' => [
             'driver' => 'eloquent',
             'model' => env('AUTH_MODEL', User::class),

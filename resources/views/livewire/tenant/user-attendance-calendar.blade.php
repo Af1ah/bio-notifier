@@ -33,7 +33,7 @@
 
 <div x-data="{ details: null }" class="user-attendance-calendar">
 <style>
-    .user-attendance-calendar { margin-top: 1rem; }
+    .user-attendance-calendar { margin: 1rem auto 0; width: 100%; max-width: 48rem; }
     .user-attendance-calendar__scroll { overflow-x: auto; padding: .25rem; }
     .user-attendance-calendar__toolbar { display: grid; grid-template-columns: 2.5rem minmax(0, 1fr) 2.5rem; align-items: center; gap: .75rem; margin-bottom: 1rem; }
     .user-attendance-calendar__title { margin: 0; color: inherit; font-size: 1.125rem; font-weight: 700; text-align: center; }

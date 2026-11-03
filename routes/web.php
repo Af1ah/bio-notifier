@@ -127,6 +127,12 @@ Route::get('/magic-login', function () {
 })->middleware(['web', InitializeTenancyByDomain::class]);
 
 // Redirect /{tenant} to /{tenant}/admin automatically
+Route::get('/{tenant}/employee/{page?}', fn (string $tenant, ?string $page = null) => redirect('/'.$tenant.'/ess'.($page ? '/'.$page : ''), 308))
+    ->where('page', 'login|calendar|attendance|leave-requests|salary-slips|change-password');
+
 Route::get('/{tenant}', function ($tenant) {
     return redirect('/'.$tenant.'/admin');
-})->where('tenant', '^(?!master|manifest\.json|iclock|magic-login|api|livewire|_debugbar).*$');
+})->where('tenant', '^(?!master|manifest\.json|iclock|magic-login|api|livewire|_debugbar)[^/]+$');
+
+Route::get('/{tenant}/punch-photos/{punch}', \App\Http\Controllers\PunchPhotoController::class)
+    ->whereNumber('punch')->middleware(InitializeTenancyByShortname::class)->name('tenant.punch-photo');

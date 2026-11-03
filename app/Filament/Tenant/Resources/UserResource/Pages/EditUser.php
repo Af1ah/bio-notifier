@@ -31,7 +31,7 @@ class EditUser extends EditRecord
             EndShiftAssignmentAction::make('user'),
             Actions\ViewAction::make(),
             Actions\Action::make('reset_password')
-                ->label(fn () => $this->record->portal_enabled ? 'Reset portal password' : 'Enable employee portal')
+                ->label('Reset portal password')
                 ->visible(fn () => ! $this->record->hasManagementAccess())
                 ->modalDescription('The employee will sign in with their email and device password, then choose a new portal password.')
                 ->form(function () {

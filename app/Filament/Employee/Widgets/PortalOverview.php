@@ -26,6 +26,14 @@ class PortalOverview extends StatsOverviewWidget
         $date = today(TenantTimezone::get());
         $day = AttendanceDay::with('approvals')->where('user_id', $employee->id)->whereDate('work_date', $date)->first();
         $display = AttendanceDayDisplay::forDay($day);
+        $monthly = ['present' => 0, 'absent' => 0, 'half_day' => 0];
+        foreach (AttendanceDay::with('approvals')->where('user_id', $employee->id)
+            ->whereBetween('work_date', [$date->copy()->startOfMonth()->toDateString(), $date->toDateString()])->get() as $record) {
+            $status = AttendanceDayDisplay::forDay($record)['status'];
+            if (array_key_exists($status, $monthly)) {
+                $monthly[$status]++;
+            }
+        }
         $parameters = ['tenant' => tenant('shortname')];
 
         return [
@@ -36,6 +44,13 @@ class PortalOverview extends StatsOverviewWidget
                 ->description('Waiting for review')->url(Attendance::getUrl($parameters, panel: 'employee')),
             Stat::make('Leave requests', EmployeeLeave::where('user_id', $employee->id)->where('state', 'pending')->count())
                 ->description('Waiting for review')->url(LeaveRequests::getUrl($parameters, panel: 'employee')),
+            ...collect(['present' => 'Present', 'absent' => 'Absent', 'half_day' => 'Half days'])->map(
+                fn ($label, $status) => Stat::make($label, $monthly[$status])->description($date->format('F Y').' · to date')
+                    ->color(match ($status) {
+                        'present' => 'success', 'absent' => 'danger', default => 'warning'
+                    })
+                    ->url(Attendance::getUrl($parameters, panel: 'employee'))
+            )->values()->all(),
         ];
     }
 }

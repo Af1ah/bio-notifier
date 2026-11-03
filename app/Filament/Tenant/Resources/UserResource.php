@@ -307,8 +307,9 @@ class UserResource extends Resource
                             TextEntry::make('portal_enabled')
                                 ->label('Employee portal')
                                 ->badge()
+                                ->state(fn (User $record) => $record->canAccessEmployeePortal())
                                 ->color(fn ($state) => $state ? 'success' : 'gray')
-                                ->formatStateUsing(fn ($state) => $state ? 'Enabled' : 'Disabled'),
+                                ->formatStateUsing(fn ($state) => $state ? 'Available' : 'Unavailable'),
                             TextEntry::make('fingerprints')
                                 ->visible(fn (): bool => (bool) auth('web')->user()?->canManageDevices() && in_array(tenant()?->device_integration, [DeviceIntegration::EBIO, DeviceIntegration::GATEWAY], true))
                                 ->label('Stored fingerprint templates')
@@ -477,6 +478,7 @@ class UserResource extends Resource
                     ->visibleFrom('md'),
                 Tables\Columns\IconColumn::make('portal_enabled')
                     ->label('Portal')
+                    ->state(fn (User $record) => $record->canAccessEmployeePortal())
                     ->boolean()
                     ->toggleable(isToggledHiddenByDefault: true),
             ])
@@ -624,7 +626,7 @@ class UserResource extends Resource
                     ViewAction::make(),
                     EditAction::make(),
                     Action::make('portal_access')
-                        ->label(fn (User $record) => $record->portal_enabled ? 'Reset portal password' : 'Enable employee portal')
+                        ->label('Reset portal password')
                         ->icon('heroicon-o-key')
                         ->visible(fn (User $record) => ! $record->hasManagementAccess())
                         ->modalDescription('The employee will sign in with their email and device password, then choose a new portal password.')

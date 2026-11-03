@@ -66,6 +66,13 @@ class User extends Authenticatable implements FilamentUser
             abort_if($actor && $user->hasManagementAccess(), 403);
 
             $connection = $user->getConnection();
+            if ($connection->getSchemaBuilder()->hasTable('portal_punches') && $connection->table('portal_punches')->where('user_id', $user->id)->exists()) {
+                throw ValidationException::withMessages(['employee' => 'This employee has retained punch requests. Disable the employee instead of deleting their history.']);
+            }
+            if ($connection->getSchemaBuilder()->hasColumn('attendance_logs', 'portal_user_id')
+                && $connection->table('attendance_logs')->where('portal_user_id', $user->id)->exists()) {
+                throw ValidationException::withMessages(['employee' => 'This employee has retained portal punches. Disable the employee instead of deleting their history.']);
+            }
             if (! $connection->getSchemaBuilder()->hasTable('manual_attendance_entries')) {
                 return;
             }
@@ -207,8 +214,9 @@ class User extends Authenticatable implements FilamentUser
 
     public function canAccessEmployeePortal(): bool
     {
-        return (bool) $this->portal_enabled && $this->is_enabled && ! $this->is_system_account
-            && filled($this->email) && filled($this->password);
+        return $this->is_enabled && ! $this->is_system_account && ! $this->hasManagementAccess()
+            && filled($this->email)
+            && ($this->portal_enabled ? filled($this->password) : mb_strlen((string) $this->device_password) >= 6);
     }
 
     public function hasManagementAccess(): bool

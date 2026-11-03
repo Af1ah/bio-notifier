@@ -33,8 +33,8 @@ class AttendanceLog extends Model
     {
         parent::boot();
 
-        static::updating(fn () => throw new \LogicException('Device punches are immutable. Submit a manual correction.'));
-        static::deleting(fn () => throw new \LogicException('Device punches are retained as source evidence.'));
+        static::updating(fn () => throw new \LogicException('Attendance punches are immutable. Submit a manual correction.'));
+        static::deleting(fn () => throw new \LogicException('Attendance punches are retained as source evidence.'));
 
         static::created(function ($log) {
             $user = $log->user;
@@ -122,6 +122,7 @@ class AttendanceLog extends Model
             1 => 'Fingerprint',
             2 => 'Card',
             15 => 'Face',
+            254 => 'Employee portal',
             default => 'Unknown',
         };
     }

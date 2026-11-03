@@ -56,10 +56,7 @@ class OrganisationsTable
                     ->label('Login')
                     ->icon('heroicon-o-arrow-right-on-rectangle')
                     ->color('success')
-                    ->url(fn (Organisation $record) => route('master.company-login', ['organisation' => $record->id]))
-                    ->postToUrl()
-                    ->extraAttributes(['formtarget' => '_blank'])
-                    ->openUrlInNewTab(),
+                    ->action(fn (Organisation $record) => redirect(app(\App\Services\QuickLoginService::class)->issue($record))),
                 Action::make('manage_admins')
                     ->label('Manage access')
                     ->icon('heroicon-o-users')

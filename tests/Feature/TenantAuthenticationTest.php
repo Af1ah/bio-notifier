@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Filament\Master\Resources\Organisations\Pages\ListOrganisations;
 use App\Filament\Master\Resources\Organisations\Pages\ManageOrganisationAdmins;
 use App\Filament\Tenant\Pages\LeaveBalances;
 use App\Filament\Tenant\Resources\PayrollTemplates\PayrollTemplateResource;
@@ -374,5 +375,19 @@ class TenantAuthenticationTest extends TestCase
 
         $this->withCookie($cookieName, $cookieValue)->get('/api/auth-probe/beta')
             ->assertOk()->assertJson(['id' => null]);
+    }
+
+    public function test_master_company_login_button_issues_grant_and_redirects_through_native_action(): void
+    {
+        Livewire::setUpdateRoute(fn ($handle) => Route::post('/livewire/master-login-test', $handle)->middleware('web'));
+        Filament::setCurrentPanel(Filament::getPanel('master'));
+        $page = Livewire::test(ListOrganisations::class);
+        $this->assertSame(0, DB::table('quick_login_grants')->count());
+        $page->callTableAction('login_as_tenant', Organisation::findOrFail('organisation-a'))->assertRedirect();
+        $url = $page->effects['redirect'];
+        $this->assertStringContainsString('/alpha/impersonate?', $url);
+        $this->get($url)->assertRedirect('/alpha/admin');
+        $this->assertAuthenticated('web');
+        $this->assertSame(1, DB::table('quick_login_grants')->whereNotNull('used_at')->count());
     }
 }

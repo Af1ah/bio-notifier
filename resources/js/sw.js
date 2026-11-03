@@ -26,7 +26,7 @@ registerRoute(
 
 // Cache images and icons
 registerRoute(
-  ({ request }) => request.destination === 'image',
+  ({ request, url }) => request.destination === 'image' && url.origin === self.location.origin && !url.pathname.includes('/punch-photos/'),
   new CacheFirst({
     cacheName: 'images',
     plugins: [

@@ -83,6 +83,7 @@ class AttendanceLogResource extends Resource
         return $table
             ->columns([
                 Tables\Columns\TextColumn::make('device.name')
+                    ->placeholder(fn (AttendanceLog $record) => $record->portal_user_id ? 'Employee portal' : '—')
                     ->sortable(),
                 Tables\Columns\TextColumn::make('pin')
                     ->label('User PIN')

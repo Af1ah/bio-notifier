@@ -6,7 +6,6 @@ use App\Filament\Employee\Actions\RequestCorrectionAction;
 use App\Models\AttendanceDay;
 use App\Services\Attendance\AttendanceDayDisplay;
 use App\Services\EmployeePortal\PortalAccess;
-use App\Services\Support\TenantTimezone;
 use Filament\Actions\ActionGroup;
 use Filament\Forms\Components\DatePicker;
 use Filament\Tables\Columns\TextColumn;
@@ -33,7 +32,7 @@ class Attendance extends PortalPage implements HasTable
 
     public function table(Table $table): Table
     {
-        return $table->query(fn () => AttendanceDay::where('user_id', PortalAccess::employee()->id)->with('approvals'))
+        return $table->query(fn () => AttendanceDay::where('user_id', PortalAccess::employee()->id)->whereNotIn('status', ['off', 'holiday'])->with('approvals'))
             ->columns([
                 TextColumn::make('work_date')->label('Date')->date('d M Y')->sortable(),
                 TextColumn::make('status')->label('Attendance')->formatStateUsing(fn (AttendanceDay $record) => AttendanceDayDisplay::forDay($record)['label'])
@@ -44,8 +43,8 @@ class Attendance extends PortalPage implements HasTable
                 TextColumn::make('approvals.state')->label('Review')->listWithLineBreaks()->visibleFrom('md'),
             ])->filters([
                 Filter::make('date')->schema([
-                    DatePicker::make('from')->default(fn () => today(TenantTimezone::get())->startOfMonth()->toDateString())->label('From'),
-                    DatePicker::make('to')->default(fn () => today(TenantTimezone::get())->toDateString())->label('To')->afterOrEqual('from'),
+                    DatePicker::make('from')->label('From'),
+                    DatePicker::make('to')->label('To')->afterOrEqual('from'),
                 ])->query(function ($query, array $data) {
                     $data = Validator::make($data, ['from' => 'nullable|date_format:Y-m-d', 'to' => 'nullable|date_format:Y-m-d'.(filled($data['from'] ?? null) ? '|after_or_equal:from' : '')])->validate();
 

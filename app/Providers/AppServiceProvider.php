@@ -29,6 +29,7 @@ use App\Observers\QueuedActionNotificationObserver;
 use App\Policies\DeviceManagementPolicy;
 use App\Services\Devices\Gateway\GatewayMonitor;
 use App\Services\Devices\Gateway\Queue\GatewayDatabaseConnector;
+use App\Services\EmployeePortal\EmployeeUserProvider;
 use App\Services\Support\TenantTimezone;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Tables\Columns\TextColumn;
@@ -116,6 +117,7 @@ class AppServiceProvider extends ServiceProvider
                 }
             }
         });
+        Auth::provider('employee-eloquent', fn ($app, array $config) => new EmployeeUserProvider($app['hash'], $config['model']));
         Auth::extend('tenant-session', function ($app, $name, array $config) {
             // IDs in different tenant databases can overlap. Scope both the login
             // session key and the remember cookie to the owning organisation.
