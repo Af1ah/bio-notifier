@@ -2,6 +2,7 @@
 
 namespace App\Filament\Employee\Widgets;
 
+use App\Models\EmployeePortalSetting;
 use App\Models\PortalPunch;
 use App\Models\WorkLocation;
 use App\Services\EmployeePortal\GeofencedPunchService;
@@ -13,12 +14,16 @@ use Filament\Schemas\Contracts\HasSchemas;
 use Filament\Schemas\Schema;
 use Filament\Widgets\Widget;
 use Illuminate\Validation\ValidationException;
+use Livewire\Attributes\Locked;
 
 class LocationPunch extends Widget implements HasSchemas
 {
     use InteractsWithSchemas;
 
     public ?array $data = [];
+
+    #[Locked]
+    public bool $geofenceEnabled = true;
 
     protected string $view = 'filament.employee.widgets.location-punch';
 
@@ -29,6 +34,7 @@ class LocationPunch extends Widget implements HasSchemas
     public function boot(): void
     {
         PortalAccess::employee();
+        $this->geofenceEnabled = EmployeePortalSetting::geofencingEnabled();
     }
 
     public function mount(): void
@@ -64,8 +70,9 @@ class LocationPunch extends Widget implements HasSchemas
 
             return false;
         }
+        $this->dispatch('portal-punch-submitted');
         Notification::make()->title($log->kind === 'in' ? 'Check-in requested' : 'Checkout requested')
-            ->body($log->punched_at->format('d M, h:i A').' · '.$log->evidence['location_name'])->success()->send();
+            ->body($log->punched_at->format('d M, h:i A').(filled($log->evidence['location_name'] ?? null) ? ' · '.$log->evidence['location_name'] : ''))->success()->send();
 
         return true;
     }

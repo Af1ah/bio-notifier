@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Filament\Tenant\Resources\EmployeeLeaves\Pages\ListEmployeeLeaves;
 use App\Filament\Tenant\Resources\LeavePolicies\Pages\CreateLeavePolicy;
 use App\Filament\Tenant\Resources\PayrollTemplates\Pages\ManagePayrollTemplates;
+use App\Filament\Tenant\Resources\Schedules\Pages\ListSchedules;
 use App\Filament\Tenant\Resources\TaskGroups\Pages\CreateTaskGroup;
 use App\Models\EmployeeLeave;
 use App\Models\LeavePolicy;
@@ -62,6 +63,26 @@ class BetaOrganisationActionsTest extends TestCase
         $this->assertNotEmpty($page->get('rangeSignature'));
         $page->callMountedAction()->assertHasNoErrors()->assertNotified('2 leave dates saved');
         $this->assertSame(2, EmployeeLeave::count());
+    }
+
+    public function test_shift_list_marks_only_the_default_effective_today(): void
+    {
+        $attributes = ['type' => 'regular', 'valid_from' => '2026-08-01', 'status' => true, 'rules' => ['start_time' => '09:00', 'end_time' => '17:00', 'weekdays' => [1, 2, 3, 4, 5], 'half_day_minutes' => 240, 'full_day_minutes' => 480]];
+        $current = Schedule::create(['name' => 'General'] + $attributes);
+        $future = Schedule::create(['name' => 'Night'] + $attributes);
+        app(ShiftRuleService::class)->sync($current);
+        app(ShiftRuleService::class)->sync($future);
+        app(ShiftAssignmentService::class)->setDefault($current, '2026-08-01');
+        app(ShiftAssignmentService::class)->setDefault($future, '2026-11-01');
+
+        $records = Livewire::test(ListSchedules::class)->instance()->getTableRecords()->keyBy('id');
+        $this->assertEquals(1, $records[$current->id]->current_default);
+        $this->assertNull($records[$future->id]->current_default);
+
+        Carbon::setTestNow('2026-11-02');
+        $records = Livewire::test(ListSchedules::class)->instance()->getTableRecords()->keyBy('id');
+        $this->assertNull($records[$current->id]->current_default);
+        $this->assertEquals(1, $records[$future->id]->current_default);
     }
 
     public function test_policy_form_saves_multiple_resets_and_work_month_expiry(): void

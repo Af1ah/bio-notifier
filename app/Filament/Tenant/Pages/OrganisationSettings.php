@@ -2,9 +2,11 @@
 
 namespace App\Filament\Tenant\Pages;
 
+use App\Models\EmployeePortalSetting;
 use App\Services\Support\TenantCurrency;
 use App\Services\Support\TenantTimezone;
 use Filament\Forms\Components\Select;
+use Filament\Forms\Components\Toggle;
 use Filament\Forms\Concerns\InteractsWithForms;
 use Filament\Forms\Contracts\HasForms;
 use Filament\Notifications\Notification;
@@ -37,12 +39,16 @@ class OrganisationSettings extends Page implements HasForms
     public function mount(): void
     {
         abort_unless(static::canAccess(), 403);
-        $this->form->fill(['timezone' => TenantTimezone::get(), 'currency' => TenantCurrency::get()]);
+        $this->form->fill(['timezone' => TenantTimezone::get(), 'currency' => TenantCurrency::get(), 'geofencing_enabled' => EmployeePortalSetting::geofencingEnabled()]);
     }
 
     public function form(Schema $schema): Schema
     {
         return $schema->components([
+            Section::make('Employee attendance')->schema([
+                Toggle::make('geofencing_enabled')->label('Require a work location for employee punches')
+                    ->helperText('Employees must be inside an active work location when this is enabled.'),
+            ]),
             Section::make('Organisation currency')
                 ->description('Used automatically for new salary, overtime and leave-payment settings. Saved payroll history keeps its recorded currency.')
                 ->schema([
@@ -63,6 +69,7 @@ class OrganisationSettings extends Page implements HasForms
         abort_unless(static::canAccess(), 403);
         $data = $this->form->getState();
         tenant()->update(['timezone' => $data['timezone'], 'currency' => $data['currency']]);
+        EmployeePortalSetting::query()->whereKey(1)->firstOrFail()->update(['geofencing_enabled' => (bool) $data['geofencing_enabled']]);
         Notification::make()->title('Organisation settings saved')->success()->send();
     }
 }

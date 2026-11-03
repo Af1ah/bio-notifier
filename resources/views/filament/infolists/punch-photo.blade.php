@@ -12,7 +12,7 @@
         },
         destroy() { this.disposed = true; if (this.photo) URL.revokeObjectURL(this.photo); }
     }">
-        <img x-cloak x-show="photo" x-bind:src="photo" alt="Photo captured with the punch request" style="max-height: 18rem; max-width: 100%; border-radius: .75rem; object-fit: contain;">
+        <img x-cloak x-show="photo" x-bind:src="photo" alt="Photo captured with the punch request" style="max-height: 14rem; max-width: 100%; border-radius: .75rem; object-fit: contain;">
         <p x-show="!photo && !error" role="status" class="text-sm text-gray-500">Loading photo…</p>
         <p x-cloak x-show="error" x-text="error" role="alert" class="text-sm text-danger-600"></p>
     </div>

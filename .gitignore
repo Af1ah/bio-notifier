@@ -56,3 +56,6 @@ Thumbs.db
 # Local operational context (server addresses and deployment details).
 /docs/developer/system-handoff.md
 
+
+# Private, reusable local deployment tooling.
+/deploy-local/

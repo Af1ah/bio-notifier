@@ -5,11 +5,13 @@ export function mountPicker(element, options) {
     const hasPoint = () => options.latitude !== null && options.latitude !== '' && options.longitude !== null && options.longitude !== '';
     const map = L.map(element, { scrollWheelZoom: false });
     map.setView(hasPoint() ? [Number(options.latitude), Number(options.longitude)] : options.center, hasPoint() ? 17 : 5);
-    L.tileLayer(options.tileUrl, {
+    const tiles = L.tileLayer(options.tileUrl, {
         maxZoom: 19,
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     }).addTo(map);
     let pin, circle, disposed = false;
+    tiles.on('tileerror', () => { if (!disposed) options.onMapUnavailable(); });
+    tiles.on('tileload', () => { if (!disposed) { options.onMapAvailable(); requestAnimationFrame(() => { if (!disposed) map.invalidateSize(); }); } });
     function sync(latitude, longitude, radius) {
         if (latitude === null || latitude === '' || longitude === null || longitude === '') return;
         const point = [Number(latitude), Number(longitude)];

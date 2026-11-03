@@ -9,6 +9,7 @@ use App\Filament\Employee\Pages\LeaveRequests;
 use App\Filament\Employee\Pages\SalarySlips;
 use App\Filament\Employee\Widgets\LocationPunch;
 use App\Filament\Employee\Widgets\PortalOverview;
+use App\Filament\Tenant\Pages\OrganisationSettings;
 use App\Filament\Tenant\Resources\EmployeeLeaves\Tables\EmployeeLeavesTable;
 use App\Filament\Tenant\Resources\PortalPunches\Pages\ManagePortalPunches;
 use App\Filament\Tenant\Resources\WorkLocations\Pages\ManageWorkLocations;
@@ -19,6 +20,7 @@ use App\Models\AttendanceDay;
 use App\Models\AttendanceLog;
 use App\Models\Branch;
 use App\Models\EmployeeLeave;
+use App\Models\EmployeePortalSetting;
 use App\Models\LeaveType;
 use App\Models\ManualAttendanceEntry;
 use App\Models\Organisation;
@@ -389,6 +391,8 @@ class EmployeePortalTest extends TestCase
 
     private function fence(): WorkLocation
     {
+        EmployeePortalSetting::whereKey(1)->update(['geofencing_enabled' => true]);
+
         return WorkLocation::create(['name' => 'Office', 'latitude' => 11.2588, 'longitude' => 75.7804, 'radius_meters' => 100, 'is_active' => true]);
     }
 
@@ -616,12 +620,16 @@ class EmployeePortalTest extends TestCase
         $this->actingAs($this->manager, 'web');
         Filament::setCurrentPanel(Filament::getPanel('tenant'));
         $page = Livewire::test(ManagePortalPunches::class)->assertCanSeeTableRecords([$request]);
-        $page->mountTableAction('approve', $request)->assertMountedActionModalSee('Captured photo')->assertMountedActionModalSee('GPS accuracy');
+        $page->mountTableAction('approve', $request)->assertMountedActionModalSee('Captured photo')
+            ->assertMountedActionModalSee('GPS accuracy')->assertMountedActionModalSee('5.00')
+            ->assertMountedActionModalDontSee('Reviewed by');
         $page->unmountAction();
         $page->callTableAction('reject', $request, data: ['review_note' => 'Photo does not show the employee'])->assertHasNoActionErrors();
         $this->assertSame('rejected', $request->fresh()->state);
         $this->assertSame(0, AttendanceLog::count());
         Queue::assertNothingPushed();
+        $page->filterTable('state', 'rejected')->mountTableAction('view', $request->fresh())
+            ->assertMountedActionModalSee('Reviewed by')->assertMountedActionModalSee('Photo does not show the employee');
         $this->actingAs($this->employee, 'web');
         Livewire::test(ManagePortalPunches::class)->assertForbidden();
     }
@@ -671,5 +679,141 @@ class EmployeePortalTest extends TestCase
             ->call('save')->assertHasNoFormErrors();
         $this->assertTrue(Hash::check('Abcd123!', $this->employee->fresh()->password));
         $this->assertFalse($this->employee->fresh()->requires_password_change);
+    }
+
+    public function test_geofence_disabled_keeps_gps_without_requiring_a_work_location(): void
+    {
+        $this->enable();
+        Queue::fake();
+        $location = $this->fence();
+        EmployeePortalSetting::whereKey(1)->update(['geofencing_enabled' => false]);
+        $data = $this->gps($location);
+        unset($data['location_id']);
+        $data['latitude'] = 40.7128;
+        $data['longitude'] = -74.006;
+        $data['accuracy'] = 15000;
+        $request = app(GeofencedPunchService::class)->record($data);
+        $this->assertFalse($request->evidence['geofencing_enabled']);
+        $this->assertNull($request->work_location_id);
+        $this->assertEquals(40.7128, $request->evidence['latitude']);
+        $this->assertEquals(-74.006, $request->evidence['longitude']);
+        $this->assertEquals(15000, $request->evidence['accuracy_meters']);
+        $this->assertSame('pending', $request->state);
+        $this->assertSame(0, AttendanceLog::count());
+        $this->actingAs($this->manager, 'web');
+        Filament::setCurrentPanel(Filament::getPanel('tenant'));
+        Livewire::test(ManagePortalPunches::class)->mountTableAction('approve', $request)
+            ->assertMountedActionModalSee('Not required')->assertMountedActionModalSee('Captured photo')
+            ->assertMountedActionModalSee('40.7128');
+        app(PunchApprovalService::class)->decide($request, $this->manager, true);
+        $this->assertSame(1, AttendanceLog::count());
+    }
+
+    public function test_server_enforces_the_current_geofence_setting_even_for_stale_forms(): void
+    {
+        $this->enable();
+        Queue::fake();
+        $location = $this->fence();
+        $data = $this->gps($location);
+        unset($data['location_id']);
+        try {
+            app(GeofencedPunchService::class)->record($data);
+            $this->fail('GPS was not required');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('location_id', $exception->errors());
+        }
+        $this->assertSame(0, PortalPunch::count());
+    }
+
+    public function test_location_is_required_even_when_geofencing_is_disabled(): void
+    {
+        $this->enable();
+        $data = $this->gps($this->fence());
+        EmployeePortalSetting::whereKey(1)->update(['geofencing_enabled' => false]);
+        unset($data['latitude']);
+        try {
+            app(GeofencedPunchService::class)->record($data);
+            $this->fail('Location was not required');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('latitude', $exception->errors());
+        }
+    }
+
+    public function test_pending_check_in_shows_present_without_approving_attendance(): void
+    {
+        $this->enable();
+        Queue::fake();
+        $request = app(GeofencedPunchService::class)->record($this->gps($this->fence()));
+        $widget = Livewire::test(PortalOverview::class)->instance();
+        $stats = (new \ReflectionMethod($widget, 'getStats'))->invoke($widget);
+        $this->assertSame('Present', $stats[0]->getValue());
+        $this->assertSame('Pending approval', $stats[0]->getDescription());
+        $this->assertSame('pending', $request->state);
+        $this->assertSame(0, AttendanceLog::count());
+    }
+
+    public function test_hr_can_toggle_geofencing_in_organisation_settings(): void
+    {
+        $this->actingAs($this->manager, 'web');
+        Filament::setCurrentPanel(Filament::getPanel('tenant'));
+        $this->fence();
+        Livewire::test(OrganisationSettings::class)
+            ->fillForm(['geofencing_enabled' => false])->call('save')->assertHasNoFormErrors();
+        $this->assertFalse(EmployeePortalSetting::geofencingEnabled());
+        Livewire::test(OrganisationSettings::class)
+            ->fillForm(['geofencing_enabled' => true])->call('save')->assertHasNoFormErrors();
+        $this->assertTrue(EmployeePortalSetting::geofencingEnabled());
+    }
+
+    public function test_attendance_review_filters_are_scoped_to_the_employee(): void
+    {
+        $this->enable();
+        $mine = AttendanceDay::create(['user_id' => $this->employee->id, 'work_date' => today(), 'status' => 'present']);
+        $other = AttendanceDay::create(['user_id' => $this->manager->id, 'work_date' => today(), 'status' => 'present']);
+        $mine->approvals()->create(['type' => 'overtime', 'state' => 'pending', 'calculation_revision' => 1, 'proposal' => []]);
+        $other->approvals()->create(['type' => 'attendance', 'state' => 'pending', 'calculation_revision' => 1, 'proposal' => []]);
+        Livewire::test(Attendance::class)->filterTable('review_state', 'pending')->assertCanSeeTableRecords([$mine])->assertCanNotSeeTableRecords([$other]);
+        Livewire::test(Attendance::class)->filterTable('review_type', 'attendance')->assertCanNotSeeTableRecords([$mine, $other]);
+        Livewire::test(Attendance::class)->filterTable('review_type', 'overtime')->assertCanSeeTableRecords([$mine])->assertCanNotSeeTableRecords([$other]);
+    }
+
+    public function test_geofence_default_preserves_existing_active_locations(): void
+    {
+        $migration = require database_path('migrations/tenant/2026_11_03_122434_create_employee_portal_settings.php');
+        WorkLocation::create(['name' => 'Existing', 'latitude' => 11, 'longitude' => 75, 'radius_meters' => 100, 'is_active' => true]);
+        $migration->down();
+        $migration->up();
+        $this->assertTrue(EmployeePortalSetting::geofencingEnabled());
+        WorkLocation::query()->update(['is_active' => false]);
+        $migration->down();
+        $migration->up();
+        $this->assertFalse(EmployeePortalSetting::geofencingEnabled());
+    }
+
+    public function test_today_summary_carries_a_check_in_across_midnight_only_for_its_night_shift(): void
+    {
+        $this->enable();
+        Queue::fake();
+        $location = $this->fence();
+        $shift = Schedule::create(['name' => 'Night', 'type' => 'regular', 'valid_from' => '2026-01-01', 'status' => true,
+            'rules' => ['start_time' => '22:00', 'end_time' => '06:00', 'end_day_offset' => 1, 'weekdays' => [0, 1, 2, 3, 4, 5, 6],
+                'full_day_minutes' => 480, 'half_day_minutes' => 240, 'earliest_arrival_minutes' => 60, 'checkout_cutoff_minutes' => 120, 'punch_method' => 'device']]);
+        app(ShiftRuleService::class)->sync($shift);
+        app(ShiftAssignmentService::class)->setDefault($shift, '2026-01-01');
+        try {
+            Carbon::setTestNow(Carbon::parse('2026-11-02 10:00:00', TenantTimezone::get()));
+            app(GeofencedPunchService::class)->record($this->gps($location));
+            Carbon::setTestNow(Carbon::parse('2026-11-03 01:00:00', TenantTimezone::get()));
+            $stats = (new \ReflectionMethod(PortalOverview::class, 'getStats'))->invoke(Livewire::test(PortalOverview::class)->instance());
+            $this->assertSame('—', $stats[0]->getValue());
+            Carbon::setTestNow(Carbon::parse('2026-11-02 22:00:00', TenantTimezone::get()));
+            app(GeofencedPunchService::class)->record($this->gps($location));
+            Carbon::setTestNow(Carbon::parse('2026-11-03 01:00:00', TenantTimezone::get()));
+            $stats = (new \ReflectionMethod(PortalOverview::class, 'getStats'))->invoke(Livewire::test(PortalOverview::class)->instance());
+            $this->assertSame('Present', $stats[0]->getValue());
+            $this->assertSame('Pending approval', $stats[0]->getDescription());
+        } finally {
+            Carbon::setTestNow();
+        }
     }
 }

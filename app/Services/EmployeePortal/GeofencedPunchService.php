@@ -2,6 +2,7 @@
 
 namespace App\Services\EmployeePortal;
 
+use App\Models\EmployeePortalSetting;
 use App\Models\PortalPunch;
 use App\Models\User;
 use App\Models\WorkLocation;
@@ -21,9 +22,7 @@ final class GeofencedPunchService
     {
         $employee = PortalAccess::employee();
         $data = Validator::make($input, [
-            'location_id' => 'required|integer', 'kind' => 'required|in:in,out', 'request_id' => 'required|uuid',
-            'latitude' => 'required|numeric|between:-90,90', 'longitude' => 'required|numeric|between:-180,180',
-            'accuracy' => 'required|numeric|gt:0|max:10000', 'captured_at' => 'required|numeric',
+            'kind' => 'required|in:in,out', 'request_id' => 'required|uuid',
             'photo' => 'required|string|max:1048600',
         ])->validate();
         $key = 'portal-punch:'.tenant('id').':'.$employee->id;
@@ -33,23 +32,38 @@ final class GeofencedPunchService
         RateLimiter::hit($key, 60);
 
         try {
-            return DB::transaction(function () use ($employee, $data) {
+            return DB::transaction(function () use ($employee, $data, $input) {
                 $employee = User::lockForUpdate()->findOrFail($employee->id);
                 abort_unless($employee->canAccessEmployeePortal() && ! $employee->requires_password_change, 403);
                 $existing = PortalPunch::where('user_id', $employee->id)->where('request_id', $data['request_id'])->first();
                 if ($existing) {
                     return $existing;
                 }
-                if (abs(now()->getTimestampMs() - $data['captured_at']) > 120000) {
+                $setting = EmployeePortalSetting::query()->whereKey(1)->sharedLock()->first();
+                if (! $setting) {
+                    throw ValidationException::withMessages(['location' => 'Attendance settings are unavailable. Contact HR or Admin.']);
+                }
+                $location = null;
+                $distance = null;
+                $gps = Validator::make($input, [
+                    'latitude' => 'required|numeric|between:-90,90',
+                    'longitude' => 'required|numeric|between:-180,180',
+                    'accuracy' => 'required|numeric|gt:0',
+                    'captured_at' => 'required|numeric',
+                ])->validate();
+                if (abs(now()->getTimestampMs() - $gps['captured_at']) > 120000) {
                     throw ValidationException::withMessages(['location' => 'Your location has expired. Please try again.']);
                 }
-                $location = WorkLocation::where('is_active', true)->sharedLock()->find($data['location_id']);
-                if (! $location) {
-                    throw ValidationException::withMessages(['location' => 'Choose an active work location.']);
-                }
-                $distance = $location->distanceTo((float) $data['latitude'], (float) $data['longitude']);
-                if ($distance + (float) $data['accuracy'] > $location->radius_meters) {
-                    throw ValidationException::withMessages(['location' => 'Move inside the work location or wait for a more accurate GPS reading.']);
+                if ($setting->geofencing_enabled) {
+                    $selection = Validator::make($input, ['location_id' => 'required|integer'])->validate();
+                    $location = WorkLocation::where('is_active', true)->sharedLock()->find($selection['location_id']);
+                    if (! $location) {
+                        throw ValidationException::withMessages(['location' => 'Choose an active work location.']);
+                    }
+                    $distance = $location->distanceTo((float) $gps['latitude'], (float) $gps['longitude']);
+                    if ($distance + (float) $gps['accuracy'] > $location->radius_meters) {
+                        throw ValidationException::withMessages(['location' => 'Move inside the work location or wait for a more accurate GPS reading.']);
+                    }
                 }
 
                 $prefix = 'data:image/jpeg;base64,';
@@ -74,14 +88,17 @@ final class GeofencedPunchService
                 PrivateBiometricPhoto::put($path, $bytes);
                 try {
                     return PortalPunch::create([
-                        'user_id' => $employee->id, 'work_location_id' => $location->id, 'request_id' => $data['request_id'],
+                        'user_id' => $employee->id, 'work_location_id' => $location?->id, 'request_id' => $data['request_id'],
                         'kind' => $data['kind'], 'punched_at' => now(TenantTimezone::get()), 'photo_path' => $path, 'state' => 'pending',
-                        'evidence' => ['source' => 'employee_portal', 'location_id' => $location->id, 'location_name' => $location->name,
-                            'branch_id' => $location->branch_id, 'pin' => $employee->pin,
-                            'latitude' => (float) $data['latitude'], 'longitude' => (float) $data['longitude'],
-                            'accuracy_meters' => (float) $data['accuracy'], 'distance_meters' => round($distance, 2),
-                            'fence_latitude' => $location->latitude, 'fence_longitude' => $location->longitude,
-                            'radius_meters' => $location->radius_meters, 'captured_at' => $data['captured_at']],
+                        'evidence' => ['source' => 'employee_portal', 'geofencing_enabled' => (bool) $setting->geofencing_enabled,
+                            'location_id' => $location?->id, 'location_name' => $location?->name,
+                            'branch_id' => $location?->branch_id, 'pin' => $employee->pin,
+                            'latitude' => isset($gps['latitude']) ? (float) $gps['latitude'] : null,
+                            'longitude' => isset($gps['longitude']) ? (float) $gps['longitude'] : null,
+                            'accuracy_meters' => isset($gps['accuracy']) ? (float) $gps['accuracy'] : null,
+                            'distance_meters' => $distance === null ? null : round($distance, 2),
+                            'fence_latitude' => $location?->latitude, 'fence_longitude' => $location?->longitude,
+                            'radius_meters' => $location?->radius_meters, 'captured_at' => $gps['captured_at'] ?? null],
                     ]);
                 } catch (\Throwable $exception) {
                     Storage::disk('local')->delete($path);
