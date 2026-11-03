@@ -6,9 +6,9 @@ User direction: mobile first, amber primary, compact controls, progressive detai
 
 ## Design foundation
 
-Use Filament 4 components and CLI-generated resources/pages as the starting point. Preserve its spacing, focus states, typography, form behaviour and accessible dialogs. Use a small shared set of component defaults and theme tokens rather than per-page overrides or a second UI framework. Use Alpine.js for local browser state and Livewire for server work.
+Use Filament 5 components and CLI-generated resources/pages as the starting point. Preserve its spacing, focus states, typography, form behaviour and accessible dialogs. Use a small shared set of component defaults and theme tokens rather than per-page overrides or a second UI framework. Use Alpine.js for local browser state and Livewire for server work.
 
-Set the panel's semantic primary color to Filament's `Color::Amber` through its `colors()` configuration. Do not scatter custom amber hex values through templates. Primary is the brand/action color; success, warning, danger and informational states keep their distinct semantics. Use neutral surfaces and restrained amber emphasis, not amber backgrounds everywhere. Validate contrast in light and dark themes; color alone never communicates state. The master and tenant panel providers already use Amber. Keep the PWA theme color aligned with the existing amber `#f59e0b`. See [Filament colors](https://filamentphp.com/docs/4.x/styling/colors).
+Set the panel's semantic primary color to Filament's `Color::Amber` through its `colors()` configuration. Do not scatter custom amber hex values through templates. Primary is the brand/action color; success, warning, danger and informational states keep their distinct semantics. Use neutral surfaces and restrained amber emphasis, not amber backgrounds everywhere. Validate contrast in light and dark themes; color alone never communicates state. The master and tenant panel providers already use Amber. Keep the PWA theme color aligned with the existing amber `#f59e0b`. See [Filament colors](https://filamentphp.com/docs/5.x/styling/colors).
 
 ## Mobile first, with content-sized layouts
 
@@ -60,7 +60,7 @@ Size columns according to their contents rather than distributing empty space eq
 
 Choose essential mobile columns by task: employee identity and status, attendance date and worked time, or payslip period and net pay. Keep bank details, extended settings and history on authorized detail views. Branch, department and task-group IDs are read-only identifiers, not manual entry fields. Wide monthly attendance matrices may use clearly indicated horizontal scrolling inside the report; keep employee identity visible where practical and avoid horizontal page scrolling.
 
-Do not fetch heavy relationships just because their columns are hidden with CSS. Use shared authorization/query boundaries with a small list projection, then load detail after navigation. Prefer Filament responsive layouts and reusable schemas; avoid duplicating business logic in separate mobile/desktop implementations. [Filament table layouts](https://filamentphp.com/docs/4.x/tables/layout) support responsive composition.
+Do not fetch heavy relationships just because their columns are hidden with CSS. Use shared authorization/query boundaries with a small list projection, then load detail after navigation. Prefer Filament responsive layouts and reusable schemas; avoid duplicating business logic in separate mobile/desktop implementations. [Filament table layouts](https://filamentphp.com/docs/5.x/tables/layout) support responsive composition.
 
 Make the record title a clear, keyboard-accessible link to its authorized read-only detail view; offer an Edit shortcut when permitted. Opening a record never saves it. Keep navigation clicks separate from the three-dot menu, selection boxes and other controls. Return to the previous filters, page and scroll position after editing where practical.
 
@@ -68,13 +68,13 @@ Make the record title a clear, keyboard-accessible link to its authorized read-o
 
 Every growing list uses server-side pagination: mobile summaries, desktop tables, related records, searches and dropdown results. Never fetch all rows and paginate in Alpine. Never use viewport hiding as a data-loading strategy. Paginate before hydration/rendering and eager-load only the relationships needed for the current page.
 
-Working default: 10 records per page, selectable 10/25/50, maximum 50. These are editable performance defaults, not final product limits. No `All` option or disabled pagination for growing datasets. Enforce limits server-side, including modified Livewire requests. Use the installed Filament 4 pagination APIs; verify available methods before changing shared table configuration.
+Working default: 10 records per page, selectable 10/25/50, maximum 50. These are editable performance defaults, not final product limits. No `All` option or disabled pagination for growing datasets. Enforce limits server-side, including modified Livewire requests. Use the installed Filament 5 pagination APIs; verify available methods before changing shared table configuration.
 
-Keep Previous/Next and the current position visible on mobile; show totals only when accurate and affordable. Use stable sorting with an ID tie-breaker. Reset to a valid page after search/filter changes or deletion. Preserve list state per tenant/resource without leaking previous-tenant data. Revalidate restored state before rendering. If expensive count queries justify simple/cursor pagination, check the installed API and accept losing exact page totals; do not invent a total. Exports are separate bounded/chunked server jobs, not a request for an unlimited UI page. See [Filament pagination](https://filamentphp.com/docs/4.x/tables/overview#pagination).
+Keep Previous/Next and the current position visible on mobile; show totals only when accurate and affordable. Use stable sorting with an ID tie-breaker. Reset to a valid page after search/filter changes or deletion. Preserve list state per tenant/resource without leaking previous-tenant data. Revalidate restored state before rendering. If expensive count queries justify simple/cursor pagination, check the installed API and accept losing exact page totals; do not invent a total. Exports are separate bounded/chunked server jobs, not a request for an unlimited UI page. See [Filament pagination](https://filamentphp.com/docs/5.x/tables/overview#pagination).
 
 ## Actions, labels and icons
 
-Place row/card secondary actions inside one three-dot overflow menu using Filament `ActionGroup`. Give its trigger an accessible name such as “Actions for Amina”; retain a clear menu label for each action. Keep destructive actions separated and confirmed. Do not crowd a row with several loose icon buttons. See [grouped actions](https://filamentphp.com/docs/4.x/actions/grouping-actions).
+Place row/card secondary actions inside one three-dot overflow menu using Filament `ActionGroup`. Give its trigger an accessible name such as “Actions for Amina”; retain a clear menu label for each action. Keep destructive actions separated and confirmed. Do not crowd a row with several loose icon buttons. See [grouped actions](https://filamentphp.com/docs/5.x/actions/grouping-actions).
 
 Keep the page's primary action visible, such as Add employee or Add attendance, and keep Save/Cancel/Confirm visible in a form. They are intentional exceptions to overflow grouping: the next step must be discoverable, especially on empty pages. Do not place all navigation or a dialog's submit action behind three dots.
 
@@ -103,7 +103,7 @@ If a material design choice needs user input, ask one focused question with the 
 
 | ID | Decision | Status / next step |
 | --- | --- | --- |
-| D-01 | Amber primary, shared Filament 4 components, compact mobile-first UI and Alpine for local state | Design direction; apply consistently as screens change. |
+| D-01 | Amber primary, shared Filament 5 components, compact mobile-first UI and Alpine for local state | Design direction; apply consistently as screens change. |
 | D-02 | Browser and installed PWA use the same layouts and permission boundaries | Preserve the existing PWA integration; live mobile validation remains separate. |
 | D-03 | 10-row default, 10/25/50 options, content-dependent tile widths | Working defaults; verify installed APIs and representative data before applying. |
 | D-04 | Essential mobile columns with details on demand | Select columns by employee, attendance, payroll or device task; preserve readable report matrices. |

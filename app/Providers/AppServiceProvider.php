@@ -2,6 +2,31 @@
 
 namespace App\Providers;
 
+use App\Models\AttendanceCalculationRun;
+use App\Models\AttendanceDay;
+use App\Models\AttendanceLog;
+use App\Models\AttendanceOccurrence;
+use App\Models\Branch;
+use App\Models\CompensatoryAward;
+use App\Models\Department;
+use App\Models\Device;
+use App\Models\DeviceCommand;
+use App\Models\EmployeeLeave;
+use App\Models\EmployeePayrollProfile;
+use App\Models\Holiday;
+use App\Models\LeaveCreditLot;
+use App\Models\LeaveLedgerEntry;
+use App\Models\LeavePolicy;
+use App\Models\LeavePolicyRevision;
+use App\Models\LeaveType;
+use App\Models\Schedule;
+use App\Models\ShiftAssignmentSet;
+use App\Models\ShiftRuleRevision;
+use App\Models\TaskGroup;
+use App\Models\User;
+use App\Observers\LeaveBalanceSummaryObserver;
+use App\Observers\QueuedActionNotificationObserver;
+use App\Policies\DeviceManagementPolicy;
 use App\Services\Devices\Gateway\GatewayMonitor;
 use App\Services\Devices\Gateway\Queue\GatewayDatabaseConnector;
 use App\Services\Support\TenantTimezone;
@@ -10,12 +35,14 @@ use Filament\Tables\Columns\TextColumn;
 use Illuminate\Queue\Events\Looping;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Support\ServiceProvider;
 use Livewire\Features\SupportFileUploads\FilePreviewController;
 use Livewire\Features\SupportFileUploads\FileUploadController;
+use Livewire\Mechanisms\HandleRequests\EndpointResolver;
 use Stancl\Tenancy\Events\TenancyEnded;
 use Stancl\Tenancy\Events\TenancyInitialized;
 
@@ -34,22 +61,22 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        foreach ([\App\Models\DeviceCommand::class, \App\Models\AttendanceCalculationRun::class] as $model) {
-            $model::observe(\App\Observers\QueuedActionNotificationObserver::class);
+        foreach ([DeviceCommand::class, AttendanceCalculationRun::class] as $model) {
+            $model::observe(QueuedActionNotificationObserver::class);
         }
-        foreach ([\App\Models\Device::class, \App\Models\DeviceCommand::class, \App\Models\AttendanceLog::class] as $model) {
-            \Illuminate\Support\Facades\Gate::policy($model, \App\Policies\DeviceManagementPolicy::class);
+        foreach ([Device::class, DeviceCommand::class, AttendanceLog::class] as $model) {
+            Gate::policy($model, DeviceManagementPolicy::class);
         }
         foreach ([
-            \App\Models\User::class, \App\Models\EmployeePayrollProfile::class,
-            \App\Models\AttendanceLog::class, \App\Models\AttendanceDay::class, \App\Models\AttendanceOccurrence::class,
-            \App\Models\Schedule::class, \App\Models\ShiftRuleRevision::class, \App\Models\ShiftAssignmentSet::class,
-            \App\Models\Branch::class, \App\Models\Department::class, \App\Models\TaskGroup::class,
-            \App\Models\Holiday::class, \App\Models\LeaveType::class, \App\Models\LeavePolicy::class,
-            \App\Models\LeavePolicyRevision::class, \App\Models\LeaveCreditLot::class, \App\Models\LeaveLedgerEntry::class,
-            \App\Models\EmployeeLeave::class, \App\Models\CompensatoryAward::class,
+            User::class, EmployeePayrollProfile::class,
+            AttendanceLog::class, AttendanceDay::class, AttendanceOccurrence::class,
+            Schedule::class, ShiftRuleRevision::class, ShiftAssignmentSet::class,
+            Branch::class, Department::class, TaskGroup::class,
+            Holiday::class, LeaveType::class, LeavePolicy::class,
+            LeavePolicyRevision::class, LeaveCreditLot::class, LeaveLedgerEntry::class,
+            EmployeeLeave::class, CompensatoryAward::class,
         ] as $model) {
-            $model::observe(\App\Observers\LeaveBalanceSummaryObserver::class);
+            $model::observe(LeaveBalanceSummaryObserver::class);
         }
         // Date/time presentation resolves the active company at render time.
         TextColumn::configureUsing(fn ($column) => $column->timezone(
@@ -72,9 +99,9 @@ class AppServiceProvider extends ServiceProvider
                     $route->setAction(array_replace($route->getAction(), ['as' => 'legacy.'.$name]));
                 }
             }
-            Route::post('/livewire/upload-file/{fileTenant}', [FileUploadController::class, 'handle'])
+            Route::post(EndpointResolver::uploadPath().'/{fileTenant}', [FileUploadController::class, 'handle'])
                 ->name('livewire.upload-file');
-            Route::get('/livewire/preview-file/{filename}/{fileTenant}', [FilePreviewController::class, 'handle'])
+            Route::get(EndpointResolver::previewPath().'/{fileTenant}', [FilePreviewController::class, 'handle'])
                 ->name('livewire.preview-file');
             Route::getRoutes()->refreshNameLookups();
         });

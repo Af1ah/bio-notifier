@@ -3,12 +3,27 @@
 namespace Tests\Feature;
 
 use App\Filament\Master\Resources\Organisations\Pages\ManageOrganisationAdmins;
+use App\Filament\Tenant\Pages\LeaveBalances;
+use App\Filament\Tenant\Resources\PayrollTemplates\PayrollTemplateResource;
 use App\Filament\Tenant\Resources\UserResource;
+use App\Filament\Tenant\Widgets\ActionRequired;
+use App\Filament\Tenant\Widgets\DeviceStatus;
 use App\Http\Middleware\InitializeTenancyByShortname;
+use App\Livewire\Tenant\UserAttendanceCalendar;
 use App\Models\Admin;
+use App\Models\AttendanceApproval;
+use App\Models\AttendanceDay;
+use App\Models\AttendanceLog;
+use App\Models\Device;
+use App\Models\DeviceCommand;
+use App\Models\EmployeeLeave;
 use App\Models\Organisation;
+use App\Models\SalarySlip;
+use App\Models\Schedule;
 use App\Models\User;
+use App\Services\Devices\DeviceCommandService;
 use App\Services\QuickLoginService;
+use Carbon\Carbon;
 use Filament\Auth\Http\Responses\Contracts\LoginResponse;
 use Filament\Facades\Filament;
 use Illuminate\Database\Schema\Blueprint;
@@ -19,8 +34,12 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\URL;
+use Illuminate\Validation\ValidationException;
+use Livewire\Livewire;
 use Livewire\Mechanisms\HandleComponents\Checksum;
+use Livewire\Mechanisms\HandleRequests\EndpointResolver;
 use Stancl\Tenancy\Tenancy;
+use Symfony\Component\HttpKernel\Exception\HttpException;
 use Tests\TestCase;
 
 class TenantAuthenticationTest extends TestCase
@@ -56,7 +75,7 @@ class TenantAuthenticationTest extends TestCase
         Route::post('/livewire/auth-probe', fn () => response()->json([
             'id' => Auth::guard('web')->id(), 'token' => session()->token(),
         ]))->middleware('web');
-        Route::post('/livewire/update', fn () => response()->json(['tenant' => tenant('id'), 'id' => Auth::guard('web')->id()]))->middleware('web');
+        Route::post(EndpointResolver::updatePath(), fn () => response()->json(['tenant' => tenant('id'), 'id' => Auth::guard('web')->id()]))->middleware('web')->name('test.livewire.update');
     }
 
     private function hrAccount(): User
@@ -64,16 +83,17 @@ class TenantAuthenticationTest extends TestCase
         if (! tenancy()->initialized) {
             tenancy()->initialize(Organisation::findOrFail('organisation-a'));
         }
+
         return User::create(['name' => 'HR operator', 'email' => 'hr@example.test', 'pin' => 'hr-operator', 'privilege' => User::HR_PRIVILEGE, 'password' => 'test-password']);
     }
 
     public function test_master_can_create_and_change_hr_access(): void
     {
-        \Livewire\Livewire::setUpdateRoute(fn ($handle) => Route::post('/livewire/hr-master-test', $handle)->middleware('web'));
+        Livewire::setUpdateRoute(fn ($handle) => Route::post('/livewire/hr-master-test', $handle)->middleware('web'));
         config(['database.connections.tenant' => config('database.connections.sqlite')]);
         DB::connection('tenant')->setPdo(DB::connection('sqlite')->getPdo());
         Filament::setCurrentPanel(Filament::getPanel('master'));
-        $page = \Livewire\Livewire::test(ManageOrganisationAdmins::class, ['record' => 'organisation-a']);
+        $page = Livewire::test(ManageOrganisationAdmins::class, ['record' => 'organisation-a']);
         $page->callTableAction('create', data: ['name' => 'HR operator', 'email' => 'hr-created@example.test', 'password' => 'test-password', 'pin' => 'hr-created', 'privilege' => User::HR_PRIVILEGE])->assertHasNoTableActionErrors();
         $hr = User::where('email', 'hr-created@example.test')->firstOrFail();
         $this->assertTrue($hr->has_login);
@@ -92,20 +112,20 @@ class TenantAuthenticationTest extends TestCase
         $this->assertSame([$hr->id], User::loginAccounts()->pluck('id')->all());
         $this->assertFalse($hr->canManageDevices());
         $this->actingAs($hr, 'web');
-        foreach ([\App\Models\AttendanceDay::class, \App\Models\AttendanceApproval::class, \App\Models\SalarySlip::class, \App\Models\EmployeeLeave::class, \App\Models\Schedule::class] as $model) {
+        foreach ([AttendanceDay::class, AttendanceApproval::class, SalarySlip::class, EmployeeLeave::class, Schedule::class] as $model) {
             $this->assertTrue($hr->can('viewAny', $model), $model);
         }
-        foreach ([\App\Models\Device::class, \App\Models\DeviceCommand::class, \App\Models\AttendanceLog::class] as $model) {
+        foreach ([Device::class, DeviceCommand::class, AttendanceLog::class] as $model) {
             $this->assertFalse($hr->can('viewAny', $model), $model);
             $this->assertFalse($hr->can('create', $model), $model);
             $this->assertFalse($hr->can('view', new $model), $model);
             $this->assertFalse($hr->can('update', new $model), $model);
             $this->assertFalse($hr->can('delete', new $model), $model);
         }
-        $this->assertFalse(\App\Filament\Tenant\Widgets\DeviceStatus::canView());
-        $this->assertFalse(\App\Filament\Tenant\Widgets\ActionRequired::canView());
-        $this->assertTrue(\App\Filament\Tenant\Pages\LeaveBalances::canAccess());
-        $this->assertTrue(\App\Filament\Tenant\Resources\PayrollTemplates\PayrollTemplateResource::canAccess());
+        $this->assertFalse(DeviceStatus::canView());
+        $this->assertFalse(ActionRequired::canView());
+        $this->assertTrue(LeaveBalances::canAccess());
+        $this->assertTrue(PayrollTemplateResource::canAccess());
     }
 
     public function test_hr_device_urls_are_forbidden_on_the_server(): void
@@ -120,8 +140,8 @@ class TenantAuthenticationTest extends TestCase
     public function test_hr_cannot_send_device_commands_even_when_calling_the_service_directly(): void
     {
         $this->actingAs($this->hrAccount(), 'web');
-        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
-        app(\App\Services\Devices\DeviceCommandService::class)->request(new \App\Models\Device, 'reboot');
+        $this->expectException(HttpException::class);
+        app(DeviceCommandService::class)->request(new Device, 'reboot');
     }
 
     public function test_hr_cannot_change_employee_device_privileges(): void
@@ -130,7 +150,7 @@ class TenantAuthenticationTest extends TestCase
         $this->actingAs($this->hrAccount(), 'web');
         $employee->update(['name' => 'Updated employee']);
         $this->assertSame('Updated employee', $employee->fresh()->name);
-        $this->expectException(\Illuminate\Validation\ValidationException::class);
+        $this->expectException(ValidationException::class);
         $employee->update(['device_privilege' => 14]);
     }
 
@@ -138,7 +158,7 @@ class TenantAuthenticationTest extends TestCase
     {
         $hr = $this->hrAccount();
         $this->actingAs($hr, 'web');
-        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        $this->expectException(HttpException::class);
         $hr->update(['privilege' => 14]);
     }
 
@@ -146,7 +166,7 @@ class TenantAuthenticationTest extends TestCase
     {
         $admin = User::create(['name' => 'Admin', 'email' => 'admin@example.test', 'pin' => 'admin-operator', 'privilege' => 14, 'password' => 'admin-password']);
         $this->actingAs($this->hrAccount(), 'web');
-        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        $this->expectException(HttpException::class);
         $admin->update(['password' => 'new-password']);
     }
 
@@ -252,18 +272,45 @@ class TenantAuthenticationTest extends TestCase
 
     public function test_livewire_update_uses_signed_context_not_referer_and_rejects_mixed_tenants(): void
     {
+        $this->assertMatchesRegularExpression('~^/livewire-[a-f0-9]{8}/update$~', EndpointResolver::updatePath());
         $a = $this->signedComponent('alpha/admin');
         $b = $this->signedComponent('beta/admin');
-        $response = $this->postJson('/livewire/update', ['components' => [$a]]);
+        $response = $this->postJson(EndpointResolver::updatePath(), ['components' => [$a]]);
         $this->assertSame(200, $response->status(), $response->getContent());
         $response->assertJson(['tenant' => 'organisation-a']);
-        $this->withHeader('Referer', 'http://localhost/beta/admin')->postJson('/livewire/update', ['components' => [$a]])->assertForbidden();
-        $this->withHeader('Referer', 'http://localhost/alpha/admin')->postJson('/livewire/update', ['components' => [$a, $b]])->assertForbidden();
+        $this->withHeader('Referer', 'http://localhost/beta/admin')->postJson(EndpointResolver::updatePath(), ['components' => [$a]])->assertForbidden();
+        $this->withHeader('Referer', 'http://localhost/alpha/admin')->postJson(EndpointResolver::updatePath(), ['components' => [$a, $b]])->assertForbidden();
         $snapshot = json_decode($a['snapshot'], true);
         $snapshot['memo']['path'] = 'beta/admin';
         $a['snapshot'] = json_encode($snapshot);
-        $this->postJson('/livewire/update', ['components' => [$a]])->assertForbidden();
-        $this->postJson('/livewire/update', ['components' => []])->assertForbidden();
+        $this->postJson(EndpointResolver::updatePath(), ['components' => [$a]])->assertForbidden();
+        $this->postJson(EndpointResolver::updatePath(), ['components' => []])->assertForbidden();
+    }
+
+    public function test_native_livewire_update_restores_the_employee_from_the_signed_tenant(): void
+    {
+        Livewire::setUpdateRoute(fn ($handle, $path) => Route::post($path, $handle)->middleware('web'));
+        tenancy()->initialize(Organisation::findOrFail('organisation-a'));
+        $employee = User::create(['name' => 'Employee', 'pin' => 'native-update', 'email' => 'native@example.test', 'password' => 'password', 'privilege' => 14]);
+        $this->actingAs($employee, 'web');
+        $page = Livewire::test(UserAttendanceCalendar::class, ['record' => $employee]);
+        $snapshot = $page->snapshot;
+        $snapshot['memo']['path'] = 'alpha/admin/users/'.$employee->id;
+        unset($snapshot['checksum']);
+        $snapshot['checksum'] = Checksum::generate($snapshot);
+        $month = Carbon::create($page->get('year'), $page->get('month'), 1)->subMonth();
+        tenancy()->end();
+
+        $response = $this->withHeaders(['X-Livewire' => 'true', 'Referer' => 'http://localhost/alpha/admin'])
+            ->postJson('http://localhost'.EndpointResolver::updatePath(), ['components' => [[
+                'snapshot' => json_encode($snapshot), 'updates' => [],
+                'calls' => [['path' => '', 'method' => 'previousMonth', 'params' => []]],
+            ]]]);
+        $this->assertSame(200, $response->status(), $response->getContent());
+        $result = json_decode($response->json('components.0.snapshot'), true);
+        $this->assertSame($month->year, $result['data']['year']);
+        $this->assertSame($month->month, $result['data']['month']);
+        $this->assertSame('organisation-a', tenant('id'));
     }
 
     public function test_quick_login_replaces_stale_password_state_and_scopes_session_cookie(): void

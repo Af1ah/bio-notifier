@@ -28,7 +28,9 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\URL;
+use Livewire\Features\SupportFileUploads\GenerateSignedUploadUrl;
 use Livewire\Livewire;
+use Livewire\Mechanisms\HandleRequests\EndpointResolver;
 use Tests\TestCase;
 
 class TenantBoundaryRegressionTest extends TestCase
@@ -283,7 +285,8 @@ class TenantBoundaryRegressionTest extends TestCase
     {
         $a = $this->organisation('upload-a');
         $b = $this->organisation('upload-b');
-        $url = TenantContext::run($a, fn () => URL::temporarySignedRoute('livewire.upload-file', now()->addMinutes(5)));
+        $url = TenantContext::run($a, fn () => app(GenerateSignedUploadUrl::class)->forLocal());
+        $this->assertStringContainsString(EndpointResolver::uploadPath(), $url);
         $this->assertStringContainsString($a->id, $url);
         $file = UploadedFile::fake()->createWithContent('employees.csv', "pin,name\n1,A\n");
         $this->post($url, ['files' => [$file]])->assertOk();
@@ -292,7 +295,7 @@ class TenantBoundaryRegressionTest extends TestCase
             ->post($url, ['files' => [$file]])->assertForbidden();
         tenancy()->end();
         $this->post(str_replace($a->id, $b->id, $url), ['files' => [$file]])->assertForbidden();
-        $this->post('/livewire/upload-file', ['files' => [$file]])->assertForbidden();
+        $this->post(EndpointResolver::uploadPath(), ['files' => [$file]])->assertForbidden();
     }
 
     public function test_preview_signature_uses_the_same_tenant_storage_as_the_upload(): void
@@ -302,7 +305,7 @@ class TenantBoundaryRegressionTest extends TestCase
         $url = TenantContext::run($a, function () {
             Storage::disk('tmp-for-tests')->put('livewire-tmp/probe.png', base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jP4sAAAAASUVORK5CYII='));
 
-            return URL::temporarySignedRoute('livewire.preview-file', now()->addMinutes(5), ['filename' => 'probe.png']);
+            return app(GenerateSignedUploadUrl::class)->signedRoute('livewire.preview-file', now()->addMinutes(5), ['filename' => 'probe.png']);
         });
         $this->get($url)->assertOk();
         tenancy()->end();
