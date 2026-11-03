@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\Admin;
 use App\Models\User;
 use Syofyanzuhad\FilamentZktecoAdms\Models\ZktecoUser;
 
@@ -39,6 +40,11 @@ return [
     */
 
     'guards' => [
+        'employee' => [
+            'driver' => 'tenant-session',
+            'provider' => 'users',
+        ],
+
         'web' => [
             'driver' => 'tenant-session',
             'provider' => 'users',
@@ -80,7 +86,7 @@ return [
 
         'admins' => [
             'driver' => 'eloquent',
-            'model' => App\Models\Admin::class,
+            'model' => Admin::class,
         ],
 
         'zkteco_users' => [

@@ -3,9 +3,11 @@
 namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
+use App\Casts\ProtectedArray;
 use App\Services\Attendance\ShiftAssignmentResolver;
 use Carbon\Carbon;
 use Database\Factories\UserFactory;
+use Filament\Facades\Filament;
 use Filament\Models\Contracts\FilamentUser;
 use Filament\Panel;
 use Illuminate\Database\Eloquent\Builder;
@@ -48,7 +50,11 @@ class User extends Authenticatable implements FilamentUser
 
     public function canAccessPanel(Panel $panel): bool
     {
-        return $this->has_login;
+        return match ($panel->getId()) {
+            'tenant' => $this->has_login,
+            'employee' => $this->canAccessEmployeePortal(),
+            default => false,
+        };
     }
 
     protected static function boot()
@@ -92,11 +98,6 @@ class User extends Authenticatable implements FilamentUser
             }
         });
 
-        static::updating(function ($user) {
-            if ($user->isDirty('password')) {
-                $user->requires_password_change = false;
-            }
-        });
     }
 
     /**
@@ -133,11 +134,12 @@ class User extends Authenticatable implements FilamentUser
             'device_privilege' => 'integer',
             'is_enabled' => 'boolean',
             'is_system_account' => 'boolean',
-            'fingerprints' => \App\Casts\ProtectedArray::class,
+            'fingerprints' => ProtectedArray::class,
             'biometric_fetch_requests' => 'array',
-            'face_templates' => \App\Casts\ProtectedArray::class,
+            'face_templates' => ProtectedArray::class,
             'face_enrolled' => 'boolean',
             'requires_password_change' => 'boolean',
+            'portal_enabled' => 'boolean',
             'blocked_devices' => 'array',
         ];
     }
@@ -195,12 +197,18 @@ class User extends Authenticatable implements FilamentUser
     private static function restrictedHrActor(): ?self
     {
         // Do not resolve a tenant session guard before tenancy is initialized.
-        if (! tenancy()->initialized || (\Filament\Facades\Filament::getCurrentPanel()?->getId() === 'master' && auth('admin')->user()?->role === 'master')) {
+        if (! tenancy()->initialized || (Filament::getCurrentPanel()?->getId() === 'master' && auth('admin')->user()?->role === 'master')) {
             return null;
         }
         $actor = auth('web')->user();
 
         return $actor instanceof self && (int) $actor->getRawOriginal('privilege') === self::HR_PRIVILEGE ? $actor : null;
+    }
+
+    public function canAccessEmployeePortal(): bool
+    {
+        return (bool) $this->portal_enabled && $this->is_enabled && ! $this->is_system_account
+            && filled($this->email) && filled($this->password);
     }
 
     public function hasManagementAccess(): bool

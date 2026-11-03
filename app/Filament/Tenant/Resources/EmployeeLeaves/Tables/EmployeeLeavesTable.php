@@ -2,11 +2,20 @@
 
 namespace App\Filament\Tenant\Resources\EmployeeLeaves\Tables;
 
+use App\Models\EmployeeLeave;
+use App\Models\User;
+use App\Services\Leave\EmployeeLeaveService;
+use App\Services\Support\TenantCurrency;
+use Filament\Actions\Action;
+use Filament\Actions\ActionGroup;
 use Filament\Actions\EditAction;
 use Filament\Actions\ViewAction;
+use Filament\Notifications\Notification;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class EmployeeLeavesTable
 {
@@ -21,7 +30,7 @@ class EmployeeLeavesTable
                 TextColumn::make('state')->badge()->color(fn ($state): string => $state === 'approved' ? 'success' : 'gray'),
                 TextColumn::make('deduction_override_minor')
                     ->label('Deduction override')
-                    ->formatStateUsing(fn ($state): string => $state === null ? 'Policy default' : \App\Services\Support\TenantCurrency::format((int) $state))
+                    ->formatStateUsing(fn ($state): string => $state === null ? 'Policy default' : TenantCurrency::format((int) $state))
                     ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
@@ -31,9 +40,31 @@ class EmployeeLeavesTable
             ])
             ->defaultSort('leave_date', 'desc')
             ->recordActions([
-                ViewAction::make(),
-                EditAction::make(),
+                ActionGroup::make([
+                    ViewAction::make(), EditAction::make(),
+                    Action::make('approve')->label('Approve')->icon('heroicon-o-check')->color('success')->modalDescription(fn (EmployeeLeave $record) => $record->notes)->requiresConfirmation()
+                        ->visible(fn (EmployeeLeave $record) => $record->state === 'pending')
+                        ->action(fn (EmployeeLeave $record) => self::decide($record, 'approved')),
+                    Action::make('reject')->label('Reject')->icon('heroicon-o-x-mark')->color('danger')->modalDescription(fn (EmployeeLeave $record) => $record->notes)->requiresConfirmation()
+                        ->visible(fn (EmployeeLeave $record) => $record->state === 'pending')
+                        ->action(fn (EmployeeLeave $record) => self::decide($record, 'rejected')),
+                ])->label('Actions'),
             ])
             ->toolbarActions([]);
+    }
+
+    public static function decide(EmployeeLeave $record, string $state): void
+    {
+        abort_unless(auth('web')->user()?->hasManagementAccess(), 403);
+        DB::transaction(function () use ($record, $state) {
+            // Match the service's employee-before-leave lock order.
+            User::lockForUpdate()->findOrFail($record->user_id);
+            $record = EmployeeLeave::lockForUpdate()->findOrFail($record->id);
+            if ($record->state !== 'pending') {
+                throw ValidationException::withMessages(['state' => 'This request has already been reviewed.']);
+            }
+            app(EmployeeLeaveService::class)->save($record, $record->only(['user_id', 'leave_type_id', 'leave_date', 'duration', 'deduction_override_minor', 'notes']) + ['state' => $state], auth('web')->user());
+        }, 3);
+        Notification::make()->title($state === 'approved' ? 'Leave approved' : 'Leave rejected')->success()->send();
     }
 }

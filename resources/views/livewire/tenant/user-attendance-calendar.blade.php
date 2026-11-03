@@ -37,22 +37,33 @@
     .user-attendance-calendar__scroll { overflow-x: auto; padding: .25rem; }
     .user-attendance-calendar__toolbar { display: grid; grid-template-columns: 2.5rem minmax(0, 1fr) 2.5rem; align-items: center; gap: .75rem; margin-bottom: 1rem; }
     .user-attendance-calendar__title { margin: 0; color: inherit; font-size: 1.125rem; font-weight: 700; text-align: center; }
-    .user-attendance-calendar__table { width: 100%; min-width: 42rem; table-layout: fixed; border-collapse: separate; border-spacing: .5rem; }
+    .user-attendance-calendar__table { width: 100%; min-width: 0; table-layout: fixed; border-collapse: separate; border-spacing: .2rem; }
     .user-attendance-calendar__table th { padding: 0 0 .25rem; color: rgb(156 163 175); font-size: .75rem; font-weight: 700; text-align: center; }
-    .user-attendance-calendar__table td { width: 14.285%; height: 5.5rem; padding: .5rem; vertical-align: top; }
+    .user-attendance-calendar__table td { width: 14.285%; height: 4.5rem; padding: .25rem; vertical-align: top; }
     .user-attendance-calendar__empty-day { border-radius: .5rem; background: rgb(255 255 255 / .05); }
     .user-attendance-calendar__day { border: 1px solid rgb(0 0 0 / .08); border-radius: .5rem; color: rgb(17 24 39); cursor: pointer; text-align: center; transition: filter .15s ease, transform .15s ease; }
     .user-attendance-calendar__day:hover { filter: brightness(.96); transform: translateY(-1px); }
     .user-attendance-calendar__date { font-weight: 700; line-height: 1.1; }
     .user-attendance-calendar__status { margin-top: .25rem; font-size: .75rem; line-height: 1.1; }
     .user-attendance-calendar__worked { margin-top: .2rem; color: rgb(55 65 81); font-size: .6875rem; line-height: 1.1; }
+    @media (max-width: 480px) {
+        .user-attendance-calendar__table td { height: 3.5rem; padding: .125rem; }
+        .user-attendance-calendar__status { display: none; }
+        .user-attendance-calendar__worked { font-size: .625rem; }
+    }
 </style>
 
+    <div class="flex flex-wrap gap-2" aria-label="Attendance colors">
+        <x-filament::badge color="success">Present</x-filament::badge>
+        <x-filament::badge color="warning">Half day</x-filament::badge>
+        <x-filament::badge color="danger">Absent</x-filament::badge>
+        <x-filament::badge color="gray">Other days</x-filament::badge>
+    </div>
     <div class="user-attendance-calendar__scroll">
         <div class="user-attendance-calendar__toolbar">
-            <x-filament::icon-button icon="heroicon-m-chevron-left" wire:click="previousMonth" />
+            <x-filament::icon-button icon="heroicon-m-chevron-left" wire:click="previousMonth" label="Previous month" />
             <h3 class="user-attendance-calendar__title">{{ $month->format('F Y') }}</h3>
-            <x-filament::icon-button icon="heroicon-m-chevron-right" wire:click="nextMonth" />
+            <x-filament::icon-button icon="heroicon-m-chevron-right" wire:click="nextMonth" label="Next month" />
         </div>
 
         <table class="user-attendance-calendar__table">
@@ -90,7 +101,7 @@
                                         'logs' => $dayLogs->map(fn ($log) => ['time' => $log->punched_at->format('h:i A'), 'status' => $log->status_label])->values()->all(),
                                     ];
                                 @endphp
-                                <td class="user-attendance-calendar__day" style="background-color: {{ $colors }}" @click='details = @json($payload); $dispatch("open-modal", { id: "attendance-day-detail" })'>
+                                <td role="button" tabindex="0" aria-label="{{ $payload['date'] }}: {{ $label }}, {{ $payload['worked'] }}" @keydown.enter.prevent="$el.click()" @keydown.space.prevent="$el.click()" class="user-attendance-calendar__day" style="background-color: {{ $colors }}" @click='details = @json($payload); $dispatch("open-modal", { id: "attendance-day-detail" })'>
                                     <div class="user-attendance-calendar__date">{{ $number }}</div>
                                     <div class="user-attendance-calendar__status">{{ $label }}</div>
                                     @if ($result)<div class="user-attendance-calendar__worked">{{ $payload['worked'] }}</div>@endif

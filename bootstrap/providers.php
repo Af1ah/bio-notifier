@@ -1,8 +1,15 @@
 <?php
 
+use App\Providers\AppServiceProvider;
+use App\Providers\Filament\EmployeePanelProvider;
+use App\Providers\Filament\MasterPanelProvider;
+use App\Providers\Filament\TenantPanelProvider;
+use App\Providers\TenancyServiceProvider;
+
 return [
-    App\Providers\AppServiceProvider::class,
-    App\Providers\Filament\MasterPanelProvider::class,
-    App\Providers\TenancyServiceProvider::class,
-    App\Providers\Filament\TenantPanelProvider::class,
+    AppServiceProvider::class,
+    EmployeePanelProvider::class,
+    MasterPanelProvider::class,
+    TenantPanelProvider::class,
+    TenancyServiceProvider::class,
 ];

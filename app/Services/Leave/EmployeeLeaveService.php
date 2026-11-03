@@ -19,12 +19,18 @@ class EmployeeLeaveService
 {
     public function save(?EmployeeLeave $leave, array $data, User $actor): EmployeeLeave
     {
-        abort_unless($actor->hasManagementAccess(), 403);
+        $actor = $actor->fresh();
+        $employeeRequest = ! $actor->hasManagementAccess();
+        if ($employeeRequest) {
+            abort_unless($actor->canAccessEmployeePortal() && ! $actor->requires_password_change && ! $leave
+                && (int) ($data['user_id'] ?? 0) === $actor->id && ($data['state'] ?? null) === 'pending'
+                && ! filled($data['deduction_override_minor'] ?? null), 403);
+        }
         $v = Validator::make($data, ['user_id' => 'required|integer|exists:users,id', 'leave_type_id' => 'required|integer|exists:leave_types,id',
             'leave_date' => 'required|date', 'duration' => 'required|in:full,half', 'state' => 'required|in:pending,approved,rejected,cancelled',
             'deduction_override_minor' => 'nullable|integer|min:0', 'notes' => 'nullable|string|max:1000'])->validate();
 
-        return DB::transaction(function () use ($leave, $v, $actor) {
+        return DB::transaction(function () use ($leave, $v, $actor, $employeeRequest) {
             $user = User::employees()->lockForUpdate()->findOrFail($v['user_id']);
             if ($leave) {
                 $leave = EmployeeLeave::lockForUpdate()->findOrFail($leave->id);
@@ -67,12 +73,24 @@ class EmployeeLeaveService
                 app(PayrollFreshnessService::class)->invalidate($user->id, $leave->leave_date);
             }
             $revision = app(LeavePolicyService::class)->resolve($user, $v['leave_type_id'], $date);
+            if ($employeeRequest) {
+                $type = LeaveType::where('active', true)->findOrFail($v['leave_type_id']);
+                if ($type->is_paid) {
+                    if (! $revision || ! $revision->rules['enabled']) {
+                        throw ValidationException::withMessages(['leave_type_id' => 'No active leave policy for this date.']);
+                    }
+                    $balances->ensureGrants($user, $type->id, $date);
+                    if ($balances->availableUnits($user, $type->id, $date) < ($v['duration'] === 'half' ? 1 : 2)) {
+                        throw ValidationException::withMessages(['leave_type_id' => 'Not enough available leave for this date.']);
+                    }
+                }
+            }
             if (in_array($v['state'], ['pending', 'approved']) && ! $revision && LeaveType::findOrFail($v['leave_type_id'])->is_paid) {
                 throw ValidationException::withMessages(['leave_type_id' => 'Configure an applicable entitlement policy in Leave settings before requesting paid leave.']);
             }
             $managed = $revision !== null;
             $leave ??= new EmployeeLeave;
-            $leave->fill($v + ['reviewed_by_user_id' => $actor->id, 'reviewed_at' => now(), 'balance_managed' => $managed])->save();
+            $leave->fill($v + ['reviewed_by_user_id' => $v['state'] === 'pending' ? null : $actor->id, 'reviewed_at' => $v['state'] === 'pending' ? null : now(), 'balance_managed' => $managed])->save();
             if (in_array($leave->state, ['pending', 'approved']) && $managed) {
                 $balances->allocate($leave, $actor);
             }

@@ -2,21 +2,28 @@
 
 namespace App\Livewire\Tenant;
 
-use Livewire\Component;
 use App\Models\User;
+use App\Services\Support\TenantTimezone;
 use Carbon\Carbon;
+use Filament\Facades\Filament;
+use Livewire\Attributes\Locked;
+use Livewire\Component;
 
 class UserAttendanceCalendar extends Component
 {
+    #[Locked]
     public User $record;
+
     public $year;
+
     public $month;
 
     public function mount(User $record)
     {
+        $this->authorizeRecord($record);
         $this->record = $record;
-        $this->year = now()->year;
-        $this->month = now()->month;
+        $this->year = now(TenantTimezone::get())->year;
+        $this->month = now(TenantTimezone::get())->month;
     }
 
     public function previousMonth()
@@ -35,6 +42,15 @@ class UserAttendanceCalendar extends Component
 
     public function render()
     {
+        $this->authorizeRecord($this->record);
+
         return view('livewire.tenant.user-attendance-calendar');
+    }
+
+    private function authorizeRecord(User $record): void
+    {
+        $guard = Filament::getCurrentPanel()?->getId() === 'employee' ? 'employee' : 'web';
+        $actor = auth($guard)->user()?->fresh();
+        abort_unless($actor && ($actor->hasManagementAccess() || ($actor->canAccessEmployeePortal() && ! $actor->requires_password_change && $actor->id === $record->id)), 403);
     }
 }

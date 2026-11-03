@@ -19,6 +19,7 @@ class UserAttendanceCalendarTest extends TestCase
             '--realpath' => true,
             '--force' => true,
         ]);
+        $this->actingAs(User::create(['pin' => 'calendar-admin', 'name' => 'Admin', 'privilege' => 14]), 'web');
     }
 
     public function test_previous_month_is_a_public_livewire_action(): void
@@ -42,7 +43,7 @@ class UserAttendanceCalendarTest extends TestCase
     {
         $user = User::create(['name' => 'Calendar Employee', 'pin' => '511']);
         $calendar = Livewire::test(UserAttendanceCalendar::class, ['record' => $user]);
-        $dom = new \DOMDocument();
+        $dom = new \DOMDocument;
         $dom->loadHTML('<div wire:id="parent-user-page">'.$calendar->html().'</div>', LIBXML_NOERROR | LIBXML_NOWARNING);
         $xpath = new \DOMXPath($dom);
 

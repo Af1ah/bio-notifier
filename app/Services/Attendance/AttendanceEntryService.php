@@ -17,11 +17,11 @@ class AttendanceEntryService
 {
     public function addOrCorrect(User $actor, array $data): AttendanceDay|AttendanceCorrection
     {
-        abort_unless($actor->hasManagementAccess(), 403);
-        $selection = Validator::make($data, ['user_id' => 'required|integer|exists:users,id', 'work_date' => 'required|date_format:Y-m-d', 'entry_mode' => 'required|in:manual,correction',
+        $actor = $this->authorizeActor($actor, (int) ($data['user_id'] ?? 0));
+        $selection = Validator::make($data, ['user_id' => 'required|integer|exists:users,id', 'work_date' => 'required|date_format:Y-m-d'.($actor->hasManagementAccess() ? '' : '|before_or_equal:'.today(TenantTimezone::get())->toDateString()), 'entry_mode' => 'required|in:manual,correction',
             'in_time' => 'required|date_format:H:i', 'out_time' => 'required|date_format:H:i', 'reason' => 'required|string|max:2000'])->validate();
 
-        return DB::transaction(function () use ($actor, $data, $selection) {
+        return DB::transaction(function () use ($actor, $selection) {
             $user = User::employees()->lockForUpdate()->findOrFail($selection['user_id']);
             $day = AttendanceDay::where('user_id', $user->id)->whereDate('work_date', $selection['work_date'])->first();
             if (($day ? 'correction' : 'manual') !== $selection['entry_mode']) {
@@ -48,16 +48,20 @@ class AttendanceEntryService
 
     public function add(User $actor, array $data): AttendanceDay
     {
-        abort_unless($actor->hasManagementAccess(), 403);
+        $actor = $this->authorizeActor($actor, (int) ($data['user_id'] ?? 0));
         // Retain the service contract for imports and existing integrations while the UI submits one work date plus two times.
         $data['in_time'] ??= isset($data['in_at']) ? TenantTimezone::parse($data['in_at'])->format('H:i') : null;
         $data['out_time'] ??= isset($data['out_at']) ? TenantTimezone::parse($data['out_at'])->format('H:i') : null;
-        $data = Validator::make($data, ['user_id' => 'required|integer|exists:users,id', 'schedule_id' => 'required|integer|exists:schedules,id', 'work_date' => 'required|date', 'in_time' => 'required|date_format:H:i', 'out_time' => 'required|date_format:H:i', 'reason' => 'required|string|max:2000'])->validate();
+        $data = Validator::make($data, ['user_id' => 'required|integer|exists:users,id', 'schedule_id' => 'required|integer|exists:schedules,id', 'work_date' => 'required|date'.($actor->hasManagementAccess() ? '' : '|before_or_equal:'.today(TenantTimezone::get())->toDateString()), 'in_time' => 'required|date_format:H:i', 'out_time' => 'required|date_format:H:i', 'reason' => 'required|string|max:2000'])->validate();
 
         return DB::transaction(function () use ($actor, $data) {
             $user = User::employees()->lockForUpdate()->findOrFail($data['user_id']);
             $date = TenantTimezone::parse($data['work_date'])->startOfDay();
             $shift = Schedule::where('status', true)->findOrFail($data['schedule_id']);
+            if (! $actor->hasManagementAccess()) {
+                $match = app(AttendanceEntryContext::class)->match($user, $date->toDateString(), $data['in_time'], $data['out_time']);
+                abort_unless((int) $match['schedule_id'] === $shift->id, 403);
+            }
             $rule = $shift->activeRuleRevision($date);
             if (! $rule) {
                 throw ValidationException::withMessages(['schedule_id' => 'This shift has no rule revision for the selected date.']);
@@ -93,7 +97,10 @@ class AttendanceEntryService
 
     public function correct(AttendanceDay $day, User $actor, array $data): AttendanceCorrection
     {
-        abort_unless($actor->hasManagementAccess(), 403);
+        $actor = $this->authorizeActor($actor, (int) $day->user_id);
+        if (! $actor->hasManagementAccess()) {
+            abort_if(filled($data['proposed_status'] ?? null) || $day->work_date->toDateString() > today(TenantTimezone::get())->toDateString(), 403);
+        }
         $data = Validator::make($data, ['attendance_occurrence_id' => 'nullable|integer', 'proposed_in_at' => 'nullable|date|required_with:proposed_out_at', 'proposed_out_at' => 'nullable|date|required_with:proposed_in_at|after:proposed_in_at', 'proposed_status' => 'nullable|in:present,half_day,absent,off,holiday', 'reason' => 'required|string|max:2000'])->validate();
 
         return DB::transaction(function () use ($day, $actor, $data) {
@@ -114,5 +121,13 @@ class AttendanceEntryService
 
             return $correction;
         });
+    }
+
+    private function authorizeActor(User $actor, int $userId): User
+    {
+        $actor = $actor->fresh();
+        abort_unless($actor && ($actor->hasManagementAccess() || ($actor->id === $userId && $actor->canAccessEmployeePortal() && ! $actor->requires_password_change)), 403);
+
+        return $actor;
     }
 }
