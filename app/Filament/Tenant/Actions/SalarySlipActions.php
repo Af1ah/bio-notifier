@@ -29,19 +29,11 @@ class SalarySlipActions
                 ->requiresConfirmation()
                 ->action(fn (SalarySlip $record, Action $action) => self::run($action, fn () => app(SalarySlipService::class)->transition($record, auth()->user(), 'reviewed')))
                 ->successNotificationTitle('Salary slip reviewed'),
-            Action::make('approve')
-                ->label('Approve')
-                ->icon('heroicon-o-check-badge')
-                ->color('success')
-                ->visible(fn (SalarySlip $record): bool => $record->status === 'reviewed')
-                ->requiresConfirmation()
-                ->action(fn (SalarySlip $record, Action $action) => self::run($action, fn () => app(SalarySlipService::class)->transition($record, auth()->user(), 'approved')))
-                ->successNotificationTitle('Salary slip approved'),
             Action::make('markPaid')
                 ->label('Mark paid')
                 ->icon('heroicon-o-banknotes')
                 ->color('success')
-                ->visible(fn (SalarySlip $record): bool => $record->status === 'approved')
+                ->visible(fn (SalarySlip $record): bool => in_array($record->status, ['reviewed', 'approved'], true))
                 ->requiresConfirmation()
                 ->action(fn (SalarySlip $record, Action $action) => self::run($action, fn () => app(SalarySlipService::class)->transition($record, auth()->user(), 'paid')))
                 ->successNotificationTitle('Salary slip marked paid'),

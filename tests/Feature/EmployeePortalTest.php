@@ -369,7 +369,7 @@ class EmployeePortalTest extends TestCase
         }
     }
 
-    public function test_salary_history_and_details_only_include_own_draft_approved_and_paid_slips(): void
+    public function test_salary_history_and_details_include_every_own_status(): void
     {
         $this->enable();
         $slips = [];
@@ -379,8 +379,8 @@ class EmployeePortalTest extends TestCase
         }
         $foreign = $slips['approved']->replicate()->fill(['user_id' => $this->manager->id]);
         $foreign->save();
-        $page = Livewire::test(SalarySlips::class)->filterTable('payroll_month', 'all')->assertCanSeeTableRecords([$slips['draft'], $slips['approved'], $slips['paid']])
-            ->assertCanNotSeeTableRecords([$slips['reviewed'], $foreign]);
+        $page = Livewire::test(SalarySlips::class)->filterTable('payroll_month', 'all')->assertCanSeeTableRecords([$slips['draft'], $slips['reviewed'], $slips['approved'], $slips['paid']])
+            ->assertCanNotSeeTableRecords([$foreign]);
         $page->mountTableAction('view', $slips['approved'])->assertActionMounted()->assertMountedActionModalSee('Payslip summary')->assertMountedActionModalSee('1,234.56');
         $page->unmountAction();
         $page->callTableAction('download', $slips['approved'])->assertFileDownloaded('salary-slips-2026-03.pdf');
@@ -388,8 +388,9 @@ class EmployeePortalTest extends TestCase
         $page->mountTableAction('view', $slips['draft'])->assertActionMounted();
         $page->unmountAction();
         $page->callTableAction('download', $slips['draft'])->assertFileDownloaded('salary-slips-2026-01.pdf');
-        $slips['approved']->update(['status' => 'reviewed']);
-        $page->mountTableAction('view', $slips['approved'])->assertActionNotMounted();
+        $page->mountTableAction('view', $slips['reviewed'])->assertActionMounted();
+        $page->unmountAction();
+        $this->assertSame('reviewed', $slips['approved']->display_status);
         $this->get('http://localhost/portal/ess/salary-slips')->assertOk();
     }
 

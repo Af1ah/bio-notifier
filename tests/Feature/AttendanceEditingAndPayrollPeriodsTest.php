@@ -436,6 +436,17 @@ class AttendanceEditingAndPayrollPeriodsTest extends TestCase
         $this->assertStringNotContainsString('2026-07', $csv);
     }
 
+    public function test_reviewed_filter_includes_legacy_approved_slips(): void
+    {
+        $reviewed = $this->slip($this->employee('reviewed'), '2026-07', 'reviewed');
+        $legacy = $this->slip($this->employee('legacy'), '2026-07', 'approved');
+        $draft = $this->slip($this->employee('draft'), '2026-07');
+        Livewire::test(ListSalarySlips::class)->filterTable('status', 'reviewed')
+            ->assertCanSeeTableRecords([$reviewed, $legacy])->assertCanNotSeeTableRecords([$draft])
+            ->assertTableColumnFormattedStateSet('status', 'reviewed', $legacy)
+            ->assertTableActionVisible('markPaid', $legacy)->assertTableActionVisible('markPaid', $reviewed);
+    }
+
     public function test_export_global_filters_apply_before_specific_employee_selection(): void
     {
         $a = Branch::create(['name' => 'A']);

@@ -8,6 +8,11 @@ class SalarySlip extends Model
 {
     protected $guarded = [];
 
+    public function getDisplayStatusAttribute(): string
+    {
+        return $this->status === 'approved' ? 'reviewed' : $this->status;
+    }
+
     protected function casts(): array
     {
         return [

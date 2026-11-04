@@ -29,7 +29,7 @@ class SalarySlips extends PortalPage implements HasTable
 
     protected function availableSlips(): Builder
     {
-        return SalarySlip::where('user_id', PortalAccess::employee()->id)->whereIn('status', ['draft', 'approved', 'paid']);
+        return SalarySlip::where('user_id', PortalAccess::employee()->id)->whereIn('status', ['draft', 'reviewed', 'approved', 'paid']);
     }
 
     public function table(Table $table): Table
@@ -38,10 +38,10 @@ class SalarySlips extends PortalPage implements HasTable
             ->columns([
                 TextColumn::make('period_start')->label('Month')->date('F Y')->sortable(),
                 TextColumn::make('net_pay_minor')->label('Net pay')->formatStateUsing(fn (SalarySlip $record) => $record->formattedMoney('net_pay_minor')),
-                TextColumn::make('status')->badge()->color(fn ($state) => match ($state) {
+                TextColumn::make('status')->badge()->formatStateUsing(fn ($record) => $record->display_status)->color(fn ($state) => match ($state) {
                     'paid' => 'success', 'draft' => 'gray', default => 'primary'
                 }),
-                TextColumn::make('approved_at')->label('Approved')->date('d M Y')->visibleFrom('md'),
+                TextColumn::make('reviewed_at')->label('Reviewed')->date('d M Y')->visibleFrom('md'),
             ])
             ->filters([PayrollMonthFilter::make(fn () => $this->availableSlips())->default('all')])
             ->recordActions([ActionGroup::make([

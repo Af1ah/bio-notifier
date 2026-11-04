@@ -746,8 +746,8 @@ class LeaveCarryForwardTest extends TestCase
         $payroll = app(SalarySlipService::class);
         $slip = $payroll->generate($this->user->fresh(), Carbon::parse('2026-08-01'));
         $payroll->transition($slip, $this->actor, 'reviewed');
-        if (in_array($status, ['approved', 'paid'])) {
-            $payroll->transition($slip->fresh(), $this->actor, 'approved');
+        if ($status === 'approved') {
+            $slip->update(['status' => 'approved', 'approved_by_user_id' => $this->actor->id, 'approved_at' => now()]);
         }
         if ($status === 'paid') {
             $payroll->transition($slip->fresh(), $this->actor, 'paid');
@@ -762,7 +762,7 @@ class LeaveCarryForwardTest extends TestCase
         $this->assertDatabaseMissing('leave_policies', ['id' => $policy->id]);
         $this->assertDatabaseHas('leave_policy_revisions', ['leave_policy_id' => null]);
         if ($status === 'reviewed') {
-            $this->assertSame('approved', $payroll->transition($slip->fresh(), $this->actor, 'approved')->status);
+            $this->assertSame('paid', $payroll->transition($slip->fresh(), $this->actor, 'paid')->status);
         }
     }
 

@@ -10,6 +10,7 @@ use App\Models\Department;
 use App\Models\SalarySlip;
 use App\Models\TaskGroup;
 use App\Services\Payroll\PayrollEmployeeScope;
+use App\Services\Support\TenantTimezone;
 use Filament\Actions\Action;
 use Filament\Actions\ViewAction;
 use Filament\Forms\Components\Radio;
@@ -34,9 +35,9 @@ class SalarySlipsTable
                 TextColumn::make('gross_pay_minor')->label('Gross pay')->formatStateUsing(fn ($state, $record): string => $record->currency.' '.number_format(((int) $state) / 100, 2))->sortable(),
                 TextColumn::make('total_deduction_minor')->label('Total deduction')->formatStateUsing(fn ($state, $record): string => $record->currency.' '.number_format(((int) $state) / 100, 2))->sortable(),
                 TextColumn::make('net_pay_minor')->label('Net pay')->weight('bold')->formatStateUsing(fn ($state, $record): string => $record->currency.' '.number_format(((int) $state) / 100, 2))->sortable(),
-                TextColumn::make('status')->badge()->color(fn ($state): string => match ($state) {
-                    'paid', 'approved' => 'success',
-                    'reviewed' => 'warning',
+                TextColumn::make('status')->badge()->formatStateUsing(fn ($record) => $record->display_status)->color(fn ($state): string => match ($state) {
+                    'paid' => 'success',
+                    'reviewed', 'approved' => 'warning',
                     default => 'gray',
                 }),
                 TextColumn::make('designation')->placeholder('—')->searchable()->toggleable(isToggledHiddenByDefault: true),
@@ -56,7 +57,7 @@ class SalarySlipsTable
                     ])
                     ->query(fn ($query) => $query),
                 PayrollMonthFilter::make(fn () => SalarySlip::query())
-                    ->default(fn () => now(\App\Services\Support\TenantTimezone::get())->subMonthNoOverflow()->format('Y-m')),
+                    ->default(fn () => now(TenantTimezone::get())->subMonthNoOverflow()->format('Y-m')),
                 SelectFilter::make('user_id')->label('Employee')->relationship('user', 'name')->searchable()->preload(),
                 SelectFilter::make('branch_ids')->label('Branches')->multiple()->searchable()->options(fn () => Branch::orderBy('name')->pluck('name', 'id'))
                     ->query(fn ($query, array $data) => $query->when($data['values'] ?? [], fn ($query, $ids) => $query->whereHas('user', fn ($users) => PayrollEmployeeScope::apply($users, ['branch_ids' => $ids])))),
@@ -64,8 +65,13 @@ class SalarySlipsTable
                     ->query(fn ($query, array $data) => $query->when($data['values'] ?? [], fn ($query, $ids) => $query->whereHas('user', fn ($users) => PayrollEmployeeScope::apply($users, ['department_ids' => $ids])))),
                 SelectFilter::make('task_group_ids')->label('Task groups')->multiple()->searchable()->options(fn () => TaskGroup::orderBy('name')->pluck('name', 'id'))
                     ->query(fn ($query, array $data) => $query->when($data['values'] ?? [], fn ($query, $ids) => $query->whereHas('user', fn ($users) => PayrollEmployeeScope::apply($users, ['task_group_ids' => $ids])))),
-                SelectFilter::make('status')->default('all')->options(['unpaid' => 'Unpaid (hide paid)', 'all' => 'All statuses', 'draft' => 'Draft', 'reviewed' => 'Reviewed', 'approved' => 'Approved', 'paid' => 'Paid'])
-                    ->query(fn ($query, array $data) => ($data['value'] ?? 'all') === 'unpaid' ? $query->where('status', '!=', 'paid') : $query->when(($data['value'] ?? 'all') !== 'all', fn ($q) => $q->where('status', $data['value']))),
+                SelectFilter::make('status')->default('all')->options(['unpaid' => 'Unpaid (hide paid)', 'all' => 'All statuses', 'draft' => 'Draft', 'reviewed' => 'Reviewed', 'paid' => 'Paid'])
+                    ->query(fn ($query, array $data) => match ($data['value'] ?? 'all') {
+                        'unpaid' => $query->where('status', '!=', 'paid'),
+                        'reviewed', 'approved' => $query->whereIn('status', ['reviewed', 'approved']),
+                        'draft', 'paid' => $query->where('status', $data['value']),
+                        default => $query,
+                    }),
             ])
             ->groups([
                 Group::make('user.branch.name')->label('Branch')->collapsible(),

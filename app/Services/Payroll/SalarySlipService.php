@@ -394,7 +394,7 @@ class SalarySlipService
             if ($locked->calculation_snapshot['needs_recalculation'] ?? false) {
                 throw ValidationException::withMessages(['attendance' => 'Attendance changed after this slip was calculated. Recalculate it before proceeding.']);
             }
-            $allowed = ['draft' => 'reviewed', 'reviewed' => 'approved', 'approved' => 'paid'];
+            $allowed = ['draft' => 'reviewed', 'reviewed' => 'paid', 'approved' => 'paid'];
             if (($allowed[$locked->status] ?? null) !== $target) {
                 throw ValidationException::withMessages(['status' => "A {$locked->status} slip cannot be changed to {$target}."]);
             }
@@ -405,7 +405,7 @@ class SalarySlipService
                     ->whereDate('work_date', '>=', $eligibleStart->toDateString())
                     ->whereDate('work_date', '<=', $eligibleEnd->toDateString())->get();
                 if ($this->missingCoverage($locked->user, $eligibleStart, $eligibleEnd, $days, true)) {
-                    throw ValidationException::withMessages(['attendance' => 'Monthly payroll attendance is incomplete. Resolve the missing dates before reviewing, approving or marking this slip paid.']);
+                    throw ValidationException::withMessages(['attendance' => 'Monthly payroll attendance is incomplete. Resolve the missing dates before reviewing or marking this slip paid.']);
                 }
             }
             if (app(ManualPayrollReviewService::class)->required($locked->user, $locked->period_start) && ! app(ManualPayrollReviewService::class)->approved($locked->user, $locked->period_start)) {
@@ -421,7 +421,6 @@ class SalarySlipService
             }
             $field = match ($target) {
                 'reviewed' => ['reviewed_by_user_id' => $actor->id, 'reviewed_at' => now()],
-                'approved' => ['approved_by_user_id' => $actor->id, 'approved_at' => now()],
                 'paid' => ['paid_by_user_id' => $actor->id, 'paid_at' => now()],
             };
             $locked->update(['status' => $target, ...$field]);

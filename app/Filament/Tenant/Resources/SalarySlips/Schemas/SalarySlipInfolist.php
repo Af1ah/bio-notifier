@@ -16,9 +16,9 @@ class SalarySlipInfolist
                     ->schema([
                         TextEntry::make('user.name')->label('Employee'),
                         TextEntry::make('period_start')->label('Payroll month')->date('F Y'),
-                        TextEntry::make('status')->badge()->color(fn ($state): string => match ($state) {
-                            'paid', 'approved' => 'success',
-                            'reviewed' => 'warning',
+                        TextEntry::make('status')->badge()->formatStateUsing(fn ($record) => $record->display_status)->color(fn ($state): string => match ($state) {
+                            'paid' => 'success',
+                            'reviewed', 'approved' => 'warning',
                             default => 'gray',
                         }),
                         self::money('gross_pay_minor', 'Gross pay')->weight('bold'),
@@ -77,7 +77,9 @@ class SalarySlipInfolist
                         TextEntry::make('per_day_salary_display')->label('Per day salary'),
                         TextEntry::make('calculation_snapshot.calendar_day_divisor')->label('Monthly deduction divisor')->suffix(' days')->placeholder('Not recorded'),
                         TextEntry::make('calculated_at')->label('Calculated at')->dateTime('d M Y, h:i A'),
-                        TextEntry::make('calculation_snapshot.pay_basis')->label('Pay basis')->formatStateUsing(fn ($state): string => match ($state) { 'daily' => 'Daily rate', 'hourly' => 'Hourly rate', default => 'Monthly salary' }),
+                        TextEntry::make('calculation_snapshot.pay_basis')->label('Pay basis')->formatStateUsing(fn ($state): string => match ($state) {
+                            'daily' => 'Daily rate', 'hourly' => 'Hourly rate', default => 'Monthly salary'
+                        }),
                     ])
                     ->columns(['default' => 1, 'md' => 2, 'xl' => 3])
                     ->collapsed(),
@@ -85,8 +87,8 @@ class SalarySlipInfolist
                     ->schema([
                         TextEntry::make('reviewedBy.name')->label('Reviewed by')->placeholder('Not reviewed'),
                         TextEntry::make('reviewed_at')->label('Reviewed at')->dateTime('d M Y, h:i A')->placeholder('—'),
-                        TextEntry::make('approvedBy.name')->label('Approved by')->placeholder('Not approved'),
-                        TextEntry::make('approved_at')->label('Approved at')->dateTime('d M Y, h:i A')->placeholder('—'),
+                        TextEntry::make('approvedBy.name')->label('Previously approved by')->visible(fn ($record) => $record->approved_at !== null),
+                        TextEntry::make('approved_at')->label('Previously approved at')->dateTime('d M Y, h:i A')->visible(fn ($record) => $record->approved_at !== null),
                         TextEntry::make('paidBy.name')->label('Marked paid by')->placeholder('Not paid'),
                         TextEntry::make('paid_at')->label('Paid at')->dateTime('d M Y, h:i A')->placeholder('—'),
                     ])
