@@ -369,7 +369,7 @@ class EmployeePortalTest extends TestCase
         }
     }
 
-    public function test_salary_history_and_details_only_include_own_approved_and_paid_slips(): void
+    public function test_salary_history_and_details_only_include_own_draft_approved_and_paid_slips(): void
     {
         $this->enable();
         $slips = [];
@@ -379,14 +379,16 @@ class EmployeePortalTest extends TestCase
         }
         $foreign = $slips['approved']->replicate()->fill(['user_id' => $this->manager->id]);
         $foreign->save();
-        $page = Livewire::test(SalarySlips::class)->filterTable('payroll_month', 'all')->assertCanSeeTableRecords([$slips['approved'], $slips['paid']])
-            ->assertCanNotSeeTableRecords([$slips['draft'], $slips['reviewed'], $foreign]);
+        $page = Livewire::test(SalarySlips::class)->filterTable('payroll_month', 'all')->assertCanSeeTableRecords([$slips['draft'], $slips['approved'], $slips['paid']])
+            ->assertCanNotSeeTableRecords([$slips['reviewed'], $foreign]);
         $page->mountTableAction('view', $slips['approved'])->assertActionMounted()->assertMountedActionModalSee('Payslip summary')->assertMountedActionModalSee('1,234.56');
         $page->unmountAction();
         $page->callTableAction('download', $slips['approved'])->assertFileDownloaded('salary-slips-2026-03.pdf');
         $page->mountTableAction('view', $foreign)->assertActionNotMounted();
-        $page->mountTableAction('view', $slips['draft'])->assertActionNotMounted();
-        $slips['approved']->update(['status' => 'draft']);
+        $page->mountTableAction('view', $slips['draft'])->assertActionMounted();
+        $page->unmountAction();
+        $page->callTableAction('download', $slips['draft'])->assertFileDownloaded('salary-slips-2026-01.pdf');
+        $slips['approved']->update(['status' => 'reviewed']);
         $page->mountTableAction('view', $slips['approved'])->assertActionNotMounted();
         $this->get('http://localhost/portal/ess/salary-slips')->assertOk();
     }
@@ -401,13 +403,13 @@ class EmployeePortalTest extends TestCase
             $older = SalarySlip::create(array_replace($attributes, ['period_start' => '2026-07-01', 'period_end' => '2026-07-31']));
             $foreign = SalarySlip::create(array_replace($attributes, ['user_id' => $this->manager->id]));
             $draft = SalarySlip::create(array_replace($attributes, ['period_start' => '2026-06-01', 'period_end' => '2026-06-30', 'status' => 'draft']));
-            Livewire::test(SalarySlips::class)->assertCanSeeTableRecords([$current, $older])
-                ->assertCanNotSeeTableRecords([$foreign, $draft])
+            Livewire::test(SalarySlips::class)->assertCanSeeTableRecords([$current, $older, $draft])
+                ->assertCanNotSeeTableRecords([$foreign])
                 ->filterTable('payroll_month', '2026-08')->assertCanSeeTableRecords([$current])
                 ->assertCanNotSeeTableRecords([$older, $foreign, $draft])
                 ->filterTable('payroll_month', '2026-07')->assertCanSeeTableRecords([$older])
                 ->assertCanNotSeeTableRecords([$current])
-                ->filterTable('payroll_month', 'all')->assertCanSeeTableRecords([$current, $older]);
+                ->filterTable('payroll_month', 'all')->assertCanSeeTableRecords([$current, $older, $draft]);
         } finally {
             Carbon::setTestNow();
         }

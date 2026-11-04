@@ -29,7 +29,7 @@ class SalarySlips extends PortalPage implements HasTable
 
     protected function availableSlips(): Builder
     {
-        return SalarySlip::where('user_id', PortalAccess::employee()->id)->whereIn('status', ['approved', 'paid']);
+        return SalarySlip::where('user_id', PortalAccess::employee()->id)->whereIn('status', ['draft', 'approved', 'paid']);
     }
 
     public function table(Table $table): Table
@@ -38,7 +38,9 @@ class SalarySlips extends PortalPage implements HasTable
             ->columns([
                 TextColumn::make('period_start')->label('Month')->date('F Y')->sortable(),
                 TextColumn::make('net_pay_minor')->label('Net pay')->formatStateUsing(fn (SalarySlip $record) => $record->formattedMoney('net_pay_minor')),
-                TextColumn::make('status')->badge()->color(fn ($state) => $state === 'paid' ? 'success' : 'primary'),
+                TextColumn::make('status')->badge()->color(fn ($state) => match ($state) {
+                    'paid' => 'success', 'draft' => 'gray', default => 'primary'
+                }),
                 TextColumn::make('approved_at')->label('Approved')->date('d M Y')->visibleFrom('md'),
             ])
             ->filters([PayrollMonthFilter::make(fn () => $this->availableSlips())->default('all')])
@@ -57,6 +59,6 @@ class SalarySlips extends PortalPage implements HasTable
             ->recordAction('view')
             ->defaultSort('period_start', 'desc')->defaultKeySort()
             ->paginated([10, 25, 50])->defaultPaginationPageOption(10)->enforcePaginationPageOptions()
-            ->emptyStateHeading('No approved salary slips yet');
+            ->emptyStateHeading('No salary slips yet');
     }
 }
