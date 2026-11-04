@@ -4,6 +4,7 @@ namespace App\Services\Payroll;
 
 use App\Models\AttendanceDay;
 use App\Models\EmployeeLeave;
+use App\Models\ManualAttendanceEntry;
 use App\Models\User;
 use App\Services\Attendance\ShiftAssignmentResolver;
 use App\Services\Leave\LeaveBalanceService;
@@ -44,7 +45,25 @@ class ManualPayrollReviewService
             }
         }
 
-        return AttendanceDay::where('user_id', $user->id)->whereIn('source', ['manual', 'mixed'])->whereDate('work_date', '>=', $start)->whereDate('work_date', '<=', $end)->exists();
+        if (ManualAttendanceEntry::where('user_id', $user->id)->whereBetween('work_date', [$start->toDateString(), $end->toDateString()])->exists()) {
+            return true;
+        }
+
+        return AttendanceDay::where('user_id', $user->id)->whereDate('work_date', '>=', $start)->whereDate('work_date', '<=', $end)
+            ->whereIn('source', ['manual', 'mixed'])
+            ->where(fn ($query) => $query
+                ->whereDoesntHave('occurrences', fn ($occurrence) => $occurrence->whereIn('source', ['manual', 'mixed']))
+                ->orWhereHas('occurrences', fn ($occurrence) => $occurrence->whereIn('source', ['manual', 'mixed'])
+                    ->whereNotExists(fn ($approval) => $approval->selectRaw('1')->from('attendance_approvals')
+                        ->where(fn ($match) => $match->whereColumn('attendance_approvals.attendance_occurrence_id', 'attendance_occurrences.id')
+                            ->orWhere(fn ($legacy) => $legacy->whereNull('attendance_approvals.attendance_occurrence_id')
+                                ->whereNotExists(fn ($other) => $other->selectRaw('1')->from('attendance_occurrences as other_occurrences')
+                                    ->whereColumn('other_occurrences.attendance_day_id', 'attendance_occurrences.attendance_day_id')
+                                    ->whereColumn('other_occurrences.id', '!=', 'attendance_occurrences.id'))))
+                        ->whereColumn('attendance_approvals.calculation_revision', 'attendance_days.calculation_revision')
+                        ->where('attendance_approvals.type', 'attendance')->where('attendance_approvals.state', 'approved')
+                        ->where('attendance_approvals.proposal->reason', 'manual_correction'))))
+            ->exists();
     }
 
     public function evidence(User $user, Carbon $period): array

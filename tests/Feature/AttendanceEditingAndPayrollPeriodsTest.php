@@ -350,13 +350,70 @@ class AttendanceEditingAndPayrollPeriodsTest extends TestCase
         $paid = $this->slip($this->employee('paid'), '2026-08', 'paid');
         $old = $this->slip($this->employee('old'), '2026-07');
         Livewire::test(ListSalarySlips::class)
-            ->assertCanSeeTableRecords([$current, $paid])
-            ->assertCanNotSeeTableRecords([$old])
-            ->filterTable('payroll_month', '2026-07')
             ->assertCanSeeTableRecords([$old])
             ->assertCanNotSeeTableRecords([$current, $paid])
+            ->filterTable('payroll_month', '2026-08')
+            ->assertCanSeeTableRecords([$current, $paid])
+            ->assertCanNotSeeTableRecords([$old])
             ->filterTable('payroll_month', 'all')
             ->assertCanSeeTableRecords([$current, $paid, $old]);
+    }
+
+    public function test_payslip_actions_explain_blocked_manual_review_and_then_succeed(): void
+    {
+        $user = $this->employee();
+        $user->payrollProfile()->create(['payroll_enabled' => true, 'basic_salary_minor' => 310000, 'effective_from' => '2026-08-01']);
+        $this->manualCalendar($user, '2026-08-01', '2026-08-31');
+        $slip = $this->slip($user, '2026-08');
+        $page = Livewire::test(ListSalarySlips::class)->filterTable('payroll_month', '2026-08');
+        $page->callTableAction('recalculate', $slip)->assertNotified(\Filament\Notifications\Notification::make()
+            ->title('Salary slip not updated')->body('Manual payroll period requires HR review of the complete eligible calendar. Use Review manual payroll period at the top of this page.')->danger());
+        $this->assertSame('draft', $slip->fresh()->status);
+        $review = app(ManualPayrollReviewService::class);
+        $period = Carbon::parse('2026-08-01');
+        $review->approve($user, $this->actor, $period, 'Verified the manual attendance', $review->signature($user, $period));
+        $page->callTableAction('recalculate', $slip)->assertHasNoActionErrors();
+        $page->callTableAction('review', $slip->fresh())->assertHasNoActionErrors();
+        $this->assertSame('reviewed', $slip->fresh()->status);
+    }
+
+    public function test_approved_attendance_correction_does_not_require_a_second_payroll_review(): void
+    {
+        $user = $this->employee();
+        $user->payrollProfile()->create(['payroll_enabled' => true, 'basic_salary_minor' => 310000, 'effective_from' => '2026-08-01']);
+        $shift = $this->shift();
+        app(ShiftAssignmentService::class)->setDefault($shift, '2026-08-01');
+        foreach (CarbonPeriod::create('2026-08-01', '2026-08-31') as $date) {
+            AttendanceDay::create(['user_id' => $user->id, 'work_date' => $date->toDateString(), 'status' => 'present', 'source' => 'device', 'approved_worked_minutes' => 480]);
+        }
+        $day = AttendanceDay::where('user_id', $user->id)->whereDate('work_date', '2026-08-05')->firstOrFail();
+        $day->update(['source' => 'mixed', 'calculation_revision' => 3]);
+        $occurrence = $day->occurrences()->create(['schedule_id' => $shift->id, 'position' => 1, 'source' => 'mixed', 'window_starts_at' => '2026-08-05 08:00:00', 'window_ends_at' => '2026-08-05 19:00:00']);
+        $approval = $day->approvals()->create(['attendance_occurrence_id' => $occurrence->id, 'type' => 'attendance', 'state' => 'approved', 'calculation_revision' => 2, 'proposal' => ['reason' => 'manual_correction']]);
+        $period = Carbon::parse('2026-08-01');
+        $review = app(ManualPayrollReviewService::class);
+        $this->assertTrue($review->required($user, $period));
+        $approval->update(['calculation_revision' => 3]);
+        $this->assertFalse($review->required($user, $period));
+        $approval->update(['attendance_occurrence_id' => null]);
+        $this->assertFalse($review->required($user, $period));
+        $second = $day->occurrences()->create(['schedule_id' => $shift->id, 'position' => 2, 'source' => 'mixed', 'window_starts_at' => '2026-08-05 20:00:00', 'window_ends_at' => '2026-08-06 06:00:00']);
+        $this->assertTrue($review->required($user, $period));
+        $approval->update(['attendance_occurrence_id' => $occurrence->id]);
+        $second->update(['source' => 'device']);
+        $this->assertFalse($review->required($user, $period));
+        $approval->update(['state' => 'pending']);
+        $this->assertTrue($review->required($user, $period));
+        $approval->update(['state' => 'approved']);
+        $day->update(['source' => 'manual']);
+        $occurrence->update(['source' => 'manual']);
+        $this->assertFalse($review->required($user, $period));
+        $slip = app(SalarySlipService::class)->generate($user, $period);
+        app(SalarySlipService::class)->transition($slip, $this->actor, 'reviewed');
+        $this->assertSame('reviewed', $slip->fresh()->status);
+        ManualAttendanceEntry::create(['user_id' => $user->id, 'work_date' => '2026-08-05', 'schedule_id' => $shift->id,
+            'shift_rule_revision_id' => $shift->activeRuleRevision($period)->id, 'in_at' => '2026-08-05 09:00:00', 'out_at' => '2026-08-05 17:00:00', 'reason' => 'Manual source']);
+        $this->assertTrue($review->required($user, $period));
     }
 
     public function test_csv_export_requires_one_month_and_never_contains_another_month(): void

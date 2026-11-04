@@ -17,8 +17,9 @@ final class PayrollMonthFilter
             ->selectablePlaceholder(false)
             ->options(function () use ($slips): array {
                 $current = now(TenantTimezone::get());
+                $previous = $current->copy()->subMonthNoOverflow();
                 $months = $slips()->select('period_start')->distinct()->orderByDesc('period_start')->pluck('period_start');
-                $options = [$current->format('Y-m') => 'This month ('.$current->format('M Y').')', 'all' => 'All months'];
+                $options = [$previous->format('Y-m') => 'Previous month ('.$previous->format('M Y').')', $current->format('Y-m') => 'This month ('.$current->format('M Y').')', 'all' => 'All months'];
                 foreach ($months as $period) {
                     $month = Carbon::parse($period);
                     $options[$month->format('Y-m')] ??= $month->format('F Y');

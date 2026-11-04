@@ -55,7 +55,8 @@ class SalarySlipsTable
                             ->live(),
                     ])
                     ->query(fn ($query) => $query),
-                PayrollMonthFilter::make(fn () => SalarySlip::query()),
+                PayrollMonthFilter::make(fn () => SalarySlip::query())
+                    ->default(fn () => now(\App\Services\Support\TenantTimezone::get())->subMonthNoOverflow()->format('Y-m')),
                 SelectFilter::make('user_id')->label('Employee')->relationship('user', 'name')->searchable()->preload(),
                 SelectFilter::make('branch_ids')->label('Branches')->multiple()->searchable()->options(fn () => Branch::orderBy('name')->pluck('name', 'id'))
                     ->query(fn ($query, array $data) => $query->when($data['values'] ?? [], fn ($query, $ids) => $query->whereHas('user', fn ($users) => PayrollEmployeeScope::apply($users, ['branch_ids' => $ids])))),

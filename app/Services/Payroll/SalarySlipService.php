@@ -392,7 +392,7 @@ class SalarySlipService
         return DB::transaction(function () use ($slip, $actor, $target) {
             $locked = SalarySlip::lockForUpdate()->findOrFail($slip->id);
             if ($locked->calculation_snapshot['needs_recalculation'] ?? false) {
-                throw ValidationException::withMessages(['attendance' => 'Holiday changes affected this slip. Recalculate or resolve the payroll adjustment before proceeding.']);
+                throw ValidationException::withMessages(['attendance' => 'Attendance changed after this slip was calculated. Recalculate it before proceeding.']);
             }
             $allowed = ['draft' => 'reviewed', 'reviewed' => 'approved', 'approved' => 'paid'];
             if (($allowed[$locked->status] ?? null) !== $target) {
