@@ -45,7 +45,8 @@ class LocationPunch extends Widget implements HasSchemas
     public function form(Schema $schema): Schema
     {
         return $schema->components([
-            Select::make('location_id')->label('Work location (optional)')->placeholder('Select a work location')->searchable()
+            Select::make('location_id')->label('Work location (optional)')->placeholder('Select a work location')->searchable()->preload()
+                ->options(fn () => WorkLocation::where('is_active', true)->orderBy('name')->limit(50)->pluck('name', 'id')->all())
                 ->getSearchResultsUsing(fn (string $search) => WorkLocation::where('is_active', true)->where('name', 'like', '%'.$search.'%')->orderBy('name')->limit(50)->pluck('name', 'id')->all())
                 ->getOptionLabelUsing(fn ($value) => WorkLocation::where('is_active', true)->find($value)?->name),
         ])->statePath('data');

@@ -91,7 +91,7 @@ final class AttendanceCorrectionForm
                         try {
                             $match = $context->match($user, $get('work_date'), $get('in_time'), $get('out_time'));
 
-                            return $match['name'].' · '.$match['in']->format('d M H:i').'–'.$match['out']->format('d M H:i');
+                            return $context->shiftLabel($match);
                         } catch (ValidationException $exception) {
                             return collect($exception->errors())->flatten()->first();
                         }
@@ -100,8 +100,7 @@ final class AttendanceCorrectionForm
 
                     return match (count($candidates)) {
                         0 => 'No assigned or default shift for this date.',
-                        1 => $candidates[0]['name'],
-                        default => 'Matched automatically from your times.',
+                        default => collect($candidates)->map(fn ($candidate) => $context->shiftLabel($candidate))->join(' · '),
                     };
                 }),
                 LocalDateTimePicker::make('in_time')->date(false)->label('Check-in')->seconds(false)->format('H:i')->rules(['date_format:H:i'])->required()->live(onBlur: true),

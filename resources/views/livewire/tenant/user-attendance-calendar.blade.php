@@ -1,10 +1,13 @@
 @php
     $month = \Carbon\Carbon::create($this->year, $this->month, 1);
-    $results = \App\Models\AttendanceDay::with(['occurrences.schedule', 'approvals'])
+    $results = \App\Models\AttendanceDay::with(['occurrences.schedule', 'occurrences.ruleRevision', 'approvals'])
         ->where('user_id', $record->id)
         ->whereBetween('work_date', [$month->copy()->startOfMonth(), $month->copy()->endOfMonth()])
         ->get()
         ->keyBy(fn ($day) => $day->work_date->format('Y-m-d'));
+    $holidays = \App\Models\HolidayOccurrence::with('holiday')->forEmployee($record)
+        ->whereBetween('holiday_date', [$month->copy()->startOfMonth(), $month->copy()->endOfMonth()])->get()
+        ->groupBy(fn ($holiday) => $holiday->holiday_date->format('Y-m-d'));
     $logs = $record->attendanceLogs()
         ->whereBetween('punched_at', [$month->copy()->startOfMonth(), $month->copy()->endOfMonth()])
         ->get()
@@ -49,6 +52,7 @@
     @media (max-width: 480px) {
         .user-attendance-calendar__table td { height: 3.5rem; padding: .125rem; }
         .user-attendance-calendar__status { display: none; }
+        .user-attendance-calendar__status--holiday { display: block; }
         .user-attendance-calendar__worked { font-size: .625rem; }
     }
 </style>
@@ -85,25 +89,33 @@
                                     $dayLogs = $logs->get($key, collect());
                                     $display = \App\Services\Attendance\AttendanceDayDisplay::forDay($result);
                                     $status = $display['status'];
+                                    $holidayNames = $holidays->get($key, collect())->pluck('holiday.name')->filter()->unique()->values()->all();
+                                    if ($holidayNames && in_array($status, ['not_calculated', 'off', 'holiday', 'no_shift'], true)) $status = 'holiday';
                                     $colors = match ($status) {
                                         'present' => '#dcfce7', 'half_day' => '#fef3c7', 'absent' => '#fee2e2',
                                         'off', 'holiday', 'no_shift' => '#e5e7eb', default => '#f3f4f6',
                                     };
-                                    $label = $display['label'];
+                                    $label = $status === 'holiday' ? 'Holiday' : $display['label'];
                                     $payload = [
                                         'date' => \Carbon\Carbon::parse($key)->format('M d, Y'), 'status' => $label,
+                                        'holidays' => $holidayNames,
                                         'worked' => $result ? $display['clock'].'h' : '—',
                                         'ot' => $display['unapproved_checkout'] ? 0 : ($result?->approved_overtime_minutes ?? 0),
                                         'shifts' => $result?->occurrences->map(fn ($occurrence) => [
-                                            'name' => $occurrence->schedule?->name, 'in' => $occurrence->first_in_at?->format('h:i A'),
-                                            'out' => ($occurrence->last_out_at ?? $occurrence->assumed_out_at)?->format('h:i A'), 'status' => $occurrence->status,
+                                            'name' => $occurrence->schedule?->name, 'number' => $occurrence->position,
+                                            'start' => $occurrence->ruleRevision?->start_time ? substr($occurrence->ruleRevision->start_time, 0, 5) : null,
+                                            'end' => $occurrence->ruleRevision?->end_time ? substr($occurrence->ruleRevision->end_time, 0, 5) : null,
+                                            'overnight' => (int) ($occurrence->ruleRevision?->end_day_offset ?? 0) > 0 || ($occurrence->ruleRevision && $occurrence->ruleRevision->end_time <= $occurrence->ruleRevision->start_time),
+                                            'status' => $occurrence->status,
                                         ])->values()->all() ?? [],
                                         'logs' => $dayLogs->map(fn ($log) => ['time' => $log->punched_at->format('h:i A'), 'status' => $log->status_label])->values()->all(),
                                     ];
                                 @endphp
                                 <td role="button" tabindex="0" aria-label="{{ $payload['date'] }}: {{ $label }}, {{ $payload['worked'] }}" @keydown.enter.prevent="$el.click()" @keydown.space.prevent="$el.click()" class="user-attendance-calendar__day" style="background-color: {{ $colors }}" @click='details = @json($payload); $dispatch("open-modal", { id: "attendance-day-detail" })'>
                                     <div class="user-attendance-calendar__date">{{ $number }}</div>
-                                    <div class="user-attendance-calendar__status">{{ $label }}</div>
+                                    <div class="user-attendance-calendar__status {{ $holidayNames || $status === 'holiday' ? 'user-attendance-calendar__status--holiday' : '' }}">
+                                        {{ $label }}@if ($holidayNames && $status !== 'holiday') · Holiday @endif
+                                    </div>
                                     @if ($result)<div class="user-attendance-calendar__worked">{{ $payload['worked'] }}</div>@endif
                                 </td>
                             @endif
@@ -118,8 +130,9 @@
         <x-slot name="heading"><span x-text="details?.date"></span></x-slot>
         <div x-show="details">
             <p class="font-semibold" x-text="details?.status+' · '+details?.worked"></p>
+            <template x-for="holiday in details?.holidays || []" :key="holiday"><p class="text-sm" x-text="'Holiday: ' + holiday"></p></template>
             <p class="text-sm text-gray-500">Approved OT: <span x-text="details?.ot"></span> minutes</p>
-            <template x-for="shift in details?.shifts || []"><div class="mt-3 rounded border p-3 text-sm"><b x-text="shift.name"></b><div><span x-text="shift.in || 'Missing IN'"></span> — <span x-text="shift.out || 'Missing OUT'"></span></div><span x-text="shift.status"></span></div></template>
+            <template x-for="shift in details?.shifts || []"><div class="mt-3 rounded border p-3 text-sm"><b x-text="'Shift ' + shift.number + ' · ' + (shift.name || 'Shift')"></b><div>Scheduled: <span x-text="shift.start || '—'"></span> — <span x-text="shift.end || '—'"></span><span x-show="shift.overnight"> (next day)</span></div><span x-text="shift.status"></span></div></template>
             <h4 class="mt-4 font-semibold">Raw punches</h4>
             <template x-for="log in details?.logs || []"><div class="text-sm"><span x-text="log.time"></span> · <span x-text="log.status"></span></div></template>
         </div>

@@ -219,6 +219,8 @@ class EmployeePortalTest extends TestCase
                 'earliest_arrival_minutes' => 60, 'checkout_cutoff_minutes' => 120, 'punch_method' => 'device']]);
         app(ShiftRuleService::class)->sync($shift);
         app(ShiftAssignmentService::class)->setDefault($shift, '2026-01-01');
+        Livewire::test(Attendance::class)->mountAction('requestCorrection')
+            ->setActionData(['work_date' => $date])->assertMountedActionModalSee('Shift 1 · Default day · 09:00–17:00');
         Livewire::test(Attendance::class)->callAction('requestCorrection', ['work_date' => $date, 'entry_mode' => 'manual', 'in_time' => '09:00', 'out_time' => '17:00', 'reason' => 'Device unavailable'])->assertHasNoActionErrors();
         $day = AttendanceDay::firstOrFail();
         $this->assertSame(0, $day->approved_worked_minutes);
@@ -389,7 +391,7 @@ class EmployeePortalTest extends TestCase
         $this->get('http://localhost/portal/ess/salary-slips')->assertOk();
     }
 
-    public function test_salary_month_defaults_to_this_month_and_all_keeps_employee_scope(): void
+    public function test_salary_month_defaults_to_all_and_keeps_employee_scope(): void
     {
         Carbon::setTestNow('2026-08-15 10:00:00');
         try {
@@ -399,12 +401,13 @@ class EmployeePortalTest extends TestCase
             $older = SalarySlip::create(array_replace($attributes, ['period_start' => '2026-07-01', 'period_end' => '2026-07-31']));
             $foreign = SalarySlip::create(array_replace($attributes, ['user_id' => $this->manager->id]));
             $draft = SalarySlip::create(array_replace($attributes, ['period_start' => '2026-06-01', 'period_end' => '2026-06-30', 'status' => 'draft']));
-            Livewire::test(SalarySlips::class)->assertCanSeeTableRecords([$current])
-                ->assertCanNotSeeTableRecords([$older, $foreign, $draft])
-                ->filterTable('payroll_month', 'all')->assertCanSeeTableRecords([$current, $older])
+            Livewire::test(SalarySlips::class)->assertCanSeeTableRecords([$current, $older])
                 ->assertCanNotSeeTableRecords([$foreign, $draft])
+                ->filterTable('payroll_month', '2026-08')->assertCanSeeTableRecords([$current])
+                ->assertCanNotSeeTableRecords([$older, $foreign, $draft])
                 ->filterTable('payroll_month', '2026-07')->assertCanSeeTableRecords([$older])
-                ->assertCanNotSeeTableRecords([$current]);
+                ->assertCanNotSeeTableRecords([$current])
+                ->filterTable('payroll_month', 'all')->assertCanSeeTableRecords([$current, $older]);
         } finally {
             Carbon::setTestNow();
         }
@@ -736,8 +739,11 @@ class EmployeePortalTest extends TestCase
         Queue::fake();
         $location = $this->fence();
         $data = $this->gps($location);
-        Livewire::test(LocationPunch::class)->assertSet('data.location_id', null)
+        $widget = Livewire::test(LocationPunch::class)->assertSet('data.location_id', null)
             ->assertSee('Work location (optional)')->assertSee('Check in');
+        $select = $widget->instance()->form->getComponent('location_id');
+        $this->assertSame('Office', $select->getOptions()[$location->id]);
+        $this->assertSame('Office', $select->getSearchResults('Off')[$location->id]);
         unset($data['location_id']);
         $data['latitude'] = 40.7128;
         $request = app(GeofencedPunchService::class)->record($data);

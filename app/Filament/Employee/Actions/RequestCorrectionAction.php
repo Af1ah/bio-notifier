@@ -12,8 +12,10 @@ use App\Services\Support\TenantTimezone;
 use Filament\Actions\Action;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Hidden;
+use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Textarea;
 use Filament\Notifications\Notification;
+use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Components\Utilities\Set;
 use Filament\Schemas\Schema;
 use Illuminate\Support\Facades\Validator;
@@ -47,6 +49,16 @@ final class RequestCorrectionAction
                         $set('entry_mode', AttendanceDay::where('user_id', $employee->id)->whereDate('work_date', $state)->exists() ? 'correction' : 'manual');
                     }),
                 Hidden::make('entry_mode'),
+                Placeholder::make('shift')->label('Assigned shifts')->content(function (Get $get): string {
+                    $date = $get('work_date');
+                    if (! Validator::make(['date' => $date], ['date' => 'required|date_format:Y-m-d'])->passes()) {
+                        return 'Choose a date.';
+                    }
+                    $context = app(AttendanceEntryContext::class);
+                    $candidates = $context->candidates(PortalAccess::employee(), $date);
+
+                    return $candidates ? collect($candidates)->map(fn ($candidate) => $context->shiftLabel($candidate))->join(' · ') : 'No assigned or default shift for this date.';
+                }),
                 LocalDateTimePicker::make('in_time')->label('Check-in')->date(false)->seconds(false)->format('H:i')->required(),
                 LocalDateTimePicker::make('out_time')->label('Checkout')->date(false)->seconds(false)->format('H:i')->required(),
                 Textarea::make('reason')->required()->maxLength(2000)->rows(3)->columnSpanFull(),

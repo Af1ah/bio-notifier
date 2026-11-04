@@ -426,11 +426,7 @@ class AttendanceCalculationService
 
     public function isHoliday(User $user, Carbon $date): bool
     {
-        return HolidayOccurrence::whereDate('holiday_date', $date)->whereHas('holiday', function ($q) use ($user) {
-            $q->where('active', true)->where(function ($q) use ($user) {
-                $q->whereDoesntHave('branches')->whereDoesntHave('departments')->whereDoesntHave('taskGroups')->orWhereHas('branches', fn ($x) => $x->whereKey($user->branch_id))->orWhereHas('departments', fn ($x) => $x->whereKey($user->department_id))->orWhereHas('taskGroups', fn ($x) => $x->whereIn('task_groups.id', $user->taskGroups()->pluck('task_groups.id')));
-            });
-        })->exists();
+        return HolidayOccurrence::whereDate('holiday_date', $date)->forEmployee($user)->exists();
     }
 
     public static function dailyStatus(int $workedMinutes, int $halfDayMinutes = 120, int $fullDayMinutes = 480): string

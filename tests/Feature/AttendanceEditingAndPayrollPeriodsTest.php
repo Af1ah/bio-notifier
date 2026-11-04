@@ -128,7 +128,8 @@ class AttendanceEditingAndPayrollPeriodsTest extends TestCase
         $this->punches($user, [['09:00', 0], ['17:00', 1]]);
         $page = Livewire::test(ListAttendanceDays::class)->mountAction('manualAttendance')
             ->setActionData(['user_id' => $user->id, 'work_date' => '2026-08-03'])
-            ->assertActionDataSet(['in_time' => '09:00', 'out_time' => '17:00']);
+            ->assertActionDataSet(['in_time' => '09:00', 'out_time' => '17:00'])
+            ->assertMountedActionModalSee('Shift 1 · Day · 09:00–17:00');
         $schema = $page->instance()->getSchema('mountedActionSchema0');
         $this->assertNull($schema->getComponent('schedule_id', withHidden: true));
         $this->assertNull($schema->getComponent('attendance_occurrence_id', withHidden: true));

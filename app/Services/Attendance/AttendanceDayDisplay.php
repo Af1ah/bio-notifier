@@ -29,7 +29,7 @@ final class AttendanceDayDisplay
         return ['status' => $status, 'minutes' => $minutes, 'unapproved_checkout' => $unapprovedCheckout,
             'label' => match ($status) {
                 'present' => 'Present', 'half_day' => 'Half day', 'absent' => 'Absent',
-                'off', 'holiday' => 'Off', 'no_shift' => 'No shift', 'pending', 'pending_approval' => 'Needs review', default => 'Not calculated',
+                'off' => 'Off', 'holiday' => 'Holiday', 'no_shift' => 'No shift', 'pending', 'pending_approval' => 'Needs review', default => 'Not calculated',
             },
             'color' => match ($status) {
                 'present' => 'success', 'half_day' => 'warning', 'absent' => 'danger', default => 'gray',

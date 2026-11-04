@@ -16,7 +16,7 @@ final class AttendanceEntryContext
         $occurrences = $day?->occurrences()->with(['schedule', 'ruleRevision'])->orderBy('position')->get();
         if ($occurrences?->isNotEmpty()) {
             return $occurrences->filter(fn ($occurrence) => $occurrence->ruleRevision !== null)->map(fn ($occurrence) => [
-                'occurrence' => $occurrence, 'schedule_id' => $occurrence->schedule_id,
+                'occurrence' => $occurrence, 'schedule_id' => $occurrence->schedule_id, 'position' => $occurrence->position,
                 'name' => $occurrence->schedule?->name ?? 'Shift', 'rule' => $occurrence->ruleRevision,
                 'start' => $occurrence->window_starts_at, 'end' => $occurrence->window_ends_at,
             ])->values()->all();
@@ -34,11 +34,18 @@ final class AttendanceEntryContext
                 $nextStart = TenantTimezone::parse($date.' '.$nextRule->start_time)->addDays((int) ($nextRule->start_time < $rule->start_time))->subMinutes($nextRule->earliest_arrival_minutes);
                 $end = $end->min($nextStart);
             }
-            $candidates[] = ['occurrence' => null, 'schedule_id' => $slot->schedule_id, 'name' => $slot->schedule->name, 'rule' => $rule,
+            $candidates[] = ['occurrence' => null, 'schedule_id' => $slot->schedule_id, 'position' => $slot->position, 'name' => $slot->schedule->name, 'rule' => $rule,
                 'start' => TenantTimezone::parse($date.' '.$rule->start_time)->subMinutes($rule->earliest_arrival_minutes), 'end' => $end];
         }
 
         return $candidates;
+    }
+
+    public function shiftLabel(array $candidate): string
+    {
+        $rule = $candidate['rule'];
+
+        return 'Shift '.$candidate['position'].' · '.$candidate['name'].' · '.substr($rule->start_time, 0, 5).'–'.substr($rule->end_time, 0, 5).($this->overnight($rule) ? ' (next day)' : '');
     }
 
     public function match(User $user, string $date, string $inTime, string $outTime): array

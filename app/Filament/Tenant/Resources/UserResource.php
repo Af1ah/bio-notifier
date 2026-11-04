@@ -351,15 +351,16 @@ class UserResource extends Resource
                             TextEntry::make('shift')
                                 ->label('Active Shift')
                                 ->state(function ($record) {
-                                    $assignment = app(ShiftAssignmentResolver::class)->resolve($record, now());
+                                    $date = now(\App\Services\Support\TenantTimezone::get());
+                                    $assignment = app(ShiftAssignmentResolver::class)->resolve($record, $date);
                                     if (! $assignment) {
                                         return 'No Active Schedule';
                                     }
 
-                                    return $assignment->slots->map(function ($slot) {
-                                        $rule = $slot->ruleRevision;
+                                    return $assignment->slots->map(function ($slot) use ($date) {
+                                        $rule = $slot->schedule?->activeRuleRevision($date);
 
-                                        return $slot->schedule->name.' ('.substr($rule?->start_time ?? '--:--', 0, 5).'–'.substr($rule?->end_time ?? '--:--', 0, 5).')';
+                                        return ($slot->schedule?->name ?? 'Shift').' ('.substr($rule?->start_time ?? '--:--', 0, 5).'–'.substr($rule?->end_time ?? '--:--', 0, 5).')';
                                     })->join(', ');
                                 }),
                         ]),

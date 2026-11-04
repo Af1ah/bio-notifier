@@ -41,7 +41,7 @@ class SalarySlips extends PortalPage implements HasTable
                 TextColumn::make('status')->badge()->color(fn ($state) => $state === 'paid' ? 'success' : 'primary'),
                 TextColumn::make('approved_at')->label('Approved')->date('d M Y')->visibleFrom('md'),
             ])
-            ->filters([PayrollMonthFilter::make(fn () => $this->availableSlips())])
+            ->filters([PayrollMonthFilter::make(fn () => $this->availableSlips())->default('all')])
             ->recordActions([ActionGroup::make([
                 ViewAction::make()->slideOver()->modalWidth('5xl')
                     ->schema(fn (Schema $schema) => SalarySlipInfolist::configure($schema)),
