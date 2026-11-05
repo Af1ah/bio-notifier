@@ -118,9 +118,6 @@ final class GatewayCommands
         }
         if ($operation === 'set_user_validity') {
             $parameters = DeviceAccessValidity::parameters($parameters);
-            if (DeviceProfilePolicy::datePilot($device) && ! DeviceProfilePolicy::supportsValidity($device) && $parameters['mode'] !== 'dates') {
-                throw ValidationException::withMessages(['mode' => 'Only date-based expiration is available for this device pilot.']);
-            }
         }
         if ($operation === 'sync_time') {
             abort_unless($parameters === [], 422);

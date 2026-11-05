@@ -78,8 +78,8 @@ final class CommandDataApplication
             $code = ['none' => '0', 'dates' => '1', 'entries' => '2', 'both' => '3'][$mode] ?? null;
             $matches = $code !== null && ($actual['Expires'] ?? null) === $code;
             if (in_array($mode, ['dates', 'both'], true)) {
-                $matches = $matches && DeviceUserAccess::date($actual['StartDatetime'] ?? null) === $expected['from']
-                    && DeviceUserAccess::date($actual['EndDatetime'] ?? null) === $expected['until'];
+                $matches = $matches && DeviceUserAccess::date($actual['StartDatetime'] ?? null) === str_replace('T', ' ', $expected['from'])
+                    && DeviceUserAccess::date($actual['EndDatetime'] ?? null) === str_replace('T', ' ', $expected['until']);
             }
             if (in_array($mode, ['entries', 'both'], true)) {
                 $counts = array_values(array_unique(array_filter([$actual['VaildCount'] ?? null, $actual['ValidCount'] ?? null], fn ($value) => $value !== null)));

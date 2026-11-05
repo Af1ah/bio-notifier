@@ -21,7 +21,7 @@ final class DeviceAccessValidity
         $mode = $input['mode'] ?? null;
         $rules = ['pin' => ['required', 'string', 'regex:/^[A-Za-z0-9_-]{1,64}$/'], 'mode' => ['required', 'in:none,dates,entries,both']];
         if (in_array($mode, ['dates', 'both'], true)) {
-            $rules += ['from' => ['required', 'date_format:Y-m-d'], 'until' => ['required', 'date_format:Y-m-d', 'after_or_equal:from']];
+            $rules += ['from' => ['required', 'date_format:Y-m-d,Y-m-d\TH:i:s'], 'until' => ['required', 'date_format:Y-m-d,Y-m-d\TH:i:s', 'after_or_equal:from']];
         }
         if (in_array($mode, ['entries', 'both'], true)) {
             $rules['entries'] = ['required', 'string', 'regex:/^[1-9][0-9]{0,4}$/', 'integer', 'between:1,65535'];

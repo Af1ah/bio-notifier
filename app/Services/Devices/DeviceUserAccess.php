@@ -16,7 +16,11 @@ final class DeviceUserAccess
         if (preg_match('/^0+$/', $value)) {
             return 'Unset on device';
         }
-        $date = str_replace('-', '', $value);
+        $date = str_replace(['-', ':', ' ', 'T'], '', $value);
+        if (preg_match('/^\d{14}$/', $date) && checkdate((int) substr($date, 4, 2), (int) substr($date, 6, 2), (int) substr($date, 0, 4))
+            && (int) substr($date, 8, 2) < 24 && (int) substr($date, 10, 2) < 60 && (int) substr($date, 12, 2) < 60) {
+            return substr($date, 0, 4).'-'.substr($date, 4, 2).'-'.substr($date, 6, 2).' '.substr($date, 8, 2).':'.substr($date, 10, 2).':'.substr($date, 12, 2);
+        }
         if (preg_match('/^\d{8}$/', $date) && checkdate((int) substr($date, 4, 2), (int) substr($date, 6, 2), (int) substr($date, 0, 4))) {
             return substr($date, 0, 4).'-'.substr($date, 4, 2).'-'.substr($date, 6, 2);
         }
