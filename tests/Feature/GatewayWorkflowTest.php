@@ -1491,6 +1491,24 @@ class GatewayWorkflowTest extends TestCase
         }
     }
 
+    public function test_ai_expiration_pilot_only_allows_date_mode(): void
+    {
+        config(['device_gateway.user_validity_enabled' => true, 'device_gateway.expiration_date_pilot_serial' => 'PILOTVALID01']);
+        [$company, $binding] = $this->company('PILOTVALID01');
+        $binding->update(['capabilities' => ['set_user_validity', 'query_users']]);
+        tenancy()->initialize($company);
+        $device = Device::firstOrFail();
+        $device->update(['options' => ['observed_metadata' => ['biometric_type' => '9']]]);
+        $this->assertTrue(app(DeviceCommandService::class)->available($device, 'set_user_validity'));
+        try {
+            app(DeviceCommandService::class)->request($device, 'set_user_validity', ['pin' => '7', 'mode' => 'none']);
+            $this->fail('Pilot accepted an untested mode.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('mode', $exception->errors());
+        }
+        $this->assertSame(0, DeviceCommand::count());
+    }
+
     public function test_existing_device_access_groups_can_be_read_edited_and_applied_on_demand(): void
     {
         config(['device_gateway.access_groups_enabled' => true]);

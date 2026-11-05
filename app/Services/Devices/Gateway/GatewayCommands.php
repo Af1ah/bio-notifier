@@ -14,6 +14,7 @@ use App\Services\Devices\DeviceAccessSettings;
 use App\Services\Devices\DeviceAccessValidity;
 use App\Services\Devices\DeviceIntegration;
 use App\Services\Devices\DeviceProfilePolicy;
+use App\Services\Support\QueuedActionNotifications;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -89,7 +90,7 @@ final class GatewayCommands
 
     public function request(Device $device, string $operation, array $parameters = [], ?string $requestId = null, ?string $dependsOn = null): DeviceCommand
     {
-        \App\Services\Devices\DeviceIntegration::authorizeManagement();
+        DeviceIntegration::authorizeManagement();
         abort_unless($this->available($device, $operation), 403);
         $binding = GatewayDeviceBinding::where('organisation_id', tenant('id'))->where('device_id', $device->id)->firstOrFail();
         $id = $requestId ?? (string) Str::uuid();
@@ -117,6 +118,9 @@ final class GatewayCommands
         }
         if ($operation === 'set_user_validity') {
             $parameters = DeviceAccessValidity::parameters($parameters);
+            if (DeviceProfilePolicy::datePilot($device) && ! DeviceProfilePolicy::supportsValidity($device) && $parameters['mode'] !== 'dates') {
+                throw ValidationException::withMessages(['mode' => 'Only date-based expiration is available for this device pilot.']);
+            }
         }
         if ($operation === 'sync_time') {
             abort_unless($parameters === [], 422);
@@ -151,7 +155,7 @@ final class GatewayCommands
 
     public function cancel(DeviceCommand $command): void
     {
-        \App\Services\Devices\DeviceIntegration::authorizeManagement();
+        DeviceIntegration::authorizeManagement();
         abort_unless(tenant() && tenant()->device_integration === DeviceIntegration::GATEWAY, 403);
         abort_unless(in_array($command->status, ['pending', 'sent', 'outcome_unknown'], true) && $command->gateway_command_id, 409);
         $submission = GatewayCommandSubmission::whereKey($command->gateway_command_id)
@@ -175,7 +179,7 @@ final class GatewayCommands
             ->whereIn('status', ['pending', 'sent', 'outcome_unknown'])
             ->update(['status' => 'cancelled', 'response' => 'Cancelled by operator. A command already sent may have executed.']);
         if ($updated = $command->fresh()) {
-            app(\App\Services\Support\QueuedActionNotifications::class)->send($updated);
+            app(QueuedActionNotifications::class)->send($updated);
         }
     }
 

@@ -6,6 +6,7 @@ use App\Models\Device;
 use App\Models\DeviceRosterEntry;
 use App\Services\Devices\DeviceAccessValidity;
 use App\Services\Devices\DeviceCommandService;
+use App\Services\Devices\DeviceProfilePolicy;
 use App\Services\Devices\DeviceUserAccess;
 use Filament\Actions\Action;
 use Filament\Forms\Components\DatePicker;
@@ -33,7 +34,9 @@ final class DeviceAccessPeriodAction
             ->label('Expiration rule')->icon('heroicon-o-calendar-days')->modalWidth('lg')
             ->authorize(fn (): bool => (bool) auth('web')->user()?->canManageDevices() && ((bool) auth('web')->user()?->has_login && $available()))
             ->visible($available)
-            ->modalDescription('Choose no expiration, dates, an entry limit, or both. Daily time periods and employee joining/end dates remain separate. Changing the rule replaces its previous limits.')
+            ->modalDescription(fn (): string => DeviceProfilePolicy::datePilot($device) && ! DeviceProfilePolicy::supportsValidity($device)
+                ? 'Date expiration is in testing. Confirm the rule and access on the terminal.'
+                : 'Choose no expiration, dates, an entry limit, or both. Daily time periods and employee joining/end dates remain separate. Changing the rule replaces its previous limits.')
             ->fillForm(function (DeviceRosterEntry $record): array {
                 $access = $record->access_settings ?? [];
                 $date = fn ($key) => preg_match('/^\d{4}-\d{2}-\d{2}$/', $value = DeviceUserAccess::date($access[$key] ?? null)) ? $value : null;
@@ -43,7 +46,8 @@ final class DeviceAccessPeriodAction
             })
             ->schema([
                 Hidden::make('request_id')->required()->rules(['uuid']),
-                Select::make('mode')->label('Expiration rule')->options(DeviceAccessValidity::MODES)->required()->live(),
+                Select::make('mode')->label('Expiration rule')->options(fn () => DeviceProfilePolicy::datePilot($device) && ! DeviceProfilePolicy::supportsValidity($device)
+                    ? ['dates' => 'Dates only (testing)'] : DeviceAccessValidity::MODES)->required()->live(),
                 DatePicker::make('from')->label('Start date')->native(true)->required()
                     ->visible(fn ($get): bool => in_array($get('mode'), ['dates', 'both'], true)),
                 DatePicker::make('until')->label('End date')->native(true)->afterOrEqual('from')->required()

@@ -45,6 +45,9 @@ final class DeviceProfilePolicy
 
     public static function allows(Device $device, string $operation): bool
     {
+        if ($operation === 'set_user_validity' && self::datePilot($device)) {
+            return true;
+        }
         if (in_array($operation, ['set_user_validity', 'query_access_groups', 'query_access_periods', 'set_access_group', 'set_access_period', 'set_user_access_group'], true)) {
             return self::supportsValidity($device);
         }
@@ -61,6 +64,14 @@ final class DeviceProfilePolicy
         }
 
         return $operation !== 'update_biophoto' || self::name($device) === 'visible-face-ta';
+    }
+
+    public static function datePilot(Device $device): bool
+    {
+        $serial = config('device_gateway.expiration_date_pilot_serial');
+
+        return filled($serial) && hash_equals((string) $serial, (string) $device->serial_number)
+            && ($device->options['observed_metadata']['biometric_type'] ?? null) === '9';
     }
 
     public static function format(Device $device, string $format): bool
