@@ -219,6 +219,9 @@ class EbioSoapService
                     $serialNumber = trim($parts[1]);
                     $location = isset($parts[2]) ? trim($parts[2]) : null;
 
+                    if (Device::onlyTrashed()->where('serial_number', $serialNumber)->exists()) {
+                        continue;
+                    }
                     $device = Device::firstOrNew(['serial_number' => $serialNumber]);
                     $device->name = $name;
                     $device->status = 'online';

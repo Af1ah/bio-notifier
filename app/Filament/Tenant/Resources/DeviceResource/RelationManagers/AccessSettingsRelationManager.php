@@ -38,7 +38,8 @@ abstract class AccessSettingsRelationManager extends RelationManager
 
     private function editable(): bool
     {
-        return (bool) auth('web')->user()?->canManageDevices() && self::canViewForRecord($this->getOwnerRecord(), static::class);
+        return (bool) auth('web')->user()?->canManageDevices() && self::canViewForRecord($this->getOwnerRecord(), static::class)
+            && app(DeviceCommandService::class)->available($this->getOwnerRecord(), 'set_access_'.static::$accessKind);
     }
 
     private function fields(bool $creating): array
@@ -111,7 +112,7 @@ abstract class AccessSettingsRelationManager extends RelationManager
             ->emptyStateDescription('Read access settings from the device. Firmware that does not return usable settings cannot provide existing-group editing.')
             ->headerActions([
                 Action::make('readAccessSettings')->label('Read access settings')->icon('heroicon-o-arrow-path')
-                    ->authorize(fn (): bool => $this->editable() && app(DeviceCommandService::class)->available($this->getOwnerRecord(), 'query_access_groups') && app(DeviceCommandService::class)->available($this->getOwnerRecord(), 'query_access_periods'))
+                    ->authorize(fn (): bool => (bool) auth('web')->user()?->canManageDevices() && self::canViewForRecord($this->getOwnerRecord(), static::class))
                     ->action(function (): void {
                         foreach (['query_access_periods', 'query_access_groups'] as $operation) {
                             app(DeviceCommandService::class)->request($this->getOwnerRecord(), $operation);

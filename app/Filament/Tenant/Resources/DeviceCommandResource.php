@@ -96,7 +96,7 @@ class DeviceCommandResource extends Resource
             Section::make('Command Details')
                 ->schema([
                     Select::make('device_id')
-                        ->relationship('device', 'serial_number')
+                        ->relationship('device', 'serial_number', modifyQueryUsing: fn ($query) => $query->forCommandSelection())
                         ->required()
                         ->searchable(),
                     Select::make('command_type')

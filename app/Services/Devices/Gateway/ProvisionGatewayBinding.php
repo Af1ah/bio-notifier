@@ -19,6 +19,7 @@ final class ProvisionGatewayBinding
         abort_if($existing && $existing->organisation_id !== $organisation->id, 409, 'Device reassignment requires an audited drain.');
         try {
             tenancy()->initialize($organisation);
+            abort_if(Device::onlyTrashed()->where('serial_number', $data['serial'])->exists(), 409, 'This device has been removed. Restore it explicitly before reconnecting.');
             $device = Device::firstOrCreate(['serial_number' => $data['serial']], ['name' => $data['device_name'], 'status' => 'unknown']);
         } finally {
             tenancy()->end();

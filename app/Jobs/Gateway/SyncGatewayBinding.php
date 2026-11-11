@@ -41,6 +41,9 @@ class SyncGatewayBinding implements ShouldQueue
             $provisioner->sync($binding, $client);
             $binding->refresh();
         }
+        if (! $binding->enabled) {
+            return;
+        }
         try {
             tenancy()->initialize(Organisation::findOrFail($binding->organisation_id));
             $device = Device::findOrFail($binding->device_id);

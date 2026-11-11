@@ -11,6 +11,9 @@ final class DeviceCommandService
 
     public function available(Device $device, string $operation): bool
     {
+        if ($device->trashed()) {
+            return false;
+        }
         return $this->resolver->current()->supports($device, $operation);
     }
 

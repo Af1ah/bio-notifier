@@ -41,6 +41,12 @@ class EbioDeviceCommandJob implements ShouldQueue
     public function handle(EbioSoapService $service): void
     {
         TenantContext::run($this->organisation, function () use ($service): void {
+            if (\App\Models\Device::onlyTrashed()->where('serial_number', $this->serialNumber)->exists()) {
+                if ($this->commandId) {
+                    DeviceCommand::find($this->commandId)?->markAsFailed('Device removed.');
+                }
+                return;
+            }
             $commandModel = null;
             if ($this->commandId) {
                 $commandModel = DeviceCommand::find($this->commandId);

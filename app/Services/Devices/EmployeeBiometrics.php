@@ -41,6 +41,9 @@ final class EmployeeBiometrics
                 continue;
             }
             if ($format === 'ai_face') {
+                if (blank($employee->ai_face_photo_path)) {
+                    continue;
+                }
                 $photo = $this->photo((string) $employee->ai_face_photo_path);
                 $transfers[] = ['update_biophoto', ['pin' => (string) $employee->pin, 'size' => (string) strlen($photo), 'content' => base64_encode($photo)]];
                 continue;
@@ -52,7 +55,7 @@ final class EmployeeBiometrics
             }
             $templates = BiometricCredentials::latest($templates, $format === 'finger' ? '1' : '2');
             if ($templates === []) {
-                $this->invalid('formats', 'No stored '.($format === 'finger' ? 'fingerprint' : 'face').' template. Register biometric data first.');
+                continue;
             }
             foreach ($templates as $template) {
                 $slot = $template['slot'];

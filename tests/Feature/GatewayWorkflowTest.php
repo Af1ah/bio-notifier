@@ -77,6 +77,126 @@ use Tests\TestCase;
 
 class GatewayWorkflowTest extends TestCase
 {
+    public function test_verified_f22_expiration_form_sends_times_and_rejects_unverified_modes(): void
+    {
+        config(['device_gateway.verified_date_expiration_serials' => ['VERIFIEDF22']]);
+        [$company, $binding] = $this->company('VERIFIEDF22');
+        $binding->update(['capabilities' => ['set_user_validity', 'query_users']]);
+        tenancy()->initialize($company);
+        $device = Device::firstOrFail();
+        $device->update(['options' => ['observed_metadata' => ['platform' => 'ZLM60_TFT']]]);
+        $roster = DeviceRosterEntry::create(['device_id' => $device->id, 'pin' => '0007', 'receipt_id' => (string) Str::uuid()]);
+        $this->actingAs(User::create(['name' => 'Admin', 'pin' => '900', 'privilege' => 14, 'email' => 'f22-admin@example.test', 'password' => 'password']), 'web');
+        URL::defaults(['tenant' => $company->shortname]);
+        Filament::setCurrentPanel(Filament::getPanel('tenant'));
+        Filament::bootCurrentPanel();
+        Queue::fake();
+        Livewire::test(DeviceUsersRelationManager::class, ['ownerRecord' => $device, 'pageClass' => EditDevice::class])
+            ->callTableAction('deviceAccessPeriod', $roster, data: ['request_id' => (string) Str::uuid(), 'mode' => 'dates', 'from' => '2026-11-11 09:15:00', 'until' => '2026-11-12 23:59:59'])
+            ->assertHasNoTableActionErrors();
+        $row = DB::table('gateway_command_outbox')->where('operation', 'set_user_validity')->first();
+        $this->assertSame('2026-11-11T09:15:00', ProtectedArray::decode($row->parameters)['from']);
+        $this->assertSame('2026-11-12T23:59:59', ProtectedArray::decode($row->parameters)['until']);
+        foreach ([['mode' => 'none'], ['mode' => 'entries', 'entries' => '3'], ['mode' => 'both', 'entries' => '3', 'from' => '2026-11-11', 'until' => '2026-11-12']] as $input) {
+            try {
+                app(DeviceAccessValidity::class)->applyToDeviceUser($roster, $device, $input);
+                $this->fail('An unverified expiration mode was accepted.');
+            } catch (ValidationException) {
+                $this->assertSame(1, DB::table('gateway_command_outbox')->where('operation', 'set_user_validity')->count());
+            }
+        }
+    }
+
+    public function test_bulk_push_sends_only_available_biometrics(): void
+    {
+        [$company, $binding] = $this->company('BULKBIO01');
+        $binding->update(['capabilities' => ['upsert_user', 'update_biodata']]);
+        tenancy()->initialize($company);
+        URL::defaults(['tenant' => $company->shortname]);
+        $this->actingAs(User::create(['name' => 'Admin', 'pin' => '900', 'privilege' => 14, 'email' => 'bulk-bio@example.test', 'password' => 'password']), 'web');
+        Filament::setCurrentPanel(Filament::getPanel('tenant'));
+        Filament::bootCurrentPanel();
+        Queue::fake();
+        $device = Device::firstOrFail();
+        $device->update(['options' => ['observed_metadata' => ['model' => 'iFace', 'fp_algorithm_version' => '10', 'face_algorithm_version' => '7', 'face_count' => '1'], 'supported_verification_formats' => ['rfid', 'finger', 'face']]]);
+        $employee = User::where('pin', '0007')->firstOrFail();
+        app(EmployeeBiometrics::class)->registerFingerprint($employee, '2', 'AwAAAAEAAABCAAA=', '10');
+        $without = User::create(['pin' => '0008', 'name' => 'No credentials']);
+        $face = User::create(['pin' => '0009', 'name' => 'Face only', 'face_templates' => [['slot' => '0', 'tmp' => 'face-template', 'bio_type' => '2', 'major_ver' => '7']]]);
+        Livewire::test(ListUsers::class)->callTableBulkAction('pushToDevice', [$employee, $without, $face], data: ['location' => [$device->id], 'formats' => ['finger', 'face']])->assertHasNoActionErrors();
+        $this->assertSame(3, DB::table('gateway_command_outbox')->where('operation', 'upsert_user')->count());
+        $this->assertSame(2, DB::table('gateway_command_outbox')->where('operation', 'update_biodata')->count());
+        $row = DB::table('gateway_command_outbox')->where('operation', 'update_biodata')->get()->first(fn ($row) => ProtectedArray::decode($row->parameters)['type'] === '1');
+        $this->assertSame('0007', ProtectedArray::decode($row->parameters)['pin']);
+        $this->assertSame('2', ProtectedArray::decode($row->parameters)['no']);
+        $faceRow = DB::table('gateway_command_outbox')->where('operation', 'update_biodata')->get()->first(fn ($row) => ProtectedArray::decode($row->parameters)['type'] === '2');
+        $this->assertSame('0009', ProtectedArray::decode($faceRow->parameters)['pin']);
+    }
+
+    public function test_empty_roster_is_accepted_without_deleting_employees(): void
+    {
+        [$company] = $this->company('EMPTYROSTER01');
+        Queue::fake();
+        $event = $this->event('EMPTYROSTER01');
+        unset($event['punches']);
+        $event['kind'] = 'users';
+        $event['users'] = [];
+        $this->deliver($event)->assertAccepted();
+        (new ApplyGatewayReceipt($event['id']))->handle(app(ReceiptApplier::class));
+        tenancy()->initialize($company);
+        $this->assertSame(0, DeviceRosterEntry::count());
+        $this->assertSame(1, User::where('pin', '0007')->count());
+    }
+
+    public function test_safe_device_removal_preserves_logs_and_disables_binding(): void
+    {
+        Queue::fake();
+        [$company, $binding] = $this->company('REMOVE01');
+        tenancy()->initialize($company);
+        $actor = User::create(['name' => 'Administrator', 'pin' => '900', 'privilege' => 14, 'email' => 'remove@example.test', 'password' => 'password']);
+        $this->actingAs($actor, 'web');
+        $device = Device::firstOrFail();
+        $device->update(['name' => 'Original branch terminal']);
+        $log = AttendanceLog::withoutEvents(fn () => AttendanceLog::create(['device_id' => $device->id, 'pin' => '0007', 'punched_at' => '2026-11-10 09:00:00', 'status' => 0, 'verify_type' => 1]));
+        URL::defaults(['tenant' => $company->shortname]);
+        Filament::setCurrentPanel(Filament::getPanel('tenant'));
+        Filament::bootCurrentPanel();
+        Livewire::test(ListDevices::class)->callTableAction('removeDevice', $device)->assertHasNoTableActionErrors()
+            ->assertRedirect(\App\Filament\Tenant\Resources\DeviceResource::getUrl('index'));
+        $this->assertNull(Device::find($device->id));
+        $this->assertTrue(Device::withTrashed()->findOrFail($device->id)->trashed());
+        $this->assertSame('Original branch terminal', $log->fresh()->device->name);
+        $this->assertFalse($binding->fresh()->enabled);
+        $this->assertSame(2, $binding->fresh()->version);
+        Queue::assertPushed(SyncGatewayBinding::class, fn ($job) => $job->bindingId === $binding->id);
+        $this->assertFalse(app(DeviceCommandService::class)->available($device->fresh(), 'info'));
+
+        $event = $this->event('REMOVE01');
+        $event['received_at'] = now()->addSecond()->toIso8601String();
+        app(ReceiptApplier::class)->apply(new GatewayIngressReceipt(['id' => $event['id'], 'device_id' => $device->id, 'kind' => 'attendance', 'payload' => $event]));
+        $this->assertSame(1, AttendanceLog::count());
+        $event['id'] = (string) Str::uuid();
+        $event['received_at'] = now()->subDay()->toIso8601String();
+        app(ReceiptApplier::class)->apply(new GatewayIngressReceipt(['id' => $event['id'], 'device_id' => $device->id, 'kind' => 'attendance', 'payload' => $event]));
+        $this->assertSame(2, AttendanceLog::count());
+        $this->assertNull(Device::find($device->id));
+        $this->expectException(HttpException::class);
+        app(ProvisionGatewayBinding::class)->provision([
+            'gateway_connection_id' => $this->connection->id, 'organisation_id' => $company->id,
+            'serial' => 'REMOVE01', 'device_name' => 'Reconnected', 'source_cidr' => '0.0.0.0/0',
+            'timezone' => 'Asia/Kolkata', 'enabled' => true, 'capabilities' => ['info'],
+        ]);
+    }
+
+    public function test_hr_cannot_remove_device(): void
+    {
+        [$company] = $this->company('REMOVE02');
+        tenancy()->initialize($company);
+        $this->actingAs(User::create(['name' => 'HR', 'pin' => '901', 'privilege' => User::HR_PRIVILEGE, 'email' => 'hr-remove@example.test', 'password' => 'password']), 'web');
+        $this->expectException(HttpException::class);
+        app(\App\Services\Devices\RemoveDevice::class)->remove(Device::firstOrFail());
+    }
+
     private array $organisations = [];
 
     private GatewayConnection $connection;
@@ -760,12 +880,8 @@ class GatewayWorkflowTest extends TestCase
         $this->assertArrayNotHasKey('card', ProtectedArray::decode($last->parameters));
         $device->update(['options' => ['supported_verification_formats' => ['rfid', 'finger', 'face']]]);
         $this->assertSame(['rfid', 'finger', 'face'], array_keys($service->formats($device)));
-        try {
-            $service->push($employee, $device, ['face']);
-            $this->fail('Missing face data was accepted.');
-        } catch (ValidationException) {
-            $this->assertSame(3, DB::table('gateway_command_outbox')->count());
-        }
+        $this->assertSame(1, $service->push($employee, $device, ['face']));
+        $this->assertSame(4, DB::table('gateway_command_outbox')->count());
         tenancy()->end();
     }
 
@@ -1491,7 +1607,7 @@ class GatewayWorkflowTest extends TestCase
         }
     }
 
-    public function test_ai_expiration_pilot_only_allows_date_mode(): void
+    public function test_ai_expiration_modes_remain_limited_to_the_selected_ai_device(): void
     {
         config(['device_gateway.user_validity_enabled' => true, 'device_gateway.expiration_date_pilot_serial' => 'PILOTVALID01']);
         [$company, $binding] = $this->company('PILOTVALID01');
@@ -1500,13 +1616,18 @@ class GatewayWorkflowTest extends TestCase
         $device = Device::firstOrFail();
         $device->update(['options' => ['observed_metadata' => ['biometric_type' => '9']]]);
         $this->assertTrue(app(DeviceCommandService::class)->available($device, 'set_user_validity'));
-        try {
-            app(DeviceCommandService::class)->request($device, 'set_user_validity', ['pin' => '7', 'mode' => 'none']);
-            $this->fail('Pilot accepted an untested mode.');
-        } catch (ValidationException $exception) {
-            $this->assertArrayHasKey('mode', $exception->errors());
+        Queue::fake();
+        foreach ([['mode' => 'none'], ['mode' => 'entries', 'entries' => '3'],
+            ['mode' => 'dates', 'from' => '2026-11-11', 'until' => '2026-11-12'],
+            ['mode' => 'both', 'from' => '2026-11-11', 'until' => '2026-11-12', 'entries' => '3']] as $parameters) {
+            app(DeviceCommandService::class)->request($device, 'set_user_validity', ['pin' => '7'] + $parameters);
         }
-        $this->assertSame(0, DeviceCommand::count());
+        $this->assertSame(4, DeviceCommand::count());
+        $device->serial_number = 'OTHER';
+        $this->assertFalse(app(DeviceCommandService::class)->available($device, 'set_user_validity'));
+        $device->serial_number = 'PILOTVALID01';
+        $device->options = ['observed_metadata' => ['biometric_type' => '1']];
+        $this->assertFalse(app(DeviceCommandService::class)->available($device, 'set_user_validity'));
     }
 
     public function test_existing_device_access_groups_can_be_read_edited_and_applied_on_demand(): void
@@ -1670,7 +1791,9 @@ class GatewayWorkflowTest extends TestCase
         $supported = $device->options;
         $device->update(['options' => ['observed_metadata' => ['model' => 'x 2008', 'platform' => 'ZMM510_TFT', 'firmware_version' => 'unknown']]]);
         $this->assertFalse(app(DeviceCommandService::class)->available($device, 'set_access_group'));
-        $this->assertFalse(AccessGroupsRelationManager::canViewForRecord($device, EditDevice::class));
+        $this->assertTrue(AccessGroupsRelationManager::canViewForRecord($device, EditDevice::class));
+        Livewire::test(AccessGroupsRelationManager::class, ['ownerRecord' => $device->fresh(), 'pageClass' => EditDevice::class])
+            ->assertTableActionVisible('readAccessSettings')->assertTableActionHidden('addAccessSetting');
         request()->attributes->remove('device-user-access-sync:'.tenant('id').':'.$device->id);
         Livewire::test(DeviceUsersRelationManager::class, ['ownerRecord' => $device->fresh(), 'pageClass' => EditDevice::class])
             ->assertTableActionHidden('editDeviceUserAccess', $roster);

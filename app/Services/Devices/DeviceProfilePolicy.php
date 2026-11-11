@@ -45,7 +45,10 @@ final class DeviceProfilePolicy
 
     public static function allows(Device $device, string $operation): bool
     {
-        if ($operation === 'set_user_validity' && self::datePilot($device)) {
+        if (in_array($operation, ['query_access_groups', 'query_access_periods'], true)) {
+            return self::name($device) !== 'unknown';
+        }
+        if ($operation === 'set_user_validity' && (self::datePilot($device) || self::verifiedDateExpiration($device))) {
             return true;
         }
         if (in_array($operation, ['set_user_validity', 'query_access_groups', 'query_access_periods', 'set_access_group', 'set_access_period', 'set_user_access_group'], true)) {
@@ -72,6 +75,12 @@ final class DeviceProfilePolicy
 
         return filled($serial) && hash_equals((string) $serial, (string) $device->serial_number)
             && ($device->options['observed_metadata']['biometric_type'] ?? null) === '9';
+    }
+
+    public static function verifiedDateExpiration(Device $device): bool
+    {
+        return in_array((string) $device->serial_number, config('device_gateway.verified_date_expiration_serials', []), true)
+            && self::name($device) === 'legacy-fp';
     }
 
     public static function format(Device $device, string $format): bool

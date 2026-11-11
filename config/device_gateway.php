@@ -6,6 +6,7 @@ return [
     // Expiration is independent from daily periods; exact firmware and binding checks apply.
     'user_validity_enabled' => (bool) env('DEVICE_USER_EXPIRATION_ENABLED', true),
     'expiration_date_pilot_serial' => env('DEVICE_EXPIRATION_DATE_PILOT_SERIAL'),
+    'verified_date_expiration_serials' => array_values(array_filter(array_map('trim', explode(',', env('DEVICE_VERIFIED_DATE_EXPIRATION_SERIALS', ''))))),
     // History imports are preserved without sending old punch notifications.
     'live_punch_window_minutes' => 15,
     // Only gateway management origins from this operator-owned allowlist are callable.

@@ -529,7 +529,7 @@ class UserResource extends Resource
                             CheckboxList::make('formats')->label('Include credentials')
                                 ->options(fn ($get): array => ($device = Device::find($get('device_id'))) ? app(EmployeeBiometrics::class)->formats($device) : [])
                                 ->default(['rfid'])
-                                ->helperText('Card is selected by default. Fingerprint sends all stored fingers; Face sends stored face templates; AI Face sends the stored JPEG. Unselected credentials are left unchanged.')
+                                ->helperText('Only available stored credentials are sent. Missing fingerprints and faces are skipped.')
                                 ->visible(fn ($get): bool => filled($get('device_id'))),
                         ])
                         ->action(function (User $record, array $data): void {
@@ -611,7 +611,7 @@ class UserResource extends Resource
                         ->icon('heroicon-o-finger-print')
                         ->form([
                             Select::make('device_id')->label('Device')
-                                ->options(fn () => Device::all()->mapWithKeys(fn (Device $device) => [$device->id => $device->name ?: $device->serial_number])->all())
+                                ->options(fn () => Device::query()->forCommandSelection()->get()->mapWithKeys(fn (Device $device) => [$device->id => $device->name ?: $device->serial_number])->all())
                                 ->required()->searchable(),
                             Select::make('type')->label('Biometric type')
                                 ->options(['finger' => 'Fingerprint', 'ai_face' => 'AI Face'])->required()->live(),
@@ -677,7 +677,7 @@ class UserResource extends Resource
                             Select::make('location')
                                 ->label('Select Device(s)')
                                 ->options(function () {
-                                    return Device::all()->mapWithKeys(function ($d) {
+                                    return Device::query()->forCommandSelection()->get()->mapWithKeys(function ($d) {
                                         $loc = $d->options['location'] ?? null;
 
                                         return $loc ? [$loc => ($d->name ?: $d->serial_number)." (Location: $loc)"] : [];
@@ -711,7 +711,7 @@ class UserResource extends Resource
                             Select::make('location')
                                 ->label('Select Device(s)')
                                 ->options(function () {
-                                    return Device::all()->mapWithKeys(function ($d) {
+                                    return Device::query()->forCommandSelection()->get()->mapWithKeys(function ($d) {
                                         $loc = $d->options['location'] ?? null;
 
                                         return $loc ? [$loc => ($d->name ?: $d->serial_number)." (Location: $loc)"] : [];
@@ -750,7 +750,19 @@ class UserResource extends Resource
                                 ->options(fn () => self::deviceOptions(DeviceIntegration::usesEbio() ? null : 'upsert_user'))
                                 ->searchable()
                                 ->multiple()
+                                ->live()
                                 ->placeholder('Leave blank for all devices'),
+                            CheckboxList::make('formats')->label('Include credentials')->default(['rfid'])
+                                ->visible(fn (): bool => ! DeviceIntegration::usesEbio())
+                                ->options(function ($get): array {
+                                    $options = [];
+                                    foreach (Device::query()->when(filled($get('location')), fn ($q) => $q->whereIn('id', $get('location')))->get() as $device) {
+                                        $options += app(EmployeeBiometrics::class)->formats($device);
+                                    }
+
+                                    return $options;
+                                })
+                                ->helperText('Only supported, stored credentials are sent for each employee. Missing fingerprints and faces are skipped.'),
                         ])
                         ->action(function (Collection $records, array $data) {
                             $organisation = tenancy()->tenant;
@@ -771,18 +783,16 @@ class UserResource extends Resource
                                 }
                             } else {
                                 $commandService = app(\App\Services\Devices\DeviceCommandService::class);
+                                validator($data, ['formats' => ['sometimes', 'array'], 'formats.*' => ['in:rfid,finger,face,ai_face,ai_face_template']])->validate();
+                                $biometrics = app(EmployeeBiometrics::class);
                                 $devices = $devices->filter(fn (Device $device) => $commandService->available($device, 'upsert_user'));
                                 $count = 0;
                                 $skipped = 0;
                                 foreach ($devices as $device) {
+                                    $formats = array_values(array_intersect($data['formats'] ?? [], array_keys($biometrics->formats($device))));
                                     foreach ($records as $user) {
                                         try {
-                                            $commandService->request($device, 'upsert_user', [
-                                                'pin' => (string) $user->pin,
-                                                'name' => (string) ($user->name ?: $user->pin),
-                                                'privilege' => (string) ((int) $user->device_privilege === 14 ? 14 : 0),
-                                                'card' => (string) ($user->card_number ?? ''),
-                                            ]);
+                                            $biometrics->push($user, $device, $formats);
                                             $count++;
                                         } catch (\Throwable $e) {
                                             report($e);
@@ -970,7 +980,7 @@ class UserResource extends Resource
     {
         $commands = app(\App\Services\Devices\DeviceCommandService::class);
 
-        return Device::query()->get()
+        return Device::query()->forCommandSelection()->get()
             ->filter(fn (Device $device): bool => $operation === null || $commands->available($device, $operation))
             ->mapWithKeys(function (Device $device): array {
                 $label = $device->name ?: $device->serial_number;
@@ -1033,7 +1043,7 @@ class UserResource extends Resource
     {
         $commands = app(\App\Services\Devices\DeviceCommandService::class);
 
-        return Device::query()->get()
+        return Device::query()->forCommandSelection()->get()
             ->filter(fn (Device $device): bool => $commands->available($device, 'query_biodata'))
             ->mapWithKeys(fn (Device $device): array => [$device->id => $device->name ?: $device->serial_number])
             ->all();

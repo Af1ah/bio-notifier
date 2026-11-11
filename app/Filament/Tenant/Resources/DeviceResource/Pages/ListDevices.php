@@ -83,7 +83,7 @@ class ListDevices extends ListRecords
                     Select::make('device_id')
                         ->label('Select Device')
                         ->options(function () {
-                            return Device::all()->mapWithKeys(function ($d) {
+                            return Device::query()->forCommandSelection()->get()->mapWithKeys(function ($d) {
                                 return [$d->id => $d->name ?: $d->serial_number];
                             });
                         })

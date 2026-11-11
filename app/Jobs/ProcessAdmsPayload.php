@@ -36,6 +36,9 @@ class ProcessAdmsPayload implements ShouldQueue
             }
 
             $deviceModel = config('zkteco-adms.models.device', Device::class);
+            if ($deviceModel === Device::class && Device::onlyTrashed()->where('serial_number', $this->payload->serial_number)->exists()) {
+                return;
+            }
             $device = $deviceModel::where('serial_number', $this->payload->serial_number)->first();
 
             if (! $device) {

@@ -28,6 +28,8 @@ use Illuminate\Support\Carbon;
  */
 class Device extends Model
 {
+    use \Illuminate\Database\Eloquent\SoftDeletes;
+
     // ADMS terminals poll at a short cadence. A long grace period makes an
     // unplugged terminal look live long after its last real heartbeat.
     public const CONNECTION_WINDOW_MINUTES = 2;
@@ -111,6 +113,14 @@ class Device extends Model
             now()->subMinutes(self::CONNECTION_WINDOW_MINUTES),
             now(),
         ]);
+    }
+
+    public function scopeForCommandSelection(Builder $query): Builder
+    {
+        $activity = $this->qualifyColumn('last_activity_at');
+
+        return $query->withoutTrashed()->orderByRaw("CASE WHEN {$activity} BETWEEN ? AND ? THEN 0 ELSE 1 END", [now()->subMinutes(self::CONNECTION_WINDOW_MINUTES), now()])
+            ->orderBy($this->qualifyColumn('name'))->orderBy($this->qualifyColumn('id'));
     }
 
     /** @return list<string> */

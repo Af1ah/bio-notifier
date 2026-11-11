@@ -61,6 +61,19 @@ class DeviceResource extends Resource
         return false;
     }
 
+    public static function removeDeviceAction(): Action
+    {
+        return Action::make('removeDevice')->label('Remove device')->icon('heroicon-o-trash')->color('danger')
+            ->authorize(fn (): bool => (bool) auth('web')->user()?->has_login && (bool) auth('web')->user()?->canManageDevices())
+            ->requiresConfirmation()->modalHeading('Remove device?')
+            ->modalDescription('The device will disappear from active devices and stop accepting new data. Attendance logs and the device name will be preserved. This does not erase the terminal.')
+            ->modalSubmitActionLabel('Remove device')
+            ->action(function (Device $record): void {
+                app(\App\Services\Devices\RemoveDevice::class)->remove($record);
+                Notification::make()->title('Device removed')->body('Attendance history has been preserved.')->success()->send();
+            })->successRedirectUrl(fn (): string => self::getUrl('index'));
+    }
+
     public static function form(Schema $schema): Schema
     {
         return $schema->components([
@@ -194,6 +207,7 @@ class DeviceResource extends Resource
             ->recordActions([
                 ActionGroup::make([
                     ViewAction::make(),
+                    self::removeDeviceAction(),
                     ...self::connectionActions(),
                     Action::make('reboot')
                         ->authorize(fn (): bool => DeviceIntegration::usesEbio())

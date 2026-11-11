@@ -14,7 +14,7 @@ class EditDevice extends EditRecord
     {
         return [
             Actions\ViewAction::make(),
-            Actions\DeleteAction::make(),
+            DeviceResource::removeDeviceAction(),
         ];
     }
 }

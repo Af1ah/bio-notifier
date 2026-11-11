@@ -118,6 +118,9 @@ final class GatewayCommands
         }
         if ($operation === 'set_user_validity') {
             $parameters = DeviceAccessValidity::parameters($parameters);
+            if (DeviceProfilePolicy::verifiedDateExpiration($device) && $parameters['mode'] !== 'dates') {
+                throw ValidationException::withMessages(['mode' => 'This device supports verified date-and-time expiration only.']);
+            }
         }
         if ($operation === 'sync_time') {
             abort_unless($parameters === [], 422);

@@ -65,7 +65,7 @@ class ListUsers extends ListRecords
                 ->modalDescription('The device sends its users on the next connection. New users are added as employees; existing employee names are updated. Payroll and login settings are not changed.')
                 ->form([
                     Select::make('device_id')->label('Device')
-                        ->options(fn () => Device::query()->get()->filter(fn (Device $device) => app(DeviceCommandService::class)->available($device, 'query_users'))->mapWithKeys(fn (Device $device) => [$device->id => trim(($device->name ?: 'Unnamed device').' — '.$device->serial_number)])->all())
+                        ->options(fn () => Device::query()->forCommandSelection()->get()->filter(fn (Device $device) => app(DeviceCommandService::class)->available($device, 'query_users'))->mapWithKeys(fn (Device $device) => [$device->id => trim(($device->name ?: 'Unnamed device').' — '.$device->serial_number)])->all())
                         ->searchable()->required(),
                 ])
                 ->action(function (array $data): void {

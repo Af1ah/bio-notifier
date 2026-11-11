@@ -63,7 +63,7 @@ class DeviceUsersRelationManager extends RelationManager
                 ->dateTime(timezone: fn () => TenantTimezone::get())->placeholder('Not read yet'),
             TextColumn::make('updated_at')->label('User last received')
                 ->dateTime(timezone: fn () => TenantTimezone::get()),
-        ])->defaultSort('pin')
+        ])->defaultSort('pin')->emptyStateHeading('No device users')->emptyStateDescription('Read device users to refresh this list.')
             ->description('Access settings belong to this device user. Missing values do not mean unrestricted access. Use Read device users to refresh the snapshot.')
             ->headerActions([
                 Action::make('readDeviceUsers')->label('Read device users')->icon('heroicon-o-arrow-path')

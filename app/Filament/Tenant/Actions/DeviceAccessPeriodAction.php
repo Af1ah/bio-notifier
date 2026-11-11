@@ -35,7 +35,9 @@ final class DeviceAccessPeriodAction
             ->label('Expiration rule')->icon('heroicon-o-calendar-days')->modalWidth('lg')
             ->authorize(fn (): bool => (bool) auth('web')->user()?->canManageDevices() && ((bool) auth('web')->user()?->has_login && $available()))
             ->visible($available)
-            ->modalDescription('Choose dates, an entry limit, or both. Confirm the rule on the terminal.')
+            ->modalDescription(fn (): string => DeviceProfilePolicy::verifiedDateExpiration($device)
+                ? 'Choose the allowed start and end date and time.'
+                : 'Choose dates, an entry limit, or both. Confirm the rule on the terminal.')
             ->fillForm(function (DeviceRosterEntry $record): array {
                 $access = $record->access_settings ?? [];
                 $date = fn ($key) => preg_match('/^\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?$/', $value = DeviceUserAccess::date($access[$key] ?? null)) ? $value : null;
@@ -45,10 +47,10 @@ final class DeviceAccessPeriodAction
             })
             ->schema([
                 Hidden::make('request_id')->required()->rules(['uuid']),
-                Select::make('mode')->label('Expiration rule')->options(DeviceAccessValidity::MODES)->required()->live(),
-                (DeviceProfilePolicy::datePilot($device) ? DateTimePicker::make('from')->label('Start date and time') : DatePicker::make('from')->label('Start date'))->native(true)->required()
+                Select::make('mode')->label('Expiration rule')->options(DeviceProfilePolicy::verifiedDateExpiration($device) ? ['dates' => 'Dates and times'] : DeviceAccessValidity::MODES)->required()->live(),
+                ((DeviceProfilePolicy::datePilot($device) || DeviceProfilePolicy::verifiedDateExpiration($device)) ? DateTimePicker::make('from')->label('Start date and time') : DatePicker::make('from')->label('Start date'))->native(true)->required()
                     ->visible(fn ($get): bool => in_array($get('mode'), ['dates', 'both'], true)),
-                (DeviceProfilePolicy::datePilot($device) ? DateTimePicker::make('until')->label('End date and time') : DatePicker::make('until')->label('End date'))->native(true)->afterOrEqual('from')->required()
+                ((DeviceProfilePolicy::datePilot($device) || DeviceProfilePolicy::verifiedDateExpiration($device)) ? DateTimePicker::make('until')->label('End date and time') : DatePicker::make('until')->label('End date'))->native(true)->afterOrEqual('from')->required()
                     ->visible(fn ($get): bool => in_array($get('mode'), ['dates', 'both'], true)),
                 TextInput::make('entries')->label('Entry limit')->integer()->minValue(1)->maxValue(65535)->required()
                     ->helperText('Sets a new allowance once. Reapplying a limit can replenish remaining entries.')

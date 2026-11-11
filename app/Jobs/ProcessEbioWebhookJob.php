@@ -72,6 +72,9 @@ class ProcessEbioWebhookJob implements ShouldQueue
                 try {
                     // Lookup or create device
                     $serial = filled($logData['SerialNumber'] ?? null) ? $logData['SerialNumber'] : 'ebio-unidentified';
+                    if (Device::onlyTrashed()->where('serial_number', $serial)->exists()) {
+                        continue;
+                    }
                     if (! config('services.ebio.allow_device_discovery', true) && ! Device::where('serial_number', $serial)->exists()) {
                         throw new \RuntimeException('Unregistered webhook device. Provision the device before replay.');
                     }

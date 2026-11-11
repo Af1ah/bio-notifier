@@ -35,10 +35,13 @@ final class ReceiptApplier
             if ($receipt->kind === 'attendance') {
                 $employees = User::whereIn('pin', array_column($payload['punches'], 'pin'))->orderBy('id')->lockForUpdate()->get()->keyBy('pin');
             }
-            $device = Device::whereKey($receipt->device_id)->where('serial_number', $payload['serial'])->lockForUpdate()->firstOrFail();
+            $device = Device::withTrashed()->whereKey($receipt->device_id)->where('serial_number', $payload['serial'])->lockForUpdate()->firstOrFail();
             $received = Carbon::parse($payload['received_at']);
+            if ($device->trashed() && $received->greaterThanOrEqualTo($device->deleted_at)) {
+                return;
+            }
             app(CommandDataApplication::class)->received($receipt);
-            if (! $device->last_activity_at || $received->gt($device->last_activity_at)) {
+            if (! $device->trashed() && (! $device->last_activity_at || $received->gt($device->last_activity_at))) {
                 $device->update(['last_activity_at' => $received, 'status' => 'online']);
             }
             if ($receipt->kind === 'attendance') {

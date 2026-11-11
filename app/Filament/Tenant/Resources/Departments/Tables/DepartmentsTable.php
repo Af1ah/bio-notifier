@@ -52,7 +52,7 @@ class DepartmentsTable
                             \Filament\Forms\Components\Select::make('location')
                                 ->label('Select Device(s)')
                                 ->options(function () {
-                                    return \App\Models\Device::all()->mapWithKeys(function ($d) {
+                                    return \App\Models\Device::query()->forCommandSelection()->get()->mapWithKeys(function ($d) {
                                         $loc = $d->options['location'] ?? null;
                                         return $loc ? [$loc => ($d->name ?: $d->serial_number) . " (Location: $loc)"] : [];
                                     })->filter()->toArray();
@@ -87,7 +87,7 @@ class DepartmentsTable
                             \Filament\Forms\Components\Select::make('location')
                                 ->label('Select Device(s)')
                                 ->options(function () {
-                                    return \App\Models\Device::all()->mapWithKeys(function ($d) {
+                                    return \App\Models\Device::query()->forCommandSelection()->get()->mapWithKeys(function ($d) {
                                         $loc = $d->options['location'] ?? null;
                                         return $loc ? [$loc => ($d->name ?: $d->serial_number) . " (Location: $loc)"] : [];
                                     })->filter()->toArray();
