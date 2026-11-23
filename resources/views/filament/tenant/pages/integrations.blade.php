@@ -63,6 +63,7 @@
     <x-filament::section :heading="__('organisation-settings.frappe_status')">
         <x-slot name="afterHeader">
             <div class="flex flex-wrap gap-2">
+                {{ $this->syncHistoryAction }}
                 <x-filament::button tag="a" :href="\App\Filament\Tenant\Pages\Integrations::getUrl()" wire:navigate color="gray" size="sm" icon="heroicon-o-arrow-path">
                     {{ __('organisation-settings.frappe_refresh') }}
                 </x-filament::button>
@@ -82,12 +83,25 @@
                     </div>
                 @endforeach
             </dl>
+            <div class="rounded-lg bg-gray-50 p-4 dark:bg-white/5">
+                <p class="text-sm font-medium">{{ __('organisation-settings.frappe_last_synced') }}</p>
+                @if ($last = $summary['last_synced'])
+                    <p class="mt-2 text-sm">{{ $last->employee_name ?: __('organisation-settings.frappe_employee_pin', ['pin' => $last->pin]) }} · {{ \Carbon\Carbon::parse($last->punched_at)->format('d M Y, H:i') }}</p>
+                    <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ __('organisation-settings.frappe_synced_at', ['time' => \Carbon\Carbon::parse($last->sent_at)->setTimezone(\App\Services\Support\TenantTimezone::get())->format('d M Y, H:i T')]) }}</p>
+                @else
+                    <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">{{ __('organisation-settings.frappe_never_synced') }}</p>
+                @endif
+            </div>
             <div class="divide-y divide-gray-200 dark:divide-white/10">
                 @forelse ($summary['recent'] as $delivery)
                     <div class="flex flex-wrap items-center justify-between gap-3 py-3" wire:key="checkin-{{ $delivery->attendance_log_id }}">
                         <div class="min-w-0 space-y-1">
                             <p class="text-sm font-medium">{{ __('organisation-settings.punch_number', ['id' => $delivery->attendance_log_id]) }}</p>
+                            <p class="text-sm">{{ $delivery->employee_name ?: __('organisation-settings.frappe_employee_pin', ['pin' => $delivery->pin]) }} · {{ \Carbon\Carbon::parse($delivery->punched_at)->format('d M Y, H:i') }}</p>
                             <p class="text-sm text-gray-500 dark:text-gray-400">{{ __('organisation-settings.delivery_attempts', ['count' => $delivery->attempts]) }}</p>
+                            @if ($delivery->error && $delivery->retry_at)
+                                <p class="text-sm text-gray-500 dark:text-gray-400">{{ __('organisation-settings.frappe_retry_at', ['time' => \Carbon\Carbon::parse($delivery->retry_at)->setTimezone(\App\Services\Support\TenantTimezone::get())->format('d M, H:i T')]) }}</p>
+                            @endif
                             @if ($delivery->error)
                                 <p class="text-sm text-gray-500 dark:text-gray-400">{{ $this->deliveryError($delivery->error) }}</p>
                             @endif

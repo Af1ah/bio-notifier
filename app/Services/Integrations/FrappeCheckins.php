@@ -10,6 +10,8 @@ use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\ValidationException;
 
 final class FrappeCheckins
 {
@@ -31,6 +33,33 @@ final class FrappeCheckins
                 $batch,
             ));
         }
+    }
+
+    public function queueHistory(string $from, string $to): int
+    {
+        Validator::make(compact('from', 'to'), [
+            'from' => ['required', 'date_format:Y-m-d'],
+            'to' => ['required', 'date_format:Y-m-d', 'after_or_equal:from'],
+        ])->validate();
+
+        return DB::transaction(function () use ($from, $to): int {
+            if (! FrappeSetting::whereKey(1)->where('enabled', true)->sharedLock()->first()) {
+                throw ValidationException::withMessages(['from' => __('organisation-settings.frappe_history_disabled')]);
+            }
+            $ids = DB::table('attendance_logs')->whereBetween('punched_at', [$from.' 00:00:00', $to.' 23:59:59.999999'])
+                ->whereNotExists(fn ($query) => $query->selectRaw('1')->from('frappe_checkin_deliveries')
+                    ->whereColumn('attendance_log_id', 'attendance_logs.id'))
+                ->orderBy('id')->limit(5000)->pluck('id');
+            $queued = 0;
+            $readyAt = now();
+            foreach ($ids->chunk(400) as $batch) {
+                $queued += DB::table('frappe_checkin_deliveries')->insertOrIgnore($batch->map(
+                    fn ($id) => ['attendance_log_id' => $id, 'retry_at' => $readyAt],
+                )->all());
+            }
+
+            return $queued;
+        });
     }
 
     public static function payload(AttendanceLog $log): array
@@ -99,6 +128,12 @@ final class FrappeCheckins
                 if (is_string($detail['message'] ?? null)
                     && str_starts_with($detail['message'], 'This employee already has a log with the same timestamp.')) {
                     return new FrappeDeliveryResult(outcome: 'existing');
+                }
+                if (is_string($detail['message'] ?? null) && str_starts_with($detail['message'], 'No Employee found for the given employee field value.')) {
+                    return new FrappeDeliveryResult(error: 'employee_not_found');
+                }
+                if (is_string($detail['message'] ?? null) && str_starts_with($detail['message'], 'Log Type is required for check-ins falling in the shift:')) {
+                    return new FrappeDeliveryResult(error: 'log_type_required');
                 }
             }
         }

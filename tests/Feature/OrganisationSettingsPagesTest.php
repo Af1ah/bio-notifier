@@ -6,10 +6,12 @@ use App\Filament\Tenant\Pages\Integrations;
 use App\Jobs\ProcessEbioWebhookJob;
 use App\Jobs\PushFrappeCheckins;
 use App\Models\AttendanceLog;
+use App\Models\Device;
 use App\Models\FrappeSetting;
 use App\Models\Organisation;
 use App\Models\User;
 use App\Services\Integrations\FrappeCheckins;
+use App\Services\Support\TenantTimezone;
 use Filament\Facades\Filament;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Artisan;
@@ -17,6 +19,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\URL;
+use Illuminate\Validation\ValidationException;
 use Livewire\Livewire;
 use Symfony\Component\Process\ExecutableFinder;
 use Tests\TestCase;
@@ -134,6 +137,75 @@ class OrganisationSettingsPagesTest extends TestCase
         $this->assertNull($page->instance()->deliverySummary()['health']);
         $this->travelBack();
         Http::assertNothingSent();
+    }
+
+    public function test_older_punches_are_queued_once_with_date_defaults_and_last_sync_details(): void
+    {
+        tenancy()->initialize($this->organisation);
+        URL::defaults(['tenant' => $this->organisation->shortname]);
+        Filament::setCurrentPanel(Filament::getPanel('tenant'));
+        Filament::bootCurrentPanel();
+        $this->actingAs(User::create([
+            'name' => 'History admin', 'pin' => '907', 'privilege' => 14,
+            'email' => 'history-admin@example.test', 'password' => 'test-only-password',
+        ]), 'web');
+        $settings = FrappeSetting::create([
+            'id' => 1, 'hostname' => 'hr.example.com', 'api_key' => 'testkey', 'api_secret' => 'testsecret', 'enabled' => true,
+        ]);
+        $device = Device::create(['name' => 'History device', 'serial_number' => 'HISTORY01']);
+        foreach (['2020-01-01 00:00:00', '2020-01-31 23:59:59', '2020-02-01 00:00:00'] as $date) {
+            DB::table('attendance_logs')->insert(['device_id' => $device->id, 'pin' => '0042', 'punched_at' => $date]);
+        }
+        Http::preventStrayRequests();
+        Http::fake();
+        $page = Livewire::test(Integrations::class)->mountAction('syncHistory')
+            ->assertActionDataSet(['from' => '2020-01-01', 'to' => today(TenantTimezone::get())->toDateString()]);
+        $page->fillForm(['from' => '2020-01-01', 'to' => '2020-01-31'])->callMountedAction()
+            ->assertHasNoActionErrors()->assertNotified('2 punches queued');
+        $this->assertDatabaseCount('frappe_checkin_deliveries', 2);
+        $this->assertSame(0, app(FrappeCheckins::class)->queueHistory('2020-01-01', '2020-01-31'));
+        $ids = DB::table('frappe_checkin_deliveries')->orderBy('attendance_log_id')->pluck('attendance_log_id');
+        DB::table('frappe_checkin_deliveries')->where('attendance_log_id', $ids[0])->update([
+            'sent_at' => now(), 'retry_at' => null, 'outcome' => 'verified', 'attempts' => 1,
+        ]);
+        DB::table('frappe_checkin_deliveries')->where('attendance_log_id', $ids[1])->update([
+            'error' => 'employee_not_found', 'retry_at' => null, 'attempts' => 1,
+        ]);
+        $this->assertSame(0, app(FrappeCheckins::class)->queueHistory('2020-01-01', '2020-01-31'));
+        $summary = $page->instance()->deliverySummary();
+        $this->assertEquals($ids[0], $summary['last_synced']->attendance_log_id);
+        $this->assertSame('0042', $summary['last_synced']->pin);
+        $page->call('$refresh')->assertSee('Last synced punch')->assertSee('Employee PIN 0042')
+            ->assertSee('No matching employee in Frappe.');
+        $this->assertDatabaseHas('frappe_checkin_deliveries', ['attendance_log_id' => $ids[0], 'outcome' => 'verified', 'attempts' => 1]);
+        $this->assertDatabaseHas('frappe_checkin_deliveries', ['attendance_log_id' => $ids[1], 'error' => 'employee_not_found', 'attempts' => 1]);
+        $settings->update(['enabled' => false]);
+        try {
+            app(FrappeCheckins::class)->queueHistory('2020-01-01', '2020-02-01');
+            $this->fail('Disabled sync accepted older punches.');
+        } catch (ValidationException) {
+            $this->assertDatabaseCount('frappe_checkin_deliveries', 2);
+        }
+        Http::assertNothingSent();
+    }
+
+    public function test_history_queue_is_bounded_and_can_resume_without_duplicates(): void
+    {
+        $this->organisation->run(function () {
+            FrappeSetting::create(['id' => 1, 'hostname' => 'hr.example.com', 'api_key' => 'testkey', 'api_secret' => 'testsecret', 'enabled' => true]);
+            $device = Device::create(['name' => 'History batch', 'serial_number' => 'BATCH01']);
+            foreach (array_chunk(range(1, 5001), 200) as $pins) {
+                DB::table('attendance_logs')->insert(array_map(fn ($pin) => [
+                    'device_id' => $device->id, 'pin' => 'HISTORY-'.$pin, 'punched_at' => '2020-01-01 09:00:00',
+                ], $pins));
+            }
+            $service = app(FrappeCheckins::class);
+            $this->assertSame(5000, $service->queueHistory('2020-01-01', '2020-01-01'));
+            $this->assertSame(1, $service->queueHistory('2020-01-01', '2020-01-01'));
+            $this->assertSame(0, $service->queueHistory('2020-01-01', '2020-01-01'));
+            $this->assertDatabaseCount('frappe_checkin_deliveries', 5001);
+            $this->assertDatabaseCount('attendance_logs', 5001);
+        });
     }
 
     public function test_ebio_punches_create_one_delivery_and_unsafe_destinations_are_blocked(): void

@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\AttendanceLog;
 use App\Models\FrappeSetting;
 use App\Services\Integrations\FrappeCheckins;
 use Illuminate\Http\Client\ConnectionException;
@@ -64,5 +65,25 @@ class FrappeHealthTest extends TestCase
             throw new ConnectionException('Connection failed');
         });
         $this->assertSame('connection', app(FrappeCheckins::class)->health($this->settings(), '93.184.216.34'));
+    }
+
+    public function test_delivery_errors_explain_employee_mapping_and_required_direction(): void
+    {
+        $responses = Http::fakeSequence();
+        foreach ([
+            "No Employee found for the given employee field value. 'attendance_device_id': 0042",
+            'Log Type is required for check-ins falling in the shift: General',
+            'Other private server validation details',
+        ] as $message) {
+            $responses->push(['exc_type' => 'ValidationError', '_server_messages' => json_encode([
+                json_encode(['message' => $message]),
+            ])], 417);
+        }
+        $log = new AttendanceLog(['pin' => '0042', 'device_id' => 1, 'punched_at' => '2020-01-01 09:00:00', 'status' => 0]);
+        foreach (['employee_not_found', 'log_type_required', 'http_417'] as $error) {
+            $result = app(FrappeCheckins::class)->push($this->settings(), $log, '93.184.216.34');
+            $this->assertSame($error, $result->error);
+            $this->assertFalse($result->retryable());
+        }
     }
 }

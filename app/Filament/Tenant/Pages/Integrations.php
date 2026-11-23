@@ -4,6 +4,9 @@ namespace App\Filament\Tenant\Pages;
 
 use App\Models\FrappeSetting;
 use App\Services\Integrations\FrappeCheckins;
+use App\Services\Support\TenantTimezone;
+use Filament\Actions\Action;
+use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Forms\Concerns\InteractsWithForms;
@@ -135,6 +138,31 @@ class Integrations extends SettingsPage implements HasForms
         $this->notify($queued, 'frappe_retried');
     }
 
+    public function syncHistoryAction(): Action
+    {
+        return Action::make('syncHistory')->label(__('organisation-settings.frappe_history'))
+            ->icon('heroicon-o-clock')->color('gray')->modalWidth('md')
+            ->modalDescription(__('organisation-settings.frappe_history_help'))
+            ->modalSubmitActionLabel(__('organisation-settings.frappe_history_queue'))
+            ->visible(fn () => FrappeSetting::whereKey(1)->where('enabled', true)->exists())
+            ->schema([
+                DatePicker::make('from')->label(__('organisation-settings.frappe_history_from'))->default('2020-01-01')->required(),
+                DatePicker::make('to')->label(__('organisation-settings.frappe_history_to'))
+                    ->default(fn () => today(TenantTimezone::get())->toDateString())->required()->afterOrEqual('from'),
+            ])
+            ->action(function (array $data): void {
+                abort_unless(static::canAccess(), 403);
+                $count = Cache::lock(FrappeCheckins::LOCK, 30)->get(fn () => app(FrappeCheckins::class)->queueHistory($data['from'], $data['to']));
+                if ($count === null) {
+                    $this->notify(false, 'frappe_busy');
+
+                    return;
+                }
+                Notification::make()->title(__('organisation-settings.frappe_history_queued', ['count' => $count]))
+                    ->body(__('organisation-settings.'.($count === 5000 ? 'frappe_history_more' : 'frappe_history_delivery')))->success()->send();
+            });
+    }
+
     public function checkHealth(): void
     {
         abort_unless(static::canAccess(), 403);
@@ -173,6 +201,10 @@ class Integrations extends SettingsPage implements HasForms
             'COUNT(sent_at) AS sent, COUNT(retry_at) AS pending, COUNT(*) - COUNT(sent_at) - COUNT(retry_at) AS failed'
         )->first();
         $settings = FrappeSetting::find(1);
+        $details = DB::table('frappe_checkin_deliveries as deliveries')
+            ->join('attendance_logs as logs', 'logs.id', '=', 'deliveries.attendance_log_id')
+            ->leftJoin('users', 'users.pin', '=', 'logs.pin')
+            ->select('deliveries.*', 'logs.pin', 'logs.punched_at', 'users.name as employee_name');
 
         return [
             'sent' => $totals->sent,
@@ -182,8 +214,8 @@ class Integrations extends SettingsPage implements HasForms
             'health' => $settings ? Cache::get($this->healthKey($settings)) : null,
             'enabled' => $settings?->enabled ?? false,
             'cooldown' => $settings?->cooldown_until,
-            'recent' => $deliveries->whereNotNull('last_attempt_at')->orderByDesc('last_attempt_at')
-                ->orderByDesc('attendance_log_id')->limit(15)->get(),
+            'last_synced' => (clone $details)->whereNotNull('sent_at')->orderByDesc('sent_at')->orderByDesc('attendance_log_id')->first(),
+            'recent' => $details->orderByRaw('COALESCE(deliveries.last_attempt_at, deliveries.retry_at) DESC')->orderByDesc('attendance_log_id')->limit(15)->get(),
         ];
     }
 
@@ -191,6 +223,11 @@ class Integrations extends SettingsPage implements HasForms
     {
         return match ($error) {
             'destination', 'connection', 'unexpected_response' => __('organisation-settings.'.$error),
+            'employee_not_found', 'log_type_required' => __('organisation-settings.frappe_error_'.$error),
+            'http_401' => __('organisation-settings.frappe_health_authentication'),
+            'http_403' => __('organisation-settings.frappe_error_permission'),
+            'http_404' => __('organisation-settings.frappe_error_endpoint'),
+            'http_429' => __('organisation-settings.frappe_health_rate_limited'),
             default => __('organisation-settings.http_error', ['status' => substr($error, 5)]),
         };
     }
