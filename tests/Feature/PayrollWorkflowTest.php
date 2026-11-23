@@ -330,11 +330,24 @@ class PayrollWorkflowTest extends TestCase
         $slip = $this->generateCompletePeriod($user, Carbon::parse('2026-09-01'));
 
         $this->assertSame('reviewed', $service->transition($slip, $admin, 'reviewed')->status);
-        $this->assertSame('approved', $service->transition($slip->fresh(), $admin, 'approved')->status);
         $this->assertSame('paid', $service->transition($slip->fresh(), $admin, 'paid')->status);
 
         $this->expectException(ValidationException::class);
         $this->generateCompletePeriod($user, Carbon::parse('2026-09-01'));
+    }
+
+    public function test_legacy_approved_slip_can_be_paid_and_keeps_approval_history(): void
+    {
+        $user = User::create(['name' => 'Employee', 'pin' => 'legacy-approved']);
+        $admin = User::create(['name' => 'Admin', 'pin' => 'legacy-admin', 'privilege' => 14]);
+        $user->payrollProfile()->create(['payroll_enabled' => true, 'basic_salary_minor' => 1000000, 'effective_from' => '2026-09-01']);
+        $slip = $this->generateCompletePeriod($user, Carbon::parse('2026-09-01'));
+        $slip->update(['status' => 'approved', 'approved_by_user_id' => $admin->id, 'approved_at' => '2026-09-30 12:00:00']);
+        $this->assertSame('reviewed', $slip->fresh()->display_status);
+        $paid = app(SalarySlipService::class)->transition($slip->fresh(), $admin, 'paid');
+        $this->assertSame('paid', $paid->status);
+        $this->assertSame($admin->id, $paid->approved_by_user_id);
+        $this->assertNotNull($paid->approved_at);
     }
 
     public function test_salary_slips_do_not_cross_tenant_database_boundaries(): void
@@ -424,13 +437,13 @@ class PayrollWorkflowTest extends TestCase
         $this->assertSame(300000, $slip->net_pay_minor);
     }
 
-    public function test_existing_sparse_monthly_slips_cannot_be_reviewed_approved_or_paid(): void
+    public function test_existing_sparse_monthly_slips_cannot_be_reviewed_or_paid(): void
     {
         $user = User::create(['name' => 'Legacy', 'pin' => 'legacy-sparse', 'privilege' => 14]);
         $user->payrollProfile()->create(['payroll_enabled' => true, 'basic_salary_minor' => 800000, 'effective_from' => '2026-08-01']);
         AttendanceDay::create(['user_id' => $user->id, 'work_date' => '2026-08-03', 'status' => 'present', 'calculation_revision' => 1]);
         $slip = SalarySlip::create(['user_id' => $user->id, 'period_start' => '2026-08-01', 'period_end' => '2026-08-31', 'calculation_snapshot' => ['pay_basis' => 'monthly'], 'calculated_at' => now(), 'net_pay_minor' => 800000]);
-        foreach (['draft' => 'reviewed', 'reviewed' => 'approved', 'approved' => 'paid'] as $source => $target) {
+        foreach (['draft' => 'reviewed', 'reviewed' => 'paid', 'approved' => 'paid'] as $source => $target) {
             $slip->update(['status' => $source]);
             try {
                 app(SalarySlipService::class)->transition($slip->fresh(), $user, $target);

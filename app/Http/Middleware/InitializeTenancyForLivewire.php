@@ -16,15 +16,15 @@ class InitializeTenancyForLivewire
 
     public function handle(Request $request, Closure $next)
     {
-        if ($request->is('livewire/*')) {
+        if ($request->is('livewire/*', 'livewire-*/*')) {
             $host = $request->getHost();
             $centralDomain = env('CENTRAL_DOMAIN', 'ariise.cloud');
 
             $tenant = null;
             $verifiedPath = null;
-            $signedFileRequest = $request->is('livewire/upload-file*') || $request->is('livewire/preview-file/*');
+            $signedFileRequest = $request->routeIs('*livewire.upload-file', '*livewire.preview-file');
             if ($signedFileRequest) {
-                abort_unless($request->hasValidSignature(), 403, 'Invalid file signature.');
+                abort_unless($request->hasValidRelativeSignature(), 403, 'Invalid file signature.');
                 $scope = $request->route('fileTenant');
                 abort_unless(is_string($scope), 403, 'Missing file tenant context.');
                 if ($scope !== 'central') {
@@ -40,7 +40,7 @@ class InitializeTenancyForLivewire
                     tenancy()->end();
                 }
             }
-            if ($request->is('livewire/update')) {
+            if ($request->routeIs('*livewire.update')) {
                 $components = $request->input('components');
                 abort_unless(is_array($components) && count($components) > 0 && count($components) <= 50, 403, 'Invalid component context.');
                 foreach ($components as $component) {

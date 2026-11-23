@@ -20,6 +20,7 @@ use App\Models\Schedule;
 use App\Models\User;
 use App\Services\Attendance\ApprovalService;
 use App\Services\Attendance\AttendancePunchEvidence;
+use App\Services\Attendance\ShiftAssignmentService;
 use App\Services\Attendance\ShiftRuleService;
 use App\Services\Support\TenantTimezone;
 use Filament\Facades\Filament;
@@ -127,20 +128,31 @@ class AttendanceLogDisplayTimezoneTest extends TestCase
         $this->assertSame('UTC', $column->getTimezone());
     }
 
+    private function overnightOccurrence(AttendanceDay $day)
+    {
+        $shift = Schedule::create(['name' => 'Night shift', 'type' => 'regular', 'valid_from' => '2026-10-01', 'status' => true,
+            'rules' => ['start_time' => '17:00', 'end_time' => '01:00', 'end_day_offset' => 1, 'weekdays' => [0, 1, 2, 3, 4, 5, 6],
+                'full_day_minutes' => 480, 'half_day_minutes' => 240, 'earliest_arrival_minutes' => 60, 'checkout_cutoff_minutes' => 60, 'punch_method' => 'device']]);
+        $rule = app(ShiftRuleService::class)->sync($shift);
+
+        return $day->occurrences()->create(['schedule_id' => $shift->id, 'shift_rule_revision_id' => $rule->id,
+            'window_starts_at' => '2026-10-20 16:00:00', 'window_ends_at' => '2026-10-21 02:00:00',
+            'first_in_at' => '2026-10-20 17:00:00', 'last_out_at' => '2026-10-21 01:00:00']);
+    }
+
     public function test_overnight_correction_form_keeps_local_dates_through_submission(): void
     {
         foreach (['Asia/Kolkata', 'Asia/Dubai'] as $timezone) {
             $actor = $this->loginCompany('correction-'.count($this->companies), $timezone);
             $day = AttendanceDay::create(['user_id' => $actor->id, 'work_date' => '2026-10-20', 'status' => 'present']);
-            $occ = $day->occurrences()->create(['window_starts_at' => '2026-10-20 16:00:00', 'window_ends_at' => '2026-10-21 02:00:00',
-                'first_in_at' => '2026-10-20 17:00:00', 'last_out_at' => '2026-10-21 01:00:00']);
+            $occ = $this->overnightOccurrence($day);
             $before = $occ->getRawOriginal('first_in_at');
             Livewire::test(ListAttendanceDays::class)
                 ->mountTableAction('correct', $day)
-                ->assertTableActionDataSet(['proposed_in_at' => '2026-10-20 17:00', 'proposed_out_at' => '2026-10-21 01:00'])
-                ->setTableActionData(['proposed_in_at' => 'not-a-date', 'reason' => 'Verified overnight times'])
-                ->callMountedTableAction()->assertHasTableActionErrors(['proposed_in_at' => 'date'])
-                ->setTableActionData(['proposed_in_at' => '2026-10-20 17:00', 'reason' => 'Verified overnight times'])
+                ->assertTableActionDataSet(['in_time' => '17:00', 'out_time' => '01:00'])
+                ->setTableActionData(['in_time' => 'not-a-time', 'reason' => 'Verified overnight times'])
+                ->callMountedTableAction()->assertHasTableActionErrors(['in_time'])
+                ->setTableActionData(['in_time' => '17:00', 'reason' => 'Verified overnight times'])
                 ->callMountedTableAction()->assertHasNoTableActionErrors();
             $correction = AttendanceCorrection::where('attendance_day_id', $day->id)->firstOrFail();
             $this->assertSame('2026-10-20 17:00:00', $correction->getRawOriginal('proposed_in_at'));
@@ -173,19 +185,18 @@ class AttendanceLogDisplayTimezoneTest extends TestCase
     {
         $actor = $this->loginCompany('entry-context', 'Asia/Kolkata');
         $day = AttendanceDay::create(['user_id' => $actor->id, 'work_date' => '2026-10-20', 'status' => 'present']);
-        $occ = $day->occurrences()->create(['window_starts_at' => '2026-10-20 16:00:00', 'window_ends_at' => '2026-10-21 02:00:00',
-            'first_in_at' => '2026-10-20 17:00:00', 'last_out_at' => '2026-10-21 01:00:00']);
+        $occ = $this->overnightOccurrence($day);
         $device = Device::create(['serial_number' => 'RAW-TIME', 'name' => 'Original device']);
         AttendanceLog::withoutEvents(fn () => AttendanceLog::create(['device_id' => $device->id, 'pin' => $actor->pin, 'punched_at' => '2026-10-21 01:00:00', 'status' => 1]));
         AttendanceLog::withoutEvents(fn () => AttendanceLog::create(['device_id' => $device->id, 'pin' => 'another-employee', 'punched_at' => '2026-10-20 19:55:00', 'status' => 0]));
         $page = Livewire::test(ListAttendanceDays::class)->mountAction('manualAttendance')
             ->setActionData(['user_id' => $actor->id, 'work_date' => '2026-10-20'])
-            ->assertActionDataSet(['entry_mode' => 'correction', 'attendance_occurrence_id' => $occ->id, 'proposed_in_at' => '2026-10-20 17:00']);
+            ->assertActionDataSet(['entry_mode' => 'correction', 'in_time' => '17:00', 'out_time' => '01:00']);
         $this->assertCount(1, app(AttendancePunchEvidence::class)->read($actor->id, '2026-10-20', $day)['logs']);
         $rawPanel = (string) $page->instance()->getSchema('mountedActionSchema0')->getComponent('raw_punches', withHidden: true)->getContent();
         $this->assertStringContainsString('21 Oct 2026 01:00:00', $rawPanel);
         $this->assertStringNotContainsString('19:55:00', $rawPanel);
-        $page->setActionData(['proposed_out_at' => '2026-10-21 00:45', 'reason' => 'Reviewed actual departure'])
+        $page->setActionData(['out_time' => '00:45', 'reason' => 'Reviewed actual departure'])
             ->callMountedAction()->assertHasNoActionErrors();
         $correction = AttendanceCorrection::firstOrFail();
         $this->assertSame('2026-10-21 00:45:00', $correction->getRawOriginal('proposed_out_at'));
@@ -204,10 +215,11 @@ class AttendanceLogDisplayTimezoneTest extends TestCase
             'rules' => ['start_time' => '09:00', 'end_time' => '17:00', 'weekdays' => [0, 1, 2, 3, 4, 5, 6], 'full_day_minutes' => 480, 'half_day_minutes' => 240,
                 'earliest_arrival_minutes' => 60, 'checkout_cutoff_minutes' => 120, 'punch_method' => 'device']]);
         app(ShiftRuleService::class)->sync($shift);
+        app(ShiftAssignmentService::class)->setDefault($shift, '2026-10-01', '2026-10-31');
         Livewire::test(ListAttendanceDays::class)->mountAction('manualAttendance')
             ->setActionData(['user_id' => $actor->id, 'work_date' => '2026-10-20'])
             ->assertActionDataSet(['entry_mode' => 'manual'])
-            ->setActionData(['schedule_id' => $shift->id, 'in_time' => '09:00', 'out_time' => '17:00', 'reason' => 'Confirmed manual entry'])
+            ->setActionData(['in_time' => '09:00', 'out_time' => '17:00', 'reason' => 'Confirmed manual entry'])
             ->callMountedAction()->assertHasNoActionErrors()->assertSee('Waiting for approval');
         $this->assertSame(1, ManualAttendanceEntry::count());
         $this->assertSame(0, AttendanceCorrection::count());

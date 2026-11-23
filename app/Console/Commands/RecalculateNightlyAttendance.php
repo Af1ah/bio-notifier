@@ -2,72 +2,60 @@
 
 namespace App\Console\Commands;
 
-use App\Jobs\RecalculateAttendanceChunk;
-use App\Models\AttendanceCalculationRun;
 use App\Models\Organisation;
-use App\Models\User;
-use Carbon\CarbonImmutable;
+use App\Services\Attendance\AttendanceRunQueue;
+use App\Services\Support\TenantTimezone;
+use Carbon\Carbon;
 use Illuminate\Console\Command;
-use Illuminate\Support\Str;
+use Illuminate\Contracts\Cache\LockTimeoutException;
+use Illuminate\Validation\ValidationException;
 
 class RecalculateNightlyAttendance extends Command
 {
     protected $signature = 'attendance:recalculate-nightly
-        {--date= : Work date to calculate; defaults to yesterday in the attendance timezone}
-        {--tenant=* : Optional organisation IDs or shortnames}';
+        {--date= : Work date to calculate; defaults to yesterday in each organisation timezone}
+        {--tenant=* : Optional organisation IDs or shortnames}
+        {--due : Only queue organisations whose local nightly time has passed}';
 
-    protected $description = 'Queue the previous workday attendance calculation for every tenant';
+    protected $description = 'Queue nightly attendance serially, one organisation at a time';
 
-    public function handle(): int
+    public function handle(AttendanceRunQueue $queue): int
     {
-        $timezone = config('attendance.timezone', config('app.timezone'));
-        $workDate = $this->option('date')
-            ? CarbonImmutable::parse($this->option('date'), $timezone)->toDateString()
-            : CarbonImmutable::now($timezone)->subDay()->toDateString();
-        $tenantFilters = array_values(array_filter($this->option('tenant')));
-        $tenants = Organisation::query()
-            ->when($tenantFilters, fn ($query) => $query->where(function ($query) use ($tenantFilters) {
-                $query->whereIn('id', $tenantFilters)->orWhereIn('shortname', $tenantFilters);
-            }))
-            ->cursor();
-        $queued = 0;
-        $skipped = 0;
+        $time = config('attendance.nightly_time', '02:00');
+        if (! preg_match('/^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/', $time)) {
+            $this->error('Attendance nightly time must use HH:MM.');
 
+            return self::FAILURE;
+        }
+        if ($this->option('date') && ! validator(['date' => $this->option('date')], ['date' => 'date_format:Y-m-d'])->passes()) {
+            $this->error('Work date must use YYYY-MM-DD.');
+
+            return self::FAILURE;
+        }
+        $filters = array_values(array_filter($this->option('tenant')));
+        $tenants = Organisation::query()->when($filters, fn ($query) => $query->where(fn ($query) => $query->whereIn('id', $filters)->orWhereIn('shortname', $filters)))->orderBy('id')->cursor();
         foreach ($tenants as $tenant) {
             tenancy()->initialize($tenant);
-
             try {
-                if (AttendanceCalculationRun::query()->whereIn('state', ['queued', 'running'])->exists()) {
-                    $this->warn("Skipped {$tenant->name}: another attendance recalculation is active.");
-                    $skipped++;
-
+                $now = Carbon::now(TenantTimezone::get());
+                if ($this->option('due') && $now->format('H:i') < $time) {
                     continue;
                 }
-
-                $userIds = User::employees()->pluck('id')->all();
-                $run = AttendanceCalculationRun::create([
-                    'run_key' => Str::uuid(),
-                    // A bounded rolling window revisits overnight cutoffs and
-                    // late deliveries instead of finalizing yesterday once.
-                    'from_date' => $this->option('date') ? $workDate : CarbonImmutable::parse($workDate, $timezone)->subDays(2)->toDateString(),
-                    'to_date' => $workDate,
-                    'filters' => ['source' => 'nightly'],
-                    'state' => $userIds ? 'queued' : 'completed',
-                    'total' => count($userIds) * ($this->option('date') ? 1 : 3),
-                ]);
-
-                foreach (array_chunk($userIds, 100) as $chunk) {
-                    RecalculateAttendanceChunk::dispatch($tenant, $run->id, $chunk);
+                $to = $this->option('date') ? Carbon::parse($this->option('date'), TenantTimezone::get()) : $now->copy()->subDay()->startOfDay();
+                // Revisit overnight shifts and late deliveries without reopening older months.
+                $from = $this->option('date') ? $to->copy() : $to->copy()->subDays(2);
+                $run = $queue->submit($tenant, $from, $to, nightly: true);
+                if ($run) {
+                    $this->info("Queued {$tenant->shortname}: {$run->total} employee-days.");
                 }
-
-                $this->info("Queued {$tenant->name}: {$run->total} employee-days for {$workDate}.");
-                $queued++;
+            } catch (ValidationException|LockTimeoutException $exception) {
+                // A manual run is active; the next scheduler tick retries this tenant.
+                $this->line("Deferred {$tenant->shortname}: a recalculation is already queued or running.");
             } finally {
                 tenancy()->end();
             }
         }
-
-        $this->info("Nightly attendance dispatch finished: {$queued} queued, {$skipped} skipped.");
+        $queue->dispatchNext();
 
         return self::SUCCESS;
     }

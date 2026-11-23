@@ -96,6 +96,14 @@ class UserResource extends Resource
                         ->autocomplete('off'),
                     TextInput::make('name')
                         ->autocomplete('off'),
+                    DatePicker::make('date_of_birth')
+                        ->label('Date of birth')
+                        ->maxDate(fn () => now(\App\Services\Support\TenantTimezone::get())->toDateString())
+                        ->nullable(),
+                    Select::make('gender')
+                        ->options(User::GENDER_OPTIONS)
+                        ->in(array_keys(User::GENDER_OPTIONS))
+                        ->nullable(),
                     TextInput::make('email')
                         ->email()
                         ->unique(ignoreRecord: true)
@@ -110,7 +118,7 @@ class UserResource extends Resource
                         ->label('Card Number')
                         ->autocomplete('off'),
                     Select::make('device_privilege')
-                        ->visible(fn (): bool => in_array(tenant()?->device_integration, [DeviceIntegration::EBIO, DeviceIntegration::GATEWAY], true))
+                        ->visible(fn (): bool => (bool) auth('web')->user()?->canManageDevices() && in_array(tenant()?->device_integration, [DeviceIntegration::EBIO, DeviceIntegration::GATEWAY], true))
                         ->label('Device privilege')
                         ->options([
                             0 => 'Normal User',
@@ -119,21 +127,35 @@ class UserResource extends Resource
                         ->default(0)
                         ->helperText('Controls privileges on biometric devices.'),
                     TextInput::make('device_password')
-                        ->visible(fn (): bool => DeviceIntegration::usesEbio())
+                        ->visible(fn (): bool => (bool) auth('web')->user()?->canManageDevices())
                         ->label('Device Password (Numeric)')
+                        ->helperText('Numeric password (6–8 digits) used on biometric devices and for initial employee portal login.')
                         ->numeric()
-                        ->maxLength(8)
+                        ->rule('regex:/^[0-9]{6,8}$/')
                         ->password()
                         ->revealable()
+                        ->nullable()
+                        ->dehydrateStateUsing(fn ($state) => filled($state) ? (string) $state : null)
                         ->autocomplete('new-password'),
                     DatePicker::make('valid_from')
-                        ->label('Valid From')
+                        ->label('Joining date')
                         ->nullable(),
                     DatePicker::make('valid_to')
-                        ->label('Valid To')
+                        ->label('Last working date')
                         ->nullable(),
                     Toggle::make('is_enabled')
                         ->default(true),
+                ])
+                ->columns(2)
+                ->columnSpanFull(),
+            Section::make('Bank details')
+                ->schema([
+                    TextInput::make('bank_account_holder')->label('Account holder name')->maxLength(255)->nullable(),
+                    TextInput::make('bank_name')->label('Bank name')->maxLength(255)->nullable(),
+                    TextInput::make('bank_account_number')->label('Account number')->maxLength(64)->autocomplete('off')->nullable(),
+                    TextInput::make('bank_branch')->label('Branch')->maxLength(255)->nullable(),
+                    TextInput::make('bank_ifsc_code')->label('IFSC code')->maxLength(32)->nullable(),
+                    TextInput::make('bank_swift_code')->label('SWIFT / BIC code')->maxLength(32)->nullable(),
                 ])
                 ->columns(2)
                 ->columnSpanFull(),
@@ -217,11 +239,6 @@ class UserResource extends Resource
                         ->live()
                         ->required(fn ($get) => (bool) $get('payroll_enabled'))
                         ->visible(fn ($get) => (bool) $get('payroll_enabled')),
-                    Select::make('currency')
-                        ->options(['INR' => 'INR'])
-                        ->default('INR')
-                        ->required(fn ($get) => (bool) $get('payroll_enabled'))
-                        ->visible(fn ($get) => (bool) $get('payroll_enabled')),
                     DatePicker::make('effective_from')
                         ->label('Salary effective from')
                         ->native(false)
@@ -269,6 +286,8 @@ class UserResource extends Resource
                                 ->size('lg'),
                             TextEntry::make('pin')
                                 ->label('PIN'),
+                            TextEntry::make('date_of_birth')->label('Date of birth')->date('d M Y')->placeholder('—'),
+                            TextEntry::make('gender')->formatStateUsing(fn ($state) => User::GENDER_OPTIONS[$state] ?? $state)->placeholder('—'),
                             TextEntry::make('whatsapp_number')
                                 ->label('WhatsApp Number')
                                 ->default('Not Provided'),
@@ -281,21 +300,31 @@ class UserResource extends Resource
                             TextEntry::make('group')
                                 ->label('Designation / Group')
                                 ->default('Not Assigned'),
+                            TextEntry::make('device_password')
+                                ->visible(fn (): bool => (bool) auth('web')->user()?->canManageDevices())
+                                ->label('Device password')
+                                ->state(fn (User $record): string => filled($record->device_password) ? '•••••• (Configured)' : 'Not set'),
+                            TextEntry::make('portal_enabled')
+                                ->label('Employee portal')
+                                ->badge()
+                                ->state(fn (User $record) => $record->canAccessEmployeePortal())
+                                ->color(fn ($state) => $state ? 'success' : 'gray')
+                                ->formatStateUsing(fn ($state) => $state ? 'Available' : 'Unavailable'),
                             TextEntry::make('fingerprints')
-                                ->visible(fn (): bool => in_array(tenant()?->device_integration, [DeviceIntegration::EBIO, DeviceIntegration::GATEWAY], true))
+                                ->visible(fn (): bool => (bool) auth('web')->user()?->canManageDevices() && in_array(tenant()?->device_integration, [DeviceIntegration::EBIO, DeviceIntegration::GATEWAY], true))
                                 ->label('Stored fingerprint templates')
                                 ->state(fn (User $record): string => implode(', ', self::storedFingerprintLabels($record)) ?: 'None stored')
                                 ->columnSpanFull(),
                             TextEntry::make('face_templates')
-                                ->visible(fn (): bool => in_array(tenant()?->device_integration, [DeviceIntegration::EBIO, DeviceIntegration::GATEWAY], true))
+                                ->visible(fn (): bool => (bool) auth('web')->user()?->canManageDevices() && in_array(tenant()?->device_integration, [DeviceIntegration::EBIO, DeviceIntegration::GATEWAY], true))
                                 ->label('Stored face templates')
                                 ->state(fn (User $record): string => ($count = count(self::storedFaceTemplates($record))) > 0 ? "{$count} stored" : 'None stored'),
                             TextEntry::make('ai_face_photo_path')
-                                ->visible(fn (): bool => in_array(tenant()?->device_integration, [DeviceIntegration::EBIO, DeviceIntegration::GATEWAY], true))
+                                ->visible(fn (): bool => (bool) auth('web')->user()?->canManageDevices() && in_array(tenant()?->device_integration, [DeviceIntegration::EBIO, DeviceIntegration::GATEWAY], true))
                                 ->label('Stored AI Face JPEG')
                                 ->state(fn (User $record): string => $record->ai_face_photo_path && Storage::disk('local')->exists($record->ai_face_photo_path) ? 'Stored' : 'None stored'),
                             ViewEntry::make('stored_face_photo')->label('Saved JPEG photo')
-                                ->visible(fn (): bool => in_array(tenant()?->device_integration, [DeviceIntegration::EBIO, DeviceIntegration::GATEWAY], true))
+                                ->visible(fn (): bool => (bool) auth('web')->user()?->canManageDevices() && in_array(tenant()?->device_integration, [DeviceIntegration::EBIO, DeviceIntegration::GATEWAY], true))
                                 ->view('filament.infolists.employee-face-photo')
                                 ->columnSpanFull(),
                             TextEntry::make('biometric_transfer_status')
@@ -303,25 +332,35 @@ class UserResource extends Resource
                                 ->label('Latest biometric transfer')
                                 ->state(fn (User $record): string => self::latestBiometricTransfer($record)),
                             TextEntry::make('device_verification_type')
-                                ->visible(fn (): bool => DeviceIntegration::usesEbio())
+                                ->visible(fn (): bool => (bool) auth('web')->user()?->canManageDevices() && DeviceIntegration::usesEbio())
                                 ->label('Verification type')
                                 ->default('Not reported'),
                         ])->columns(['default' => 2, 'sm' => 2, 'md' => 2]),
 
+                    Section::make('Bank details')
+                        ->schema([
+                            TextEntry::make('bank_account_holder')->label('Account holder name')->placeholder('—'),
+                            TextEntry::make('bank_name')->label('Bank name')->placeholder('—'),
+                            TextEntry::make('bank_account_number')->label('Account number')->placeholder('—'),
+                            TextEntry::make('bank_branch')->label('Branch')->placeholder('—'),
+                            TextEntry::make('bank_ifsc_code')->label('IFSC code')->placeholder('—'),
+                            TextEntry::make('bank_swift_code')->label('SWIFT / BIC code')->placeholder('—'),
+                        ])->columns(2),
                     Section::make('Shift Details')
                         ->schema([
                             TextEntry::make('shift')
                                 ->label('Active Shift')
                                 ->state(function ($record) {
-                                    $assignment = app(ShiftAssignmentResolver::class)->resolve($record, now());
+                                    $date = now(\App\Services\Support\TenantTimezone::get());
+                                    $assignment = app(ShiftAssignmentResolver::class)->resolve($record, $date);
                                     if (! $assignment) {
                                         return 'No Active Schedule';
                                     }
 
-                                    return $assignment->slots->map(function ($slot) {
-                                        $rule = $slot->ruleRevision;
+                                    return $assignment->slots->map(function ($slot) use ($date) {
+                                        $rule = $slot->schedule?->activeRuleRevision($date);
 
-                                        return $slot->schedule->name.' ('.substr($rule?->start_time ?? '--:--', 0, 5).'–'.substr($rule?->end_time ?? '--:--', 0, 5).')';
+                                        return ($slot->schedule?->name ?? 'Shift').' ('.substr($rule?->start_time ?? '--:--', 0, 5).'–'.substr($rule?->end_time ?? '--:--', 0, 5).')';
                                     })->join(', ');
                                 }),
                         ]),
@@ -357,6 +396,11 @@ class UserResource extends Resource
                         ]),
                 ])->columnSpanFull(),
 
+                Section::make('Leave balance')
+                    ->visible(fn (): bool => (bool) auth()->user()?->hasManagementAccess())
+                    ->schema([ViewEntry::make('leave_balances')->hiddenLabel()->view('filament.tenant.components.employee-leave-balances')->columnSpanFull()])
+                    ->columnSpanFull(),
+
                 Section::make('Attendance Calendar')
                     ->schema([
                         ViewEntry::make('calendar')
@@ -371,7 +415,7 @@ class UserResource extends Resource
     {
         return TextInput::make($name)
             ->label($label)
-            ->prefix('₹')
+            ->prefix(fn () => \App\Services\Support\TenantCurrency::get())
             ->numeric()
             ->minValue(0)
             ->step(0.01)
@@ -382,7 +426,7 @@ class UserResource extends Resource
 
     private static function formatMoney($minor, ?string $currency): string
     {
-        return ($currency ?? 'INR').' '.number_format(((int) ($minor ?? 0)) / 100, 2);
+        return ($currency ?? \App\Services\Support\TenantCurrency::get()).' '.number_format(((int) ($minor ?? 0)) / 100, 2);
     }
 
     public static function table(Table $table): Table
@@ -418,14 +462,14 @@ class UserResource extends Resource
                     ->searchable()
                     ->toggleable(isToggledHiddenByDefault: true),
                 Tables\Columns\TextColumn::make('device_privilege')
-                    ->visible(fn (): bool => DeviceIntegration::usesEbio())
+                    ->visible(fn (): bool => (bool) auth('web')->user()?->canManageDevices() && DeviceIntegration::usesEbio())
                     ->label('Device Privilege')
                     ->badge()
                     ->formatStateUsing(fn ($state) => (int) $state === 14 ? 'Device Admin' : 'Normal User')
                     ->color(fn ($state): string => (int) $state === 14 ? 'warning' : 'gray')
                     ->toggleable(isToggledHiddenByDefault: true),
                 Tables\Columns\IconColumn::make('face_enrolled')
-                    ->visible(fn (): bool => DeviceIntegration::usesEbio())
+                    ->visible(fn (): bool => (bool) auth('web')->user()?->canManageDevices() && DeviceIntegration::usesEbio())
                     ->label('Face Template')
                     ->boolean()
                     ->placeholder('Unknown')
@@ -433,10 +477,23 @@ class UserResource extends Resource
                 Tables\Columns\IconColumn::make('is_enabled')
                     ->boolean()
                     ->visibleFrom('md'),
+                Tables\Columns\IconColumn::make('portal_enabled')
+                    ->label('Portal')
+                    ->state(fn (User $record) => $record->canAccessEmployeePortal())
+                    ->boolean()
+                    ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
+                Tables\Filters\SelectFilter::make('attendance_today')
+                    ->label('Today attendance')
+                    ->options(['present' => 'Punched today', 'absent' => 'No punch today'])
+                    ->query(fn (Builder $query, array $data): Builder => match ($data['value'] ?? null) {
+                        'present' => \App\Services\Attendance\TodayAttendance::filterEmployees($query, true),
+                        'absent' => \App\Services\Attendance\TodayAttendance::filterEmployees($query, false),
+                        default => $query,
+                    }),
                 Tables\Filters\SelectFilter::make('device_privilege')
-                    ->visible(fn (): bool => DeviceIntegration::usesEbio())
+                    ->visible(fn (): bool => (bool) auth('web')->user()?->canManageDevices() && DeviceIntegration::usesEbio())
                     ->label('Device Privilege')
                     ->options([
                         0 => 'Normal User',
@@ -458,7 +515,7 @@ class UserResource extends Resource
             ->recordActions([
                 ActionGroup::make([
                     Action::make('pushToDevice')
-                        ->authorize(fn (): bool => tenant()?->device_integration === DeviceIntegration::GATEWAY)
+                        ->authorize(fn (): bool => (bool) auth('web')->user()?->canManageDevices() && (tenant()?->device_integration === DeviceIntegration::GATEWAY))
                         ->label('Push to device')
                         ->icon('heroicon-o-arrow-up-on-square')
                         ->color('success')
@@ -480,10 +537,9 @@ class UserResource extends Resource
                             Notification::make()->title('Device update queued')
                                 ->body("{$count} command(s) queued. Track their results in Device Commands.")->success()->send();
                         }),
-                    \App\Filament\Tenant\Actions\DeviceAccessPeriodAction::make(),
                     \App\Filament\Tenant\Actions\RefreshEbioPhotoAction::make(),
                     Action::make('fetchBiometric')
-                        ->authorize(fn (): bool => tenant()?->device_integration === DeviceIntegration::GATEWAY)
+                        ->authorize(fn (): bool => (bool) auth('web')->user()?->canManageDevices() && (tenant()?->device_integration === DeviceIntegration::GATEWAY))
                         ->label('Fetch biometric templates')
                         ->icon('heroicon-o-arrow-down-tray')
                         ->modalWidth('lg')
@@ -497,7 +553,7 @@ class UserResource extends Resource
                             Notification::make()->title('Biometric read queued')->body('The profile updates when the device returns its templates.')->success()->send();
                         }),
                     Action::make('registerBiometric')
-                        ->authorize(fn (): bool => tenant()?->device_integration === DeviceIntegration::GATEWAY)
+                        ->authorize(fn (): bool => (bool) auth('web')->user()?->canManageDevices() && (tenant()?->device_integration === DeviceIntegration::GATEWAY))
                         ->label('Register biometric')
                         ->icon('heroicon-o-finger-print')
                         ->modalWidth('lg')
@@ -550,7 +606,7 @@ class UserResource extends Resource
                                 ->success()->send();
                         }),
                     Action::make('addBiometric')
-                        ->authorize(fn (): bool => DeviceIntegration::usesEbio())
+                        ->authorize(fn (): bool => (bool) auth('web')->user()?->canManageDevices() && (DeviceIntegration::usesEbio()))
                         ->label('Register biometric')
                         ->icon('heroicon-o-finger-print')
                         ->form([
@@ -570,13 +626,50 @@ class UserResource extends Resource
                         }),
                     ViewAction::make(),
                     EditAction::make(),
+                    Action::make('portal_access')
+                        ->label('Reset portal password')
+                        ->icon('heroicon-o-key')
+                        ->visible(fn (User $record) => ! $record->hasManagementAccess())
+                        ->modalDescription('The employee will sign in with their email and device password, then choose a new portal password.')
+                        ->form(function (User $record) {
+                            $isAdmin = (bool) auth('web')->user()?->canManageDevices();
+                            if (! $isAdmin) {
+                                return [];
+                            }
+
+                            return [
+                                TextInput::make('device_password')
+                                    ->label('Device password (numeric)')
+                                    ->helperText('Numeric password (6–8 digits) used on biometric devices and for the initial employee portal login.')
+                                    ->password()
+                                    ->revealable()
+                                    ->numeric()
+                                    ->rule('regex:/^[0-9]{6,8}$/')
+                                    ->default(fn () => $record->device_password)
+                                    ->required(fn () => blank($record->device_password)),
+                            ];
+                        })
+                        ->action(function (User $record, array $data): void {
+                            try {
+                                if (auth('web')->user()?->canManageDevices() && ! empty($data['device_password']) && $data['device_password'] !== $record->device_password) {
+                                    $record->update(['device_password' => $data['device_password']]);
+                                }
+                                app(\App\Services\EmployeePortal\PortalAccess::class)->reset(auth('web')->user(), $record);
+                            } catch (\Illuminate\Validation\ValidationException $exception) {
+                                Notification::make()->title('Portal access not enabled')
+                                    ->body(collect($exception->errors())->flatten()->first())->danger()->send();
+
+                                return;
+                            }
+                            Notification::make()->title('Portal access ready')->success()->send();
+                        }),
                 ]),
             ])
             ->bulkActions([
                 BulkActionGroup::make([
                     DeleteBulkAction::make(),
                     BulkAction::make('enableUsers')
-                        ->authorize(fn (): bool => DeviceIntegration::usesEbio())
+                        ->authorize(fn (): bool => (bool) auth('web')->user()?->canManageDevices() && (DeviceIntegration::usesEbio()))
                         ->label('Unblock employee from door')
                         ->icon('heroicon-o-check-circle')
                         ->color('success')
@@ -610,7 +703,7 @@ class UserResource extends Resource
                         })
                         ->deselectRecordsAfterCompletion(),
                     BulkAction::make('disableUsers')
-                        ->authorize(fn (): bool => DeviceIntegration::usesEbio())
+                        ->authorize(fn (): bool => (bool) auth('web')->user()?->canManageDevices() && (DeviceIntegration::usesEbio()))
                         ->label('Block employee from door')
                         ->icon('heroicon-o-x-circle')
                         ->color('warning')
@@ -644,7 +737,7 @@ class UserResource extends Resource
                         })
                         ->deselectRecordsAfterCompletion(),
                     BulkAction::make('pushToDevice')
-                        ->authorize(fn (): bool => in_array(tenant()?->device_integration, [DeviceIntegration::EBIO, DeviceIntegration::GATEWAY], true))
+                        ->authorize(fn (): bool => (bool) auth('web')->user()?->canManageDevices() && (in_array(tenant()?->device_integration, [DeviceIntegration::EBIO, DeviceIntegration::GATEWAY], true)))
                         ->icon('heroicon-o-arrow-up-on-square')
                         ->color('success')
                         ->label(fn (): string => DeviceIntegration::usesEbio() ? 'Push to Device / Location' : 'Add or update on device')
@@ -719,7 +812,7 @@ class UserResource extends Resource
                         })
                         ->deselectRecordsAfterCompletion(),
                     BulkAction::make('deleteFromDevice')
-                        ->authorize(fn (): bool => in_array(tenant()?->device_integration, [DeviceIntegration::EBIO, DeviceIntegration::GATEWAY], true))
+                        ->authorize(fn (): bool => (bool) auth('web')->user()?->canManageDevices() && (in_array(tenant()?->device_integration, [DeviceIntegration::EBIO, DeviceIntegration::GATEWAY], true)))
                         ->icon('heroicon-o-trash')
                         ->color('danger')
                         ->label(fn (): string => DeviceIntegration::usesEbio() ? 'Delete from Devices' : 'Remove from device')

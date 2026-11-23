@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Jobs\Concerns\TracksQueuedDeviceCommand;
 use App\Models\Device;
 use App\Models\DeviceCommand;
 use App\Models\Organisation;
@@ -18,6 +19,7 @@ use Illuminate\Support\Facades\Log;
 class BlockUnblockEbioUserJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+    use TracksQueuedDeviceCommand;
 
     public $organisation;
 
@@ -33,12 +35,14 @@ class BlockUnblockEbioUserJob implements ShouldQueue
         $this->userId = $userId;
         $this->location = $location;
         $this->blockUser = $blockUser;
+        $this->trackCommand($organisation, $blockUser ? 'block_user' : 'unblock_user');
     }
 
     public function handle(EbioSoapService $service): void
     {
         TenantContext::run($this->organisation, function () use ($service): void {
             $user = User::find($this->userId);
+            $this->trackedCommand()?->markAsSent();
 
             if ($user) {
                 try {
@@ -53,10 +57,14 @@ class BlockUnblockEbioUserJob implements ShouldQueue
                         });
                     }
                     $devices = $query->get();
+                    if ($devices->isEmpty()) {
+                        throw new \RuntimeException('No matching devices.');
+                    }
 
                     foreach ($devices as $device) {
                         $commandType = $this->blockUser ? 'block_user' : 'unblock_user';
                         $commandModel = DeviceCommand::create([
+                            'requested_by_user_id' => $this->trackedCommandId ? null : (tenancy()->initialized ? auth('web')->id() : null),
                             'device_id' => $device->id,
                             'command_type' => $commandType,
                             'command_content' => "eBioServer SOAP Command: {$commandType} (Employee: {$user->pin})",
@@ -88,10 +96,14 @@ class BlockUnblockEbioUserJob implements ShouldQueue
                             throw $e;
                         }
                     }
+                    $this->trackedCommand()?->markAsAcknowledged('Success');
                 } catch (\Exception $e) {
+                    $this->trackedCommand()?->markAsFailed('The operation failed on one or more devices.');
                     Log::error('Failed to block/unblock user on eBioServer: '.$e->getMessage());
                     $this->fail($e);
                 }
+            } else {
+                $this->trackedCommand()?->markAsFailed('Employee no longer exists.');
             }
         });
     }

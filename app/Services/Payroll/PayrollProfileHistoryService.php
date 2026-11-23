@@ -25,7 +25,7 @@ class PayrollProfileHistoryService
 
     public function beforeSave(EmployeePayrollProfile $profile): void
     {
-        if (! $profile->exists || ! $profile->isDirty(self::MONEY) || ! $profile->payroll_enabled) return;
+        if (! $profile->exists || ! $profile->isDirty([...self::MONEY, 'currency']) || ! $profile->payroll_enabled) return;
         $date = Carbon::parse($profile->effective_from)->startOfDay();
         if (! $date->isSameDay($date->copy()->startOfMonth())) throw ValidationException::withMessages(['effective_from' => 'Salary changes must start on the first day of a month.']);
         $lastClosedPeriod = SalarySlip::where('user_id', $profile->user_id)

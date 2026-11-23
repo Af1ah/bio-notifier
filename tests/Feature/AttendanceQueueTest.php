@@ -55,6 +55,7 @@ class AttendanceQueueTest extends TestCase
     {
         parent::setUp();
         Artisan::call('migrate:fresh', ['--path' => database_path('migrations/tenant'), '--realpath' => true, '--force' => true]);
+        Artisan::call('migrate', ['--path' => ['database/migrations/0001_01_01_000001_create_cache_table.php', 'database/migrations/2026_11_02_150000_create_attendance_run_requests.php'], '--force' => true]);
     }
 
     public function test_attendance_job_uses_the_connections_default_queue(): void

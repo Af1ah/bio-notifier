@@ -6,6 +6,6 @@
     @endif
     <form wire:submit="save" class="space-y-6">
         {{ $this->form }}
-        <x-filament::button type="submit">{{ __('organisation-settings.save_timezone') }}</x-filament::button>
+        <x-filament::button type="submit">{{ __('organisation-settings.save_settings') }}</x-filament::button>
     </form>
 </x-filament-panels::page>

@@ -123,6 +123,7 @@ class DeviceIntegrationTest extends TestCase
 
     public function test_company_choice_authorizes_the_matching_tenant_actions(): void
     {
+        $this->actingAs(new \App\Models\User(['privilege' => 14, 'email' => 'admin@example.test', 'password' => 'test-password']), 'web');
         foreach ([DeviceIntegration::EBIO, DeviceIntegration::GATEWAY] as $integration) {
             $ebioAllowed = $integration === DeviceIntegration::EBIO;
             tenancy()->tenant = new Organisation(['device_integration' => $integration]);

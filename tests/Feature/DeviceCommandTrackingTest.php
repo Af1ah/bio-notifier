@@ -7,7 +7,9 @@ use App\Models\DeviceCommand;
 use App\Models\Organisation;
 use App\Services\EbioSoapService;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Str;
 use Mockery;
+use Ramsey\Uuid\Uuid;
 use RuntimeException;
 use Stancl\Tenancy\Tenancy;
 use Tests\TestCase;
@@ -76,5 +78,27 @@ class DeviceCommandTrackingTest extends TestCase
         $command->refresh();
         $this->assertSame('failed', $command->status);
         $this->assertSame('Connection refused', $command->response);
+    }
+
+    public function test_access_sync_distinguishes_acknowledgement_readback_failure_and_verified_sync(): void
+    {
+        $id = (string) Str::uuid();
+        $write = DeviceCommand::create(['device_id' => null, 'command_type' => 'set_user_access_group', 'command_content' => 'Sync user access',
+            'gateway_command_id' => $id, 'status' => 'acknowledged']);
+        $this->assertSame('Acknowledged', $write->syncStatusLabel());
+        $read = DeviceCommand::create(['device_id' => null, 'command_type' => 'query_users', 'command_content' => 'Read user',
+            'gateway_command_id' => (string) Uuid::uuid5($id, 'user-readback'), 'status' => 'pending']);
+        $write = DeviceCommand::with('accessReadback')->findOrFail($write->id);
+        $this->assertSame('Waiting for readback', $write->syncStatusLabel());
+        $read->update(['status' => 'failed']);
+        $this->assertSame('Readback failed', $write->fresh()->syncStatusLabel());
+        $this->assertSame('danger', $write->fresh()->syncStatusColor());
+        $read->update(['status' => 'acknowledged', 'data_applied' => true]);
+        $this->assertSame('Readback needs review', $write->fresh()->syncStatusLabel());
+        $write->update(['data_applied' => true]);
+        $this->assertSame('Synced', $write->fresh()->syncStatusLabel());
+        $this->assertSame('success', $write->fresh()->syncStatusColor());
+        $group = new DeviceCommand(['command_type' => 'set_access_group', 'status' => 'acknowledged']);
+        $this->assertSame('Acknowledged', $group->syncStatusLabel());
     }
 }

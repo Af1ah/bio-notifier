@@ -10,7 +10,7 @@ class TenantPanel extends Panel
     public function getUrl(?Model $tenant = null): ?string
     {
         if (tenancy()->initialized) {
-            return route('filament.tenant.pages.dashboard', [
+            return route('filament.'.$this->getId().'.pages.dashboard', [
                 'tenant' => tenant('shortname') ?: tenant('id'),
             ]);
         }

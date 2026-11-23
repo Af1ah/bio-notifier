@@ -3,9 +3,11 @@
 namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
+use App\Casts\ProtectedArray;
 use App\Services\Attendance\ShiftAssignmentResolver;
 use Carbon\Carbon;
 use Database\Factories\UserFactory;
+use Filament\Facades\Filament;
 use Filament\Models\Contracts\FilamentUser;
 use Filament\Panel;
 use Illuminate\Database\Eloquent\Builder;
@@ -17,6 +19,15 @@ use Illuminate\Validation\ValidationException;
 
 class User extends Authenticatable implements FilamentUser
 {
+    public const GENDER_OPTIONS = [
+        'male' => 'Male',
+        'female' => 'Female',
+        'other' => 'Other',
+        'prefer_not_to_say' => 'Prefer not to say',
+    ];
+
+    public const HR_PRIVILEGE = 13;
+
     public const DEFAULT_LOGIN_EMAIL = 'admin@zkteco.local';
 
     public function scopeEmployees(Builder $query): Builder
@@ -29,7 +40,7 @@ class User extends Authenticatable implements FilamentUser
 
     public function scopeLoginAccounts(Builder $query): Builder
     {
-        return $query->where('privilege', 14)
+        return $query->whereIn('privilege', [14, self::HR_PRIVILEGE])
             ->whereNotNull('email')->where('email', '!=', '')
             ->whereNotNull('password')->where('password', '!=', '');
     }
@@ -39,7 +50,11 @@ class User extends Authenticatable implements FilamentUser
 
     public function canAccessPanel(Panel $panel): bool
     {
-        return $this->has_login;
+        return match ($panel->getId()) {
+            'tenant' => $this->has_login,
+            'employee' => $this->canAccessEmployeePortal(),
+            default => false,
+        };
     }
 
     protected static function boot()
@@ -47,7 +62,17 @@ class User extends Authenticatable implements FilamentUser
         parent::boot();
 
         static::deleting(function ($user) {
+            $actor = self::restrictedHrActor();
+            abort_if($actor && $user->hasManagementAccess(), 403);
+
             $connection = $user->getConnection();
+            if ($connection->getSchemaBuilder()->hasTable('portal_punches') && $connection->table('portal_punches')->where('user_id', $user->id)->exists()) {
+                throw ValidationException::withMessages(['employee' => 'This employee has retained punch requests. Disable the employee instead of deleting their history.']);
+            }
+            if ($connection->getSchemaBuilder()->hasColumn('attendance_logs', 'portal_user_id')
+                && $connection->table('attendance_logs')->where('portal_user_id', $user->id)->exists()) {
+                throw ValidationException::withMessages(['employee' => 'This employee has retained portal punches. Disable the employee instead of deleting their history.']);
+            }
             if (! $connection->getSchemaBuilder()->hasTable('manual_attendance_entries')) {
                 return;
             }
@@ -62,16 +87,24 @@ class User extends Authenticatable implements FilamentUser
         });
 
         static::saving(function ($user) {
+            $actor = self::restrictedHrActor();
+            if ($actor) {
+                $deviceFields = ['device_privilege', 'device_password', 'blocked_devices'];
+                foreach ($deviceFields as $field) {
+                    if ($user->isDirty($field) && ($user->exists || (filled($user->$field) && $user->$field != 0))) {
+                        throw ValidationException::withMessages([$field => 'Device settings require Admin access.']);
+                    }
+                }
+                abort_if($user->isDirty('privilege') && ($user->exists || (int) $user->privilege !== 0), 403);
+                $wasManager = in_array((int) $user->getOriginal('privilege'), [14, self::HR_PRIVILEGE], true);
+                abort_if($user->exists && $wasManager && $actor->id !== $user->id && $user->isDirty(['email', 'password']), 403);
+            }
+
             if ($user->email === self::DEFAULT_LOGIN_EMAIL) {
                 $user->is_system_account = true;
             }
         });
 
-        static::updating(function ($user) {
-            if ($user->isDirty('password')) {
-                $user->requires_password_change = false;
-            }
-        });
     }
 
     /**
@@ -89,6 +122,7 @@ class User extends Authenticatable implements FilamentUser
     protected $hidden = [
         'password',
         'remember_token',
+        'bank_account_number',
     ];
 
     /**
@@ -100,16 +134,19 @@ class User extends Authenticatable implements FilamentUser
     {
         return [
             'email_verified_at' => 'datetime',
+            'date_of_birth' => 'date:Y-m-d',
+            'bank_account_number' => 'encrypted',
             'password' => 'hashed',
             'privilege' => 'integer',
             'device_privilege' => 'integer',
             'is_enabled' => 'boolean',
             'is_system_account' => 'boolean',
-            'fingerprints' => \App\Casts\ProtectedArray::class,
+            'fingerprints' => ProtectedArray::class,
             'biometric_fetch_requests' => 'array',
-            'face_templates' => \App\Casts\ProtectedArray::class,
+            'face_templates' => ProtectedArray::class,
             'face_enrolled' => 'boolean',
             'requires_password_change' => 'boolean',
+            'portal_enabled' => 'boolean',
             'blocked_devices' => 'array',
         ];
     }
@@ -159,13 +196,42 @@ class User extends Authenticatable implements FilamentUser
         return match ((int) $this->privilege) {
             0 => 'User',
             14 => 'Admin',
+            self::HR_PRIVILEGE => 'HR',
             default => 'Unknown',
         };
     }
 
+    private static function restrictedHrActor(): ?self
+    {
+        // Do not resolve a tenant session guard before tenancy is initialized.
+        if (! tenancy()->initialized || (Filament::getCurrentPanel()?->getId() === 'master' && auth('admin')->user()?->role === 'master')) {
+            return null;
+        }
+        $actor = auth('web')->user();
+
+        return $actor instanceof self && (int) $actor->getRawOriginal('privilege') === self::HR_PRIVILEGE ? $actor : null;
+    }
+
+    public function canAccessEmployeePortal(): bool
+    {
+        return $this->is_enabled && ! $this->is_system_account && ! $this->hasManagementAccess()
+            && filled($this->email)
+            && ($this->portal_enabled ? filled($this->password) : mb_strlen((string) $this->device_password) >= 6);
+    }
+
+    public function hasManagementAccess(): bool
+    {
+        return in_array((int) $this->privilege, [14, self::HR_PRIVILEGE], true);
+    }
+
+    public function canManageDevices(): bool
+    {
+        return (int) $this->privilege === 14;
+    }
+
     public function getHasLoginAttribute(): bool
     {
-        return (int) $this->privilege === 14
+        return $this->hasManagementAccess()
             && filled($this->email)
             && filled($this->password);
     }

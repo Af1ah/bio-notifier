@@ -20,6 +20,7 @@ class EmployeePayrollEditorService
             $settings = $template ? Arr::only($template->settings, array_merge(PayrollProfileHistoryService::MONEY, ['pay_basis', 'currency'])) : [];
             foreach ($overrides as $field) if (array_key_exists($field, $data)) $settings[$field] = (int) $data[$field];
             if (! $template) $settings = Arr::only($data, array_merge(PayrollProfileHistoryService::MONEY, ['pay_basis', 'currency']));
+            $settings['currency'] = \App\Services\Support\TenantCurrency::get();
             if (($settings['pay_basis'] ?? 'monthly') !== 'monthly') foreach (['housing_allowance_minor','transport_allowance_minor','other_allowance_minor','fixed_deduction_minor'] as $field) $settings[$field] = 0;
             $settings += Arr::only($data, ['effective_from','employment_starts_on','employment_ends_on']);
             $settings += ['payroll_enabled' => true, 'payroll_template_id' => $template?->id, 'template_overrides' => $template ? $overrides : [], 'template_snapshot' => $template ? ['template' => $template->toArray(), 'applied_by_user_id' => $actor?->id, 'applied_at' => now()->toIso8601String()] : null];

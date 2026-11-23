@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Services\Payroll\PayrollProfileHistoryService;
+use App\Services\Support\TenantCurrency;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Validation\ValidationException;
 
@@ -13,6 +14,7 @@ class EmployeePayrollProfile extends Model
     protected static function booted(): void
     {
         static::saving(function ($profile) {
+            $profile->currency = TenantCurrency::get();
             if ($profile->employment_starts_on && $profile->employment_ends_on && $profile->employment_ends_on->lt($profile->employment_starts_on)) {
                 throw ValidationException::withMessages(['employment_ends_on' => 'Employment end must be on or after employment start.']);
             }

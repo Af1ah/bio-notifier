@@ -1,13 +1,13 @@
 # Bio-Notifier agent context
 
-Updated 28 October 2026. Read [the system handoff](docs/developer/system-handoff.md) before device, capacity, database or deployment work, and [Deploy.md](Deploy.md) before a rollout. The handoff contains verified hosts/ports, paths, tenant database layout, actual request destinations, service commands and outstanding tests. Verify drift-prone operational facts before acting.
+Updated 3 November 2026. Read [the system handoff](docs/developer/system-handoff.md) before device, capacity, database or deployment work, and [Deploy.md](Deploy.md) before a rollout. The handoff contains verified hosts/ports, paths, tenant database layout, actual request destinations, service commands and outstanding tests. Verify drift-prone operational facts before acting.
 
 ## Project boundaries
 
 - Laravel source: `/home/aflah/projects/bio-ebio/bio-notifier`; production `/var/www/bio-notifier`.
 - Go gateway source: `/home/aflah/projects/bio-ebio/device-gateway`; production `/opt/bio-device-gateway`. Separate Git repositories.
 - `/home/aflah/Downloads/eBioServerNew/Iclock` is vendor/reference material, not the app checkout.
-- Current architecture: Laravel 12 / Filament 4, PostgreSQL central plus one database per company, separate Go ADMS service and shared gateway database. eBio SOAP/webhooks remain supported per organisation. The old instruction that all device work must use eBio is superseded.
+- Current architecture: Laravel 12 / Filament 5 / Livewire 4, PostgreSQL central plus one database per company, separate Go ADMS service and shared gateway database. eBio SOAP/webhooks remain supported per organisation. The old instruction that all device work must use eBio is superseded. See [Filament 5 upgrade notes](docs/developer/filament-5-upgrade.md) for framework compatibility and release checks.
 
 ## Implementation and isolation
 

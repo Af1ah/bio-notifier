@@ -19,6 +19,11 @@ use Illuminate\Database\Eloquent\Model;
 
 class AttendanceLogResource extends Resource
 {
+    public static function canViewAny(): bool
+    {
+        return (bool) auth('web')->user()?->canManageDevices();
+    }
+
     protected static ?string $model = AttendanceLog::class;
 
     protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-clipboard-document-list';
@@ -78,6 +83,7 @@ class AttendanceLogResource extends Resource
         return $table
             ->columns([
                 Tables\Columns\TextColumn::make('device.name')
+                    ->placeholder(fn (AttendanceLog $record) => $record->portal_user_id ? 'Employee portal' : '—')
                     ->sortable(),
                 Tables\Columns\TextColumn::make('pin')
                     ->label('User PIN')

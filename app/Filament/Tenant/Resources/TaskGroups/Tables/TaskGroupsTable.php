@@ -14,6 +14,7 @@ class TaskGroupsTable
     {
         return $table
             ->columns([
+                TextColumn::make('id')->label('ID')->sortable(),
                 TextColumn::make('name')
                     ->searchable(),
                 TextColumn::make('users_count')
@@ -39,7 +40,7 @@ class TaskGroupsTable
                 \Filament\Actions\BulkActionGroup::make([
                     \Filament\Actions\DeleteBulkAction::make(),
                     \Filament\Actions\BulkAction::make('unblockTaskGroupUsers')
-                        ->authorize(fn (): bool => \App\Services\Devices\DeviceIntegration::usesEbio())
+                        ->authorize(fn (): bool => (bool) auth('web')->user()?->canManageDevices() && (\App\Services\Devices\DeviceIntegration::usesEbio()))
                         ->label('Unblock users from door')
                         ->icon('heroicon-o-check-circle')
                         ->color('success')
@@ -74,7 +75,7 @@ class TaskGroupsTable
                         })
                         ->deselectRecordsAfterCompletion(),
                     \Filament\Actions\BulkAction::make('blockTaskGroupUsers')
-                        ->authorize(fn (): bool => \App\Services\Devices\DeviceIntegration::usesEbio())
+                        ->authorize(fn (): bool => (bool) auth('web')->user()?->canManageDevices() && (\App\Services\Devices\DeviceIntegration::usesEbio()))
                         ->label('Block users from door')
                         ->icon('heroicon-o-x-circle')
                         ->color('warning')

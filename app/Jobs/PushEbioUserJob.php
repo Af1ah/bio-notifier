@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Jobs\Concerns\TracksQueuedDeviceCommand;
 use App\Models\Organisation;
 use App\Models\User;
 use App\Services\EbioSoapService;
@@ -16,6 +17,7 @@ use Illuminate\Support\Facades\Log;
 class PushEbioUserJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+    use TracksQueuedDeviceCommand;
 
     public $organisation;
 
@@ -28,22 +30,28 @@ class PushEbioUserJob implements ShouldQueue
         $this->organisation = $organisation;
         $this->userId = $userId;
         $this->location = $location;
+        $this->trackCommand($organisation, 'upsert_user');
     }
 
     public function handle(EbioSoapService $service): void
     {
         TenantContext::run($this->organisation, function () use ($service): void {
             $user = User::find($this->userId);
+            $this->trackedCommand()?->markAsSent();
 
             if ($user) {
                 try {
                     if (! $service->pushUser($this->organisation, $user, $this->location)) {
                         throw new \RuntimeException('eBioServer rejected the employee operation.');
                     }
+                    $this->trackedCommand()?->markAsAcknowledged('Success');
                 } catch (\Exception $e) {
+                    $this->trackedCommand()?->markAsFailed('Employee sync failed.');
                     Log::error('Failed to push user to eBioServer: '.$e->getMessage());
                     $this->fail($e);
                 }
+            } else {
+                $this->trackedCommand()?->markAsFailed('Employee no longer exists.');
             }
         });
     }

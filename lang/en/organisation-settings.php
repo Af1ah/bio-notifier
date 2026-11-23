@@ -2,11 +2,7 @@
 
 return [
     'overview' => 'Organisation settings',
-    'time' => 'Organisation time',
-    'time_help' => 'This timezone is used for attendance dates, shifts and displayed timestamps. Choose it before recording attendance. Changing existing history requires a reviewed migration.',
-    'timezone' => 'Organisation timezone',
-    'save_timezone' => 'Save timezone',
-    'timezone_saved' => 'Timezone saved',
+    'save_settings' => 'Save settings',
     'ebio' => 'eBio setup',
     'ebio_help' => 'Copy these settings into eBio → Utilities → Webhook (Post Logs).',
     'backups' => 'Backups',

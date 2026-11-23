@@ -3,10 +3,11 @@
 namespace App\Filament\Tenant\Resources\AttendanceApprovals\Tables;
 
 use App\Filament\Forms\Components\LocalDateTimePicker;
-
 use App\Models\AttendanceApproval;
+use App\Models\AttendanceCorrection;
 use App\Models\Branch;
 use App\Models\Department;
+use App\Models\ManualAttendanceEntry;
 use App\Models\User;
 use App\Services\Attendance\ApprovalService;
 use Filament\Actions\Action;
@@ -39,7 +40,7 @@ class AttendanceApprovalsTable
                 Filter::make('work_date')->schema([DatePicker::make('from'), DatePicker::make('to')])->query(fn ($query, array $data) => $query->when($data['from'] ?? null, fn ($q, $date) => $q->whereHas('attendanceDay', fn ($day) => $day->whereDate('work_date', '>=', $date)))->when($data['to'] ?? null, fn ($q, $date) => $q->whereHas('attendanceDay', fn ($day) => $day->whereDate('work_date', '<=', $date)))),
             ])
             ->recordActions([
-                Action::make('approve')->visible(fn (?AttendanceApproval $record): bool => $record?->state === 'pending')
+                Action::make('approve')->modalDescription(fn (?AttendanceApproval $record) => self::correctionSummary($record))->visible(fn (?AttendanceApproval $record): bool => $record?->state === 'pending')
                     ->modalHeading(fn (?AttendanceApproval $record): string => $record?->type === 'overtime' ? 'Approve overtime' : 'Approve attendance')->modalSubmitActionLabel('Approve')
                     ->schema([
                         LocalDateTimePicker::make('checkout_at')->label('Checkout time')->seconds(false)
@@ -84,5 +85,22 @@ class AttendanceApprovalsTable
                     })->deselectRecordsAfterCompletion(),
                 ]),
             ]);
+    }
+
+    private static function correctionSummary(?AttendanceApproval $record): ?string
+    {
+        if (($record?->proposal['reason'] ?? null) === 'manual_attendance') {
+            return ManualAttendanceEntry::where('user_id', $record->attendanceDay->user_id)->whereIn('id', $record->proposal['entry_ids'] ?? [])
+                ->get()->map(fn ($entry) => 'Requested: '.$entry->in_at->format('d M Y H:i').' – '.$entry->out_at->format('d M Y H:i').'. Reason: '.$entry->reason)->implode(' ');
+        }
+        if (($record?->proposal['reason'] ?? null) !== 'manual_correction') {
+            return null;
+        }
+        $correction = AttendanceCorrection::where('attendance_day_id', $record->attendance_day_id)->find($record->proposal['correction_id'] ?? null);
+        if (! $correction) {
+            return 'Correction details are unavailable. Review this request before approving.';
+        }
+
+        return 'Requested: '.($correction->proposed_in_at?->format('d M Y H:i') ?? 'No time change').' – '.($correction->proposed_out_at?->format('d M Y H:i') ?? 'No time change').'. Reason: '.$correction->reason;
     }
 }

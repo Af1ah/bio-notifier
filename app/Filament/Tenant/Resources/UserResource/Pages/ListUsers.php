@@ -6,6 +6,7 @@ use App\Filament\Tenant\Resources\UserResource;
 use App\Jobs\SyncEbioUsersJob;
 use App\Models\Device;
 use App\Models\DeviceCommand;
+use App\Services\Devices\DeviceCommandService;
 use App\Services\Devices\DeviceIntegration;
 use App\Services\Imports\UserCsvImportService;
 use Filament\Actions;
@@ -14,20 +15,25 @@ use Filament\Forms\Components\FileUpload;
 use Filament\Forms\Components\Select;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\ListRecords;
+use Filament\Schemas\Components\Actions as SchemaActions;
 use Filament\Schemas\Components\Text;
+use Filament\Schemas\Components\View;
 use Filament\Schemas\Components\Wizard\Step;
 use Filament\Schemas\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
-use Illuminate\Support\HtmlString;
 use Illuminate\Validation\ValidationException;
 use Livewire\Attributes\Locked;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class ListUsers extends ListRecords
 {
     protected static string $resource = UserResource::class;
 
     public string $importPreview = '';
+
+    #[Locked]
+    public array $importReview = [];
 
     #[Locked]
     public string $importFingerprint = '';
@@ -37,7 +43,7 @@ class ListUsers extends ListRecords
         return [
             Actions\CreateAction::make(),
             Actions\Action::make('syncEbioUsers')
-                ->authorize(fn (): bool => DeviceIntegration::usesEbio())
+                ->authorize(fn (): bool => (bool) auth('web')->user()?->canManageDevices() && (DeviceIntegration::usesEbio()))
                 ->label('Sync employees')->icon('heroicon-o-arrow-path')->color('warning')
                 ->requiresConfirmation()->modalHeading('Sync employees')
                 ->modalDescription('Import registered employees from the device connection. This may take a few moments.')
@@ -53,41 +59,51 @@ class ListUsers extends ListRecords
                     }
                 }),
             Actions\Action::make('readGatewayUsers')
-                ->authorize(fn (): bool => tenant()?->device_integration === DeviceIntegration::GATEWAY)
+                ->authorize(fn (): bool => (bool) auth('web')->user()?->canManageDevices() && (tenant()?->device_integration === DeviceIntegration::GATEWAY))
                 ->label('Read device users')->icon('heroicon-o-users')->color('warning')
                 ->modalHeading('Read device users')
                 ->modalDescription('The device sends its users on the next connection. New users are added as employees; existing employee names are updated. Payroll and login settings are not changed.')
                 ->form([
                     Select::make('device_id')->label('Device')
-                        ->options(fn () => Device::query()->get()->filter(fn (Device $device) => app(\App\Services\Devices\DeviceCommandService::class)->available($device, 'query_users'))->mapWithKeys(fn (Device $device) => [$device->id => trim(($device->name ?: 'Unnamed device').' — '.$device->serial_number)])->all())
+                        ->options(fn () => Device::query()->get()->filter(fn (Device $device) => app(DeviceCommandService::class)->available($device, 'query_users'))->mapWithKeys(fn (Device $device) => [$device->id => trim(($device->name ?: 'Unnamed device').' — '.$device->serial_number)])->all())
                         ->searchable()->required(),
                 ])
                 ->action(function (array $data): void {
                     $device = Device::findOrFail($data['device_id']);
-                    abort_unless(app(\App\Services\Devices\DeviceCommandService::class)->available($device, 'query_users'), 403);
-                    app(\App\Services\Devices\DeviceCommandService::class)->request($device, 'query_users');
+                    abort_unless(app(DeviceCommandService::class)->available($device, 'query_users'), 403);
+                    app(DeviceCommandService::class)->request($device, 'query_users');
                     Notification::make()->title('Request sent')->body('Device users will be added or updated when the device responds. Track the request in Device Commands.')->success()->send();
                 }),
             Actions\Action::make('importUsers')
+                ->authorize(fn (): bool => (bool) auth('web')->user()?->hasManagementAccess())
                 ->label('Import employees')->icon('heroicon-o-arrow-up-tray')->color('info')
                 ->modalHeading('Import employees')->modalSubmitActionLabel('Import employees')
-                ->modalDescription(function (): HtmlString {
-                    $service = app(UserCsvImportService::class);
-                    $basic = base64_encode($service->template(false));
-                    $payroll = base64_encode($service->template(true));
-
-                    return new HtmlString('<p>Upload up to 1,000 employees in a UTF-8 CSV (5 MB maximum). Comma, semicolon and tab separators are detected. Blank cells preserve existing values. Login access and passwords are never changed.</p><p><a class="text-primary-600 underline" download="employees.csv" href="data:text/csv;base64,'.$basic.'">Employee template</a> · <a class="text-primary-600 underline" download="employees-payroll.csv" href="data:text/csv;base64,'.$payroll.'">Payroll template</a></p><p>Payroll amounts are INR, not paise, without commas (8000.00). Pay basis: monthly, daily or hourly. Dates: YYYY-MM-DD. New payroll profiles require pay_basis, basic_salary and effective_from; payroll_enabled defaults to 0. Use organisation branch/department IDs and task_group_ids separated by |. Department must belong to the branch. Device privilege: 0 or 14. Booleans: 0/1, true/false or yes/no.</p>');
+                ->modalDescription('Upload a CSV, review the employees, then import.')
+                ->beforeFormFilled(function (): void {
+                    $this->importPreview = '';
+                    $this->importReview = [];
+                    $this->importFingerprint = '';
                 })
                 ->steps([
                     Step::make('Upload and validate')->schema([
+                        SchemaActions::make([
+                            Actions\Action::make('downloadBlankEmployeeCsv')->label('Download blank CSV')->icon('heroicon-o-arrow-down-tray')
+                                ->color('gray')->action(fn () => $this->downloadImportTemplate(false)),
+                            Actions\Action::make('downloadEmployeeExamples')->label('Download example')->icon('heroicon-o-arrow-down-tray')
+                                ->action(fn () => $this->downloadImportTemplate(true)),
+                        ]),
                         Select::make('mode')->label('Existing employees')
-                            ->options(['create' => 'Create only — reject existing PINs', 'upsert' => 'Create and update by PIN'])
+                            ->options(['create' => 'Add new employees', 'upsert' => 'Add or update by PIN'])
                             ->default('create')->required(),
                         FileUpload::make('file')->label('CSV file')
+                            ->helperText('Up to 1,000 employees · 5 MB')
                             ->acceptedFileTypes(['text/csv', 'application/csv', 'text/x-csv', 'application/vnd.ms-excel', 'text/plain'])
                             ->disk('local')->directory(fn () => app(UserCsvImportService::class)->directory())
                             ->maxSize(5120)->required()->storeFiles(true),
                     ])->afterValidation(function (Step $component): void {
+                        $this->importReview = [];
+                        $this->importPreview = '';
+                        $this->importFingerprint = '';
                         $data = $component->getChildSchema()->getState();
                         $file = $data['file'] ?? null;
                         if (! is_string($file)) {
@@ -98,12 +114,15 @@ class ListUsers extends ListRecords
                         } catch (ValidationException $e) {
                             $this->rejectImport($component->getChildSchema(), $e);
                         }
-                        $this->importPreview = "Validated {$preview['delimiter']}-separated CSV: {$preview['created']} new employees, {$preview['updated']} existing employees updated, {$preview['payroll']} payroll profiles included. All records are revalidated on submission and saved together; an error rolls back the entire upload.";
+                        $this->importPreview = "{$preview['created']} new · {$preview['updated']} updates";
+                        $this->importReview = $preview['review'];
                         $this->importFingerprint = $preview['fingerprint'];
                     }),
                     Step::make('Review and import')->schema([
                         Text::make(fn (): string => $this->importPreview),
-                        Checkbox::make('confirmed')->label('I checked the import mode, employee details and payroll rates.')->accepted()->required(),
+                        View::make('filament.tenant.components.employee-import-review')
+                            ->viewData(fn (): array => ['review' => $this->importReview]),
+                        Checkbox::make('confirmed')->label('These details are correct.')->accepted()->required(),
                     ]),
                 ])
                 ->action(function (array $data, Schema $schema): void {
@@ -115,11 +134,23 @@ class ListUsers extends ListRecords
                     }
                     Storage::disk('local')->delete($data['file']);
                     $this->importFingerprint = '';
+                    $this->importReview = [];
                     Notification::make()->title('Import complete')
                         ->body("Created {$result['created']} employees and updated {$result['updated']}. Changed payroll profiles require salary slips to be recalculated.")
                         ->success()->send();
                 }),
         ];
+    }
+
+    public function downloadImportTemplate(bool $examples = false): StreamedResponse
+    {
+        abort_unless(tenancy()->initialized && (bool) auth('web')->user()?->hasManagementAccess(), 403);
+        $service = app(UserCsvImportService::class);
+        $csv = $examples ? $service->exampleTemplate() : $service->template(true, blank: true);
+
+        return response()->streamDownload(static function () use ($csv): void {
+            echo $csv;
+        }, $examples ? 'employees-10-examples.csv' : 'employees-blank.csv', ['Content-Type' => 'text/csv; charset=UTF-8']);
     }
 
     private function rejectImport(Schema $schema, ValidationException $exception): never

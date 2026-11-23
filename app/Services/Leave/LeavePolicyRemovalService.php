@@ -12,7 +12,7 @@ class LeavePolicyRemovalService
 {
     public function preview(LeavePolicy $policy, User $actor): array
     {
-        abort_unless((int) $actor->privilege === 14, 403);
+        abort_unless($actor->hasManagementAccess(), 403);
         $plan = $this->plan($policy);
 
         return ['signature' => $plan['signature'], 'summary' => implode("\n", [
@@ -31,13 +31,13 @@ class LeavePolicyRemovalService
 
     public function remove(LeavePolicy $policy, User $actor, string $name, string $reason, string $signature): void
     {
-        abort_unless((int) $actor->privilege === 14, 403);
+        abort_unless($actor->hasManagementAccess(), 403);
         if ($name !== $policy->name || trim($reason) === '' || mb_strlen($reason) > 1000) {
             throw ValidationException::withMessages(['confirmation' => 'Enter the exact policy name and a removal reason.']);
         }
         DB::transaction(function () use ($policy, $actor, $name, $reason, $signature) {
             // Match policy-write lock order, then serialize payroll, grants and leave writes.
-            User::where('privilege', 14)->orderBy('id')->lockForUpdate()->get();
+            User::whereIn('privilege', [14, User::HR_PRIVILEGE])->orderBy('id')->lockForUpdate()->get();
             $before = $this->plan($policy);
             User::whereIn('id', $before['user_ids'])->orderBy('id')->lockForUpdate()->get();
             $policy = LeavePolicy::lockForUpdate()->findOrFail($policy->id);
@@ -67,6 +67,7 @@ class LeavePolicyRemovalService
             DB::table('leave_policy_revisions')->where('leave_policy_id', $policy->id)->delete();
             DB::table('salary_slips')->whereIn('id', $plan['delete_slips'])->where('status', 'draft')->delete();
             DB::table('leave_policies')->where('id', $policy->id)->delete();
+            LeaveBalanceSummaryService::invalidate();
         }, 3);
     }
 

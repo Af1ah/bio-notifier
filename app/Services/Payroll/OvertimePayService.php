@@ -20,7 +20,7 @@ class OvertimePayService
         }
         $profile = app(PayrollProfileHistoryService::class)->forDate($day->user, $day->work_date);
         $rate = $rule?->snapshot['overtime_hourly_rate_minor'] ?? null;
-        $currency = $rate !== null ? ($rule->snapshot['overtime_currency'] ?? 'INR') : ($profile?->currency ?? 'INR');
+        $currency = $rate !== null ? ($rule->snapshot['overtime_currency'] ?? \App\Services\Support\TenantCurrency::get()) : ($profile?->currency ?? \App\Services\Support\TenantCurrency::get());
         if ($profile && $currency !== $profile->currency) {
             throw ValidationException::withMessages(['approval' => 'Shift overtime currency must match the employee payroll currency.']);
         }

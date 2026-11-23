@@ -51,7 +51,7 @@ class LeaveTypeForm
                             ->live(),
                         TextInput::make('deduction_amount_minor')
                             ->label('Fixed deduction per full day')
-                            ->prefix('₹')
+                            ->prefix(fn () => \App\Services\Support\TenantCurrency::get())
                             ->numeric()
                             ->minValue(0)
                             ->step(0.01)

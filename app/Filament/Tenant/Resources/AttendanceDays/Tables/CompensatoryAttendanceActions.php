@@ -67,7 +67,7 @@ class CompensatoryAttendanceActions
     {
         return [
             Action::make('award')->label('Grant holiday work credit')->icon('heroicon-o-gift')
-                ->visible(fn (AttendanceDay $record) => (int) auth()->user()?->privilege === 14 && $record->approved_worked_minutes > 0 && in_array(self::calendarKind($record), ['holiday', 'off']) && (! $record->compensatoryAward || $record->compensatoryAward->state === 'reversed'))
+                ->visible(fn (AttendanceDay $record) => (bool) auth()->user()?->hasManagementAccess() && $record->approved_worked_minutes > 0 && in_array(self::calendarKind($record), ['holiday', 'off']) && (! $record->compensatoryAward || $record->compensatoryAward->state === 'reversed'))
                 ->modalHeading('Review holiday/off-day work reward')
                 ->modalDescription('Approve a reward for this employee and work date. Resolve attendance and overtime decisions first. One reward applies across all shifts on the date.')
                 ->fillForm(fn (AttendanceDay $record) => ['evidence_signature' => app(CompensatoryLeaveService::class)->signature($record), 'evidence_summary' => $record->user->name.' · '.$record->work_date->format('d M Y').' · '.$record->approved_worked_minutes.' approved net minutes · '.(self::calendarKind($record) === 'holiday' ? 'Holiday' : 'Rostered off day')])
@@ -85,7 +85,7 @@ class CompensatoryAttendanceActions
             Action::make('viewReward')->label('Holiday work credit')->visible(fn (AttendanceDay $record) => $record->compensatoryAward !== null)
                 ->modalHeading('Holiday work credit')->modalContent(fn (AttendanceDay $record) => view('filament.tenant.pages.attendance-work-reward', ['day' => $record, 'award' => $record->compensatoryAward, 'state' => self::awardState($record)]))->modalSubmitAction(false),
             Action::make('reverse')->label('Reverse holiday work credit')->color('danger')
-                ->visible(fn (AttendanceDay $record) => (int) auth()->user()?->privilege === 14 && $record->compensatoryAward !== null && $record->compensatoryAward->state !== 'reversed')
+                ->visible(fn (AttendanceDay $record) => (bool) auth()->user()?->hasManagementAccess() && $record->compensatoryAward !== null && $record->compensatoryAward->state !== 'reversed')
                 ->modalDescription('Retain the original award and record a reversal. Reserved or consumed leave must be reconciled first; closed payroll periods cannot be changed here.')
                 ->schema([Textarea::make('reason')->required()->maxLength(1000)])
                 ->action(function (AttendanceDay $record, array $data, Schema $schema) {

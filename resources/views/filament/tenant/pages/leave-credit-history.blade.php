@@ -1,4 +1,7 @@
 <div class="space-y-4">
+@isset($balance)
+    <p class="text-sm">Carried: {{ $balance['carried_half_units'] / 2 }} days · Used: {{ $balance['consumed_half_units'] / 2 }} days · Expiring soon: {{ $balance['expiring_half_units'] / 2 }} days</p>
+@endisset
 @forelse ($lots as $lot)
     <section class="rounded-lg border p-3">
         <p><strong>{{ ucfirst($lot->source_kind) }}: {{ $lot->granted_half_units / 2 }} days</strong></p>

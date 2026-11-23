@@ -8,6 +8,7 @@ use App\Models\GatewayConnection;
 use App\Models\GatewayDeviceBinding;
 use App\Models\GatewayIngressReceipt;
 use App\Models\Organisation;
+use App\Services\Devices\DeviceAccessSettings;
 use App\Services\Devices\DeviceIntegration;
 use Illuminate\Http\Request;
 
@@ -34,7 +35,7 @@ final class GatewayEventController extends Controller
             'id' => ['required', 'uuid'],
             'serial' => ['required', 'regex:/^[A-Za-z0-9_-]{1,64}$/'],
             'binding_version' => ['required', 'integer', 'min:1'],
-            'kind' => ['required', 'in:attendance,users,biometrics,biometric_photos,heartbeat,device_info,command_result'],
+            'kind' => ['required', 'in:attendance,users,biometrics,biometric_photos,heartbeat,device_info,command_result,access_groups,access_periods'],
             'source_ip' => ['nullable', 'ip'],
             'received_at' => ['required', 'date'],
             'punches' => ['required_if:kind,attendance', 'array', 'min:1', 'max:1000'],
@@ -44,11 +45,16 @@ final class GatewayEventController extends Controller
             'punches.*.status' => ['required', 'integer', 'between:0,255'],
             'punches.*.verify' => ['required', 'integer', 'between:0,255'],
             'punches.*.work_code' => ['nullable', 'integer', 'between:0,255'],
+            'access_records' => ['required_if:kind,access_groups,access_periods', 'array', 'min:1', 'max:1000'],
+            'access_records.*' => ['array:number,Verify,ValidHoliday,TZ,SunStart,SunEnd,MonStart,MonEnd,TuesStart,TuesEnd,WedStart,WedEnd,ThursStart,ThursEnd,FriStart,FriEnd,SatStart,SatEnd'],
+            'access_records.*.*' => ['required', 'string', 'max:64'],
             'users' => ['exclude_unless:kind,users', 'present', 'array', 'max:1000'],
-            'users.*' => ['array:pin,name,card'],
+            'users.*' => ['array:pin,name,card,access'],
             'users.*.pin' => ['required', 'string', 'max:64'],
             'users.*.name' => ['nullable', 'string', 'max:255'],
             'users.*.card' => ['nullable', 'string', 'max:64'],
+            'users.*.access' => ['sometimes', 'array:Expires,StartDatetime,EndDatetime,VaildCount,ValidCount,Grp,TZ'],
+            'users.*.access.*' => ['present', 'string', 'max:64'],
             'biometrics' => ['exclude_unless:kind,biometrics', 'present', 'array', 'min:1', 'max:100'],
             'biometrics.*' => ['array:pin,type,slot,size,valid,tmp,bio_type,index,major_ver,minor_ver,format,duress,representation'],
             'biometrics.*.pin' => ['required', 'string', 'max:64'],
@@ -75,6 +81,11 @@ final class GatewayEventController extends Controller
             'device_info' => ['exclude_unless:kind,device_info', 'required', 'array:firmware_version,model,platform,device_type,push_version,serial,user_count,fp_count,att_log_count,max_user_count,max_fp_count,max_att_log_count,face_count,max_face_count,ip_address,mac_address,work_code,lock_count,fp_algorithm_version,face_algorithm_version'],
             'device_info.*' => ['string', 'max:255'],
         ]);
+        if (in_array($data['kind'], ['access_groups', 'access_periods'], true)) {
+            foreach ($data['access_records'] as $record) {
+                DeviceAccessSettings::parameters($data['kind'] === 'access_groups' ? 'set_access_group' : 'set_access_period', $record);
+            }
+        }
         $hash = hash('sha256', $request->getContent());
         $receipt = $connection->getConnection()->transaction(function () use ($connection, $data, $hash) {
             GatewayConnection::whereKey($connection->id)->lockForUpdate()->firstOrFail();

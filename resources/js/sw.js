@@ -26,7 +26,7 @@ registerRoute(
 
 // Cache images and icons
 registerRoute(
-  ({ request }) => request.destination === 'image',
+  ({ request, url }) => request.destination === 'image' && url.origin === self.location.origin && !url.pathname.includes('/punch-photos/'),
   new CacheFirst({
     cacheName: 'images',
     plugins: [
@@ -104,8 +104,8 @@ setCatchHandler(async ({ request, url }) => {
 //   })
 // );
 
-self.addEventListener('install', (event) => {
-  self.skipWaiting();
+self.addEventListener('message', (event) => {
+  if (event.data?.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {

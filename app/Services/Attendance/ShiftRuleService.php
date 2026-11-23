@@ -17,6 +17,7 @@ class ShiftRuleService
             throw ValidationException::withMessages(['valid_to' => 'The shift end date must be on or after its start date.']);
         }
         $rules = $schedule->rules ?? [];
+        $rules['overtime_currency'] = \App\Services\Support\TenantCurrency::get();
         Validator::make($rules, ['overtime_enabled' => 'sometimes|boolean', 'overtime_hourly_rate_minor' => 'nullable|integer|min:0|max:100000000', 'overtime_currency' => 'nullable|string|size:3|regex:/^[A-Z]{3}$/'])->validate();
         $half = (int) ($rules['half_day_minutes'] ?? 120);
         $full = (int) ($rules['full_day_minutes'] ?? 480);

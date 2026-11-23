@@ -10,6 +10,7 @@ use App\Models\Organisation;
 use App\Services\Devices\DeviceIntegration;
 use App\Services\Devices\Gateway\GatewayClient;
 use App\Services\Devices\Gateway\GatewayRequestException;
+use App\Services\Support\QueuedActionNotifications;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\DB;
@@ -92,6 +93,9 @@ class SubmitGatewayCommand implements ShouldQueue
             if ($state === 'parked') {
                 tenancy()->initialize(Organisation::findOrFail($submission->organisation_id));
                 DeviceCommand::whereKey($submission->projection_id)->where('status', 'pending')->update(['status' => $submission->expires_at->isPast() ? 'expired' : ($permanent ? 'failed' : 'outcome_unknown')]);
+                if ($command = DeviceCommand::find($submission->projection_id)) {
+                    app(QueuedActionNotifications::class)->send($command);
+                }
             }
             throw $exception;
         } finally {

@@ -15,7 +15,7 @@ class LeaveRangeService
 {
     private function validate(array $data, User $actor): array
     {
-        abort_unless((int) $actor->privilege === 14, 403);
+        abort_unless($actor->hasManagementAccess(), 403);
         $v = Validator::make($data, ['user_id' => 'required|integer|exists:users,id', 'leave_type_id' => 'required|integer|exists:leave_types,id', 'starts_on' => 'required|date_format:Y-m-d', 'ends_on' => 'required|date_format:Y-m-d|after_or_equal:starts_on', 'duration' => 'required|in:full,half', 'state' => 'required|in:pending,approved', 'notes' => 'nullable|string|max:1000'])->validate();
         if (Carbon::parse($v['starts_on'])->diffInDays(Carbon::parse($v['ends_on'])) > 92) {
             throw ValidationException::withMessages(['ends_on' => 'Choose up to 93 calendar days per request.']);

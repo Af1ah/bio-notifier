@@ -11,6 +11,13 @@ final class DeviceIntegration
 
     public const EBIO = 'ebio';
 
+    public static function authorizeManagement(): void
+    {
+        // Background ingestion and queued device work have no signed-in operator.
+        $actor = auth('web')->user();
+        abort_if($actor instanceof \App\Models\User && ! $actor->canManageDevices(), 403);
+    }
+
     public static function options(): array
     {
         return [self::GATEWAY => 'ADMS gateway', self::EBIO => 'eBioServer'];

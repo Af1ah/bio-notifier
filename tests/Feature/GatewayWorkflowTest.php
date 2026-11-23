@@ -6,7 +6,10 @@ use App\Casts\ProtectedArray;
 use App\Filament\Master\Pages\DeviceGateway;
 use App\Filament\Tenant\Pages\OrganisationSettings;
 use App\Filament\Tenant\Resources\DeviceCommandResource\Pages\ListDeviceCommands;
+use App\Filament\Tenant\Resources\DeviceResource\Pages\EditDevice;
 use App\Filament\Tenant\Resources\DeviceResource\Pages\ListDevices;
+use App\Filament\Tenant\Resources\DeviceResource\RelationManagers\AccessGroupsRelationManager;
+use App\Filament\Tenant\Resources\DeviceResource\RelationManagers\DeviceUsersRelationManager;
 use App\Filament\Tenant\Resources\UserResource\Pages\ListUsers;
 use App\Filament\Tenant\Resources\UserResource\Pages\ViewUser;
 use App\Jobs\Gateway\ApplyDomainEffect;
@@ -18,7 +21,9 @@ use App\Jobs\RefreshAttendanceDay;
 use App\Models\Admin;
 use App\Models\AttendanceLog;
 use App\Models\Device;
+use App\Models\DeviceAccessSetting;
 use App\Models\DeviceCommand;
+use App\Models\DeviceRosterEntry;
 use App\Models\GatewayBindingVersion;
 use App\Models\GatewayCommandSubmission;
 use App\Models\GatewayConnection;
@@ -34,9 +39,12 @@ use App\Services\Attendance\AttendanceEntryService;
 use App\Services\Attendance\ShiftAssignmentService;
 use App\Services\Attendance\ShiftRuleService;
 use App\Services\Devices\BiometricCredentials;
+use App\Services\Devices\DeviceAccessSettings;
 use App\Services\Devices\DeviceAccessValidity;
 use App\Services\Devices\DeviceCommandService;
 use App\Services\Devices\DeviceIntegration;
+use App\Services\Devices\DeviceProfilePolicy;
+use App\Services\Devices\DeviceUserAccess;
 use App\Services\Devices\EmployeeBiometrics;
 use App\Services\Devices\Gateway\DeviceDiscovery;
 use App\Services\Devices\Gateway\GatewayClient;
@@ -63,6 +71,7 @@ use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Livewire\Livewire;
+use Ramsey\Uuid\Uuid;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 use Tests\TestCase;
 
@@ -143,7 +152,7 @@ class GatewayWorkflowTest extends TestCase
         $this->assertSame('F22', $device->model);
         $this->assertSame('23', $device->options['observed_metadata']['user_count']);
         $this->assertSame('ZMM220', $device->options['observed_metadata']['platform']);
-        $this->assertSame('legacy-fp', \App\Services\Devices\DeviceProfilePolicy::name($device));
+        $this->assertSame('legacy-fp', DeviceProfilePolicy::name($device));
         $this->assertSame(['rfid', 'finger'], $device->verificationFormats());
         tenancy()->end();
         $event['id'] = (string) Str::uuid();
@@ -713,9 +722,9 @@ class GatewayWorkflowTest extends TestCase
             ],
         ]);
 
-        $this->assertSame('legacy-fp', \App\Services\Devices\DeviceProfilePolicy::name($device));
-        $this->assertTrue(\App\Services\Devices\DeviceProfilePolicy::format($device, 'finger'));
-        $this->assertFalse(\App\Services\Devices\DeviceProfilePolicy::format($device, 'face'));
+        $this->assertSame('legacy-fp', DeviceProfilePolicy::name($device));
+        $this->assertTrue(DeviceProfilePolicy::format($device, 'finger'));
+        $this->assertFalse(DeviceProfilePolicy::format($device, 'face'));
     }
 
     public function test_combined_push_checks_formats_and_queues_user_before_templates(): void
@@ -795,6 +804,52 @@ class GatewayWorkflowTest extends TestCase
         $event['id'] = (string) Str::uuid();
         $event['users'] = [];
         $this->deliver($event)->assertAccepted();
+    }
+
+    public function test_device_user_access_readback_stays_device_specific_and_missing_fields_are_unknown(): void
+    {
+        [$organisation] = $this->company('ACCESSREAD01');
+        $event = ['id' => (string) Str::uuid(), 'serial' => 'ACCESSREAD01', 'binding_version' => 1, 'kind' => 'users',
+            'received_at' => now()->toIso8601String(), 'users' => [['pin' => '0007', 'name' => 'Device user',
+                'access' => ['StartDatetime' => '20261023', 'EndDatetime' => '20261025', 'TZ' => '0001003200000000', 'Grp' => '1']]]];
+        $this->deliver($event)->assertAccepted();
+        (new ApplyGatewayReceipt($event['id']))->handle(app(ReceiptApplier::class));
+        tenancy()->initialize($organisation);
+        $record = DeviceRosterEntry::firstOrFail();
+        $this->assertSame('20261025', $record->access_settings['EndDatetime']);
+        $this->assertStringNotContainsString('20261025', $record->getRawOriginal('access_settings'));
+        $this->assertSame('Not reported', DeviceUserAccess::expiry($record));
+        $this->assertSame('Not reported', DeviceUserAccess::entries($record));
+        $this->assertSame('Personal periods: 50', DeviceUserAccess::periods($record));
+        $this->assertSame('2026-10-25', DeviceUserAccess::date($record->access_settings['EndDatetime']));
+        $this->assertSame('Unset on device', DeviceUserAccess::date('0'));
+        $this->assertSame('Unrecognized date', DeviceUserAccess::date('20260230'));
+        $this->assertArrayNotHasKey('access_settings', User::where('pin', '0007')->firstOrFail()->getAttributes());
+        tenancy()->end();
+        $event['id'] = (string) Str::uuid();
+        $event['users'][0]['access'] = ['ValidCount' => '0', 'TZ' => '0001000000000000'];
+        $this->deliver($event)->assertAccepted();
+        (new ApplyGatewayReceipt($event['id']))->handle(app(ReceiptApplier::class));
+        tenancy()->initialize($organisation);
+        $record->refresh();
+        $this->assertSame('0 (device-reported; unverified)', DeviceUserAccess::entries($record));
+        $this->assertSame('Personal periods: none reported', DeviceUserAccess::periods($record));
+        $this->assertArrayNotHasKey('EndDatetime', $record->access_settings);
+        tenancy()->end();
+        $oldEvent = $event;
+        $oldEvent['id'] = (string) Str::uuid();
+        $oldEvent['received_at'] = now()->subHour()->toIso8601String();
+        $oldEvent['users'][0]['access'] = ['EndDatetime' => '20200101'];
+        $this->deliver($oldEvent)->assertAccepted();
+        (new ApplyGatewayReceipt($oldEvent['id']))->handle(app(ReceiptApplier::class));
+        tenancy()->initialize($organisation);
+        $record->refresh();
+        $this->assertSame('0', $record->access_settings['ValidCount']);
+        $this->assertArrayNotHasKey('EndDatetime', $record->access_settings);
+        tenancy()->end();
+        $event['id'] = (string) Str::uuid();
+        $event['users'][0]['access']['Passwd'] = 'must-not-be-accepted';
+        $this->deliver($event)->assertUnprocessable();
     }
 
     public function test_provider_switch_blocks_new_commands_but_retains_accepted_attendance(): void
@@ -1285,7 +1340,7 @@ class GatewayWorkflowTest extends TestCase
     {
         config(['device_gateway.user_validity_enabled' => true]);
         [$company, $binding] = $this->company('VALIDITY01');
-        $binding->update(['capabilities' => ['upsert_user', 'get_option', 'set_user_validity']]);
+        $binding->update(['capabilities' => ['upsert_user', 'get_option', 'set_user_validity', 'query_users']]);
         tenancy()->initialize($company);
         $device = Device::firstOrFail();
         $device->update(['model' => 'x 2008', 'options' => ['observed_metadata' => [
@@ -1301,16 +1356,113 @@ class GatewayWorkflowTest extends TestCase
         $this->actingAs($admin, 'web');
         Filament::setCurrentPanel(Filament::getPanel('tenant'));
         Filament::bootCurrentPanel();
-        Livewire::test(ListUsers::class)->callTableAction('deviceAccessPeriod', $employee, data: [
-            'device_id' => $device->id, 'mode' => 'period', 'from' => '2026-10-25', 'until' => '2026-10-26',
+        Livewire::test(DeviceUsersRelationManager::class, [
+            'ownerRecord' => $device, 'pageClass' => EditDevice::class,
+        ])->callTableAction('deviceAccessPeriod', DeviceRosterEntry::firstOrFail(), data: [
+            'request_id' => (string) Str::uuid(), 'mode' => 'dates', 'from' => '2026-10-25', 'until' => '2026-10-26',
         ])->assertHasNoTableActionErrors();
         $command = DeviceCommand::where('command_type', 'set_user_validity')->firstOrFail();
         $row = DB::table('gateway_command_outbox')->where('id', $command->gateway_command_id)->first();
-        $this->assertSame(['pin' => '0007', 'mode' => 'period', 'from' => '2026-10-25', 'until' => '2026-10-26'], ProtectedArray::decode($row->parameters));
+        $this->assertSame(['pin' => '0007', 'mode' => 'dates', 'from' => '2026-10-25', 'until' => '2026-10-26'], ProtectedArray::decode($row->parameters));
         $this->assertStringNotContainsString('2026-10-25', $row->parameters);
         $this->assertSame($before, $employee->fresh()->getAttributes());
         $this->expectException(ValidationException::class);
         app(DeviceAccessValidity::class)->apply($employee, $device, ['mode' => 'unrestricted']);
+    }
+
+    public function test_essl_date_compatibility_is_explicit_and_does_not_allow_other_modes(): void
+    {
+        $parameters = ['pin' => '0007', 'mode' => 'dates', 'from' => '2026-10-30', 'until' => '2026-10-31', 'dialect' => 'essl_dates'];
+        $this->assertSame($parameters, DeviceAccessValidity::parameters($parameters));
+        foreach (['none', 'entries', 'both'] as $mode) {
+            try {
+                DeviceAccessValidity::parameters(['pin' => '0007', 'mode' => $mode, 'dialect' => 'essl_dates']);
+                $this->fail('Date-only compatibility accepted another expiration mode.');
+            } catch (ValidationException) {
+                $this->assertTrue(true);
+            }
+        }
+        $this->expectException(ValidationException::class);
+        DeviceAccessValidity::parameters(array_replace($parameters, ['dialect' => 'unknown']));
+    }
+
+    public function test_wdms_comparison_requires_none_and_a_snapshot_without_caller_credentials(): void
+    {
+        foreach (['wdms_modern', 'wdms_legacy'] as $dialect) {
+            $parameters = ['pin' => '0007', 'mode' => 'none', 'dialect' => $dialect,
+                'source_event' => '11111111-2222-4333-8444-555555555555'];
+            $this->assertSame($parameters, DeviceAccessValidity::parameters($parameters));
+            foreach ([array_diff_key($parameters, ['source_event' => true]),
+                array_replace($parameters, ['mode' => 'entries', 'entries' => '3']),
+                $parameters + ['name' => 'forged'], $parameters + ['password' => 'forged']] as $invalid) {
+                try {
+                    DeviceAccessValidity::parameters($invalid);
+                    $this->fail('Unsafe full-user comparison accepted.');
+                } catch (ValidationException) {
+                    $this->assertTrue(true);
+                }
+            }
+        }
+    }
+
+    public function test_expiration_modes_are_separate_from_daily_periods_and_clear_inactive_limits(): void
+    {
+        [$company, $binding] = $this->company('EXPIRYMODES01');
+        $binding->update(['capabilities' => ['set_user_validity', 'query_users']]);
+        tenancy()->initialize($company);
+        $device = Device::firstOrFail();
+        $device->update(['options' => ['observed_metadata' => ['model' => 'x 2008', 'platform' => 'ZMM510_TFT', 'firmware_version' => 'ZMM510-NF24VB-Ver2.2.1']]]);
+        $employee = User::where('pin', '0007')->firstOrFail();
+        $before = $employee->getAttributes();
+        $roster = DeviceRosterEntry::create(['device_id' => $device->id, 'pin' => '0007', 'receipt_id' => (string) Str::uuid(),
+            'access_settings' => ['Grp' => '1', 'TZ' => '0001003200000000', 'StartDatetime' => '20261001', 'EndDatetime' => '20261031']]);
+        $admin = User::create(['name' => 'Expiration admin', 'pin' => '900', 'privilege' => 14, 'email' => 'expiry-modes@example.test', 'password' => 'password']);
+        $this->actingAs($admin, 'web');
+        URL::defaults(['tenant' => $company->shortname]);
+        Filament::setCurrentPanel(Filament::getPanel('tenant'));
+        Filament::bootCurrentPanel();
+        foreach (['none' => [], 'dates' => ['from' => '2026-10-28', 'until' => '2026-10-29'], 'entries' => ['entries' => '3'],
+            'both' => ['from' => '2026-10-28', 'until' => '2026-10-29', 'entries' => '3']] as $mode => $fields) {
+            $id = (string) Str::uuid();
+            Livewire::test(DeviceUsersRelationManager::class, ['ownerRecord' => $device, 'pageClass' => EditDevice::class])
+                ->callTableAction('deviceAccessPeriod', $roster, data: ['request_id' => $id, 'mode' => $mode] + $fields)->assertHasNoTableActionErrors();
+            $outbox = DB::table('gateway_command_outbox')->where('id', $id)->firstOrFail();
+            $this->assertSame(['pin' => '0007', 'mode' => $mode] + $fields, ProtectedArray::decode($outbox->parameters));
+            $readId = (string) Uuid::uuid5($id, 'user-readback');
+            $read = DeviceCommand::where('gateway_command_id', $readId)->firstOrFail();
+            $this->assertSame('query_users', $read->command_type);
+            $this->assertSame('0001003200000000', $roster->fresh()->access_settings['TZ']);
+        }
+        $this->assertSame($before, $employee->fresh()->getAttributes());
+        $write = DeviceCommand::where('gateway_command_id', $id)->firstOrFail();
+        $write->update(['status' => 'acknowledged']);
+        $read->update(['status' => 'acknowledged']);
+        tenancy()->end();
+        $event = ['id' => (string) Str::uuid(), 'serial' => 'EXPIRYMODES01', 'binding_version' => 1, 'kind' => 'users',
+            'command_id' => $readId, 'received_at' => now()->toIso8601String(),
+            'users' => [['pin' => '0007', 'access' => ['StartDatetime' => '20261028', 'EndDatetime' => '20261029']]]];
+        $this->deliver($event)->assertAccepted();
+        (new ApplyGatewayReceipt($event['id']))->handle(app(ReceiptApplier::class));
+        tenancy()->initialize($company);
+        $this->assertSame('Verify on terminal', $write->fresh()->syncStatusLabel());
+        $this->assertFalse($write->fresh()->data_applied);
+        tenancy()->end();
+        $event['id'] = (string) Str::uuid();
+        $event['users'][0]['access'] += ['Expires' => '3', 'VaildCount' => '3'];
+        $this->deliver($event)->assertAccepted();
+        (new ApplyGatewayReceipt($event['id']))->handle(app(ReceiptApplier::class));
+        tenancy()->initialize($company);
+        $this->assertSame('Synced', $write->fresh()->syncStatusLabel());
+        $this->assertSame('Dates and entry limit', DeviceUserAccess::expiry($roster->fresh()));
+        foreach ([['pin' => '0007', 'mode' => 'none', 'entries' => '3'], ['pin' => '0007', 'mode' => 'entries', 'entries' => '0'],
+            ['pin' => '0007', 'mode' => 'entries', 'entries' => '3', 'from' => '2026-10-28'], ['pin' => '0007', 'mode' => 'both', 'entries' => '3']] as $invalid) {
+            try {
+                DeviceAccessValidity::parameters($invalid);
+                $this->fail('Incomplete/mixed expiration mode accepted.');
+            } catch (ValidationException) {
+                $this->assertTrue(true);
+            }
+        }
     }
 
     public function test_device_access_period_rejects_unsupported_firmware_and_unknown_device_user(): void
@@ -1337,6 +1489,191 @@ class GatewayWorkflowTest extends TestCase
         } catch (HttpException $exception) {
             $this->assertSame(403, $exception->getStatusCode());
         }
+    }
+
+    public function test_existing_device_access_groups_can_be_read_edited_and_applied_on_demand(): void
+    {
+        config(['device_gateway.access_groups_enabled' => true]);
+        [$company, $binding] = $this->company('ACCESSGROUP01');
+        $binding->update(['capabilities' => [...DeviceAccessSettings::OPERATIONS, 'query_users']]);
+        tenancy()->initialize($company);
+        $device = Device::firstOrFail();
+        $device->update(['options' => ['observed_metadata' => ['model' => 'x 2008', 'platform' => 'ZMM510_TFT', 'firmware_version' => 'ZMM510-NF24VB-Ver2.2.1']]]);
+        $admin = User::create(['name' => 'Access admin', 'pin' => '900', 'privilege' => 14, 'email' => 'access-group@example.test', 'password' => 'password']);
+        $this->actingAs($admin, 'web');
+        $period = ['number' => '2'];
+        foreach (DeviceAccessSettings::DAYS as $day => $label) {
+            $period[$day.'Start'] = '0900';
+            $period[$day.'End'] = '1700';
+        }
+        tenancy()->end();
+        foreach (['access_periods' => $period, 'access_groups' => ['number' => '2', 'Verify' => '3', 'ValidHoliday' => '1', 'TZ' => '1;2;0;0']] as $kind => $settings) {
+            $event = ['id' => (string) Str::uuid(), 'serial' => 'ACCESSGROUP01', 'binding_version' => 1, 'kind' => $kind,
+                'received_at' => now()->toIso8601String(), 'access_records' => [$settings]];
+            $this->deliver($event)->assertAccepted();
+            (new ApplyGatewayReceipt($event['id']))->handle(app(ReceiptApplier::class));
+        }
+        tenancy()->initialize($company);
+        $this->assertSame(2, DeviceAccessSetting::count());
+        $group = DeviceAccessSetting::where('kind', 'group')->firstOrFail();
+        $this->assertSame('3', $group->reported['Verify']);
+        $this->assertStringNotContainsString('ValidHoliday', $group->getRawOriginal('reported'));
+        $service = app(DeviceAccessSettings::class);
+        $group = $service->save($device, 'group', ['name' => 'Day staff', 'revision' => $group->revision, 'settings' => $group->reported], $group);
+        $this->assertSame(0, DeviceCommand::where('command_type', 'set_access_group')->count());
+        $command = $service->apply($device, $group, $group->revision);
+        $again = $service->apply($device, $group, $group->revision);
+        $this->assertSame($command->id, $again->id);
+        $outbox = DB::table('gateway_command_outbox')->where('id', $command->gateway_command_id)->firstOrFail();
+        $this->assertSame(['number' => '2', 'Verify' => '3', 'ValidHoliday' => '1', 'TZ' => '1;2;0;0'], ProtectedArray::decode($outbox->parameters));
+        $command->update(['status' => 'acknowledged']);
+        $user = DeviceRosterEntry::create(['device_id' => $device->id, 'pin' => '0007', 'receipt_id' => (string) Str::uuid()]);
+        $employeeBefore = User::where('pin', '0007')->firstOrFail()->getAttributes();
+        $assignment = $service->assign($device, $user, $group->fresh());
+        $row = DB::table('gateway_command_outbox')->where('id', $assignment->gateway_command_id)->firstOrFail();
+        $this->assertSame(['pin' => '0007', 'number' => '2'], ProtectedArray::decode($row->parameters));
+        $this->assertSame($employeeBefore, User::where('pin', '0007')->firstOrFail()->getAttributes());
+        URL::defaults(['tenant' => $company->shortname]);
+        Filament::setCurrentPanel(Filament::getPanel('tenant'));
+        Filament::bootCurrentPanel();
+        Livewire::test(AccessGroupsRelationManager::class, [
+            'ownerRecord' => $device, 'pageClass' => EditDevice::class,
+        ])->assertCanSeeTableRecords([$group])
+            ->callTableAction('editAccessSetting', $group, data: ['name' => 'Day staff revised', 'revision' => $group->revision, 'periods' => ['2']])
+            ->assertHasNoTableActionErrors();
+        $this->assertSame('Day staff revised', $group->fresh()->name);
+        $this->assertSame(1, DeviceCommand::where('command_type', 'set_access_group')->count());
+        request()->attributes->remove('device-access-readback:'.tenant('id').':'.$device->id);
+        $user->update(['access_settings' => ['Grp' => '2', 'TZ' => '0000000000000000']]);
+        $this->assertStringContainsString('Monday 09:00–17:00', DeviceUserAccess::schedule($user->fresh()));
+        $requestId = (string) Str::uuid();
+        Livewire::test(DeviceUsersRelationManager::class, [
+            'ownerRecord' => $device, 'pageClass' => EditDevice::class,
+        ])->callTableAction('editDeviceUserAccess', $user, data: ['request_id' => $requestId, 'group_id' => $group->id, 'mode' => 'personal', 'periods' => ['2']])
+            ->assertHasNoTableActionErrors();
+        $row = DB::table('gateway_command_outbox')->where('id', $requestId)->firstOrFail();
+        $this->assertSame(['pin' => '0007', 'number' => '2', 'period1' => '2', 'period2' => '0', 'period3' => '0'], ProtectedArray::decode($row->parameters));
+        $read = DeviceCommand::where('command_type', 'query_users')->latest('id')->firstOrFail();
+        $row = DB::table('gateway_command_outbox')->where('id', $read->gateway_command_id)->firstOrFail();
+        $this->assertSame(['pin' => '0007', '__depends_on' => $requestId], ProtectedArray::decode($row->parameters));
+        $this->assertSame('0000000000000000', $user->fresh()->access_settings['TZ']);
+        $service->assign($device, $user->fresh(), $group->fresh(), ['2'], $requestId);
+        $this->assertSame(1, DeviceCommand::where('gateway_command_id', $requestId)->count());
+        try {
+            $service->assign($device, $user->fresh(), $group->fresh(), null, $requestId);
+            $this->fail('Conflicting repeated access request accepted.');
+        } catch (HttpException $exception) {
+            $this->assertSame(409, $exception->getStatusCode());
+        }
+        $tracked = DeviceCommand::where('gateway_command_id', $requestId)->firstOrFail();
+        $this->assertSame('Queued', $tracked->syncStatusLabel());
+        $tracked->update(['status' => 'acknowledged']);
+        $tracked = DeviceCommand::with('accessReadback')->findOrFail($tracked->id);
+        $this->assertSame($read->id, $tracked->accessReadback->id);
+        $this->assertSame('Waiting for readback', $tracked->syncStatusLabel());
+        $read->update(['status' => 'acknowledged']);
+        tenancy()->end();
+        $event = ['id' => (string) Str::uuid(), 'serial' => 'ACCESSGROUP01', 'binding_version' => 1, 'kind' => 'users',
+            'command_id' => $read->gateway_command_id, 'received_at' => now()->toIso8601String(),
+            'users' => [['pin' => '0007', 'access' => ['Grp' => '2', 'TZ' => '0001000200000000']]]];
+        $this->deliver($event)->assertAccepted();
+        (new ApplyGatewayReceipt($event['id']))->handle(app(ReceiptApplier::class));
+        tenancy()->initialize($company);
+        $this->assertSame('Synced', $tracked->fresh()->syncStatusLabel());
+        Livewire::test(ListDeviceCommands::class)->assertCanSeeTableRecords([$tracked])->assertSee('Synced');
+        tenancy()->end();
+        $event['id'] = (string) Str::uuid();
+        $event['users'][0]['access']['Grp'] = '3';
+        $this->deliver($event)->assertAccepted();
+        (new ApplyGatewayReceipt($event['id']))->handle(app(ReceiptApplier::class));
+        tenancy()->initialize($company);
+        $this->assertSame('Readback needs review', $tracked->fresh()->syncStatusLabel());
+        $this->assertFalse($tracked->fresh()->data_applied);
+    }
+
+    public function test_access_settings_reject_stale_edits_conflicting_revisions_and_cross_device_assignment(): void
+    {
+        config(['device_gateway.access_groups_enabled' => true]);
+        [$company, $binding] = $this->company('ACCESSGUARD01');
+        $binding->update(['capabilities' => [...DeviceAccessSettings::OPERATIONS, 'query_users']]);
+        tenancy()->initialize($company);
+        $device = Device::firstOrFail();
+        $device->update(['options' => ['observed_metadata' => ['model' => 'x 2008', 'platform' => 'ZMM510_TFT', 'firmware_version' => 'ZMM510-NF24VB-Ver2.2.1']]]);
+        $admin = User::create(['name' => 'Access admin', 'pin' => '900', 'privilege' => 14, 'email' => 'access-guard@example.test', 'password' => 'password']);
+        $this->actingAs($admin, 'web');
+        $settings = ['number' => '2', 'Verify' => '3', 'ValidHoliday' => '1', 'TZ' => '1;2;0;0'];
+        $record = DeviceAccessSetting::create(['device_id' => $device->id, 'kind' => 'group', 'number' => 2, 'name' => 'Native group',
+            'origin' => 'device', 'desired' => $settings, 'reported' => $settings, 'reported_at' => now()->subHour(), 'binding_id' => $binding->id, 'binding_version' => 1]);
+        $service = app(DeviceAccessSettings::class);
+        foreach ([['revision' => 0], ['revision' => 1]] as $input) {
+            try {
+                $service->save($device, 'group', $input + ['name' => 'Edit', 'settings' => $settings], $record);
+                $this->fail('Stale or conflicting edit accepted.');
+            } catch (ValidationException) {
+                $this->assertSame(1, $record->fresh()->revision);
+            }
+        }
+        $record->update(['reported_at' => now()]);
+        try {
+            $service->save($device, 'group', ['revision' => 1, 'name' => 'Edit', 'settings' => array_replace($settings, ['Verify' => '0'])], $record);
+            $this->fail('Unrelated verification rule changed.');
+        } catch (HttpException $exception) {
+            $this->assertSame(422, $exception->getStatusCode());
+        }
+        $user = DeviceRosterEntry::create(['device_id' => $device->id, 'pin' => '0007', 'receipt_id' => (string) Str::uuid()]);
+        $user->device_id = $device->id + 1;
+        try {
+            $service->assign($device, $user, $record);
+            $this->fail('Cross-device assignment accepted.');
+        } catch (HttpException $exception) {
+            $this->assertSame(403, $exception->getStatusCode());
+        }
+        $this->assertSame(0, DeviceCommand::count());
+    }
+
+    public function test_access_controls_follow_supported_profiles_and_incomplete_readbacks_are_rejected(): void
+    {
+        [$company, $binding] = $this->company('ACCESSGROUP02');
+        $binding->update(['capabilities' => [...DeviceAccessSettings::OPERATIONS, 'query_users']]);
+        tenancy()->initialize($company);
+        $device = Device::firstOrFail();
+        $device->update(['options' => ['observed_metadata' => ['model' => 'x 2008', 'platform' => 'ZMM510_TFT', 'firmware_version' => 'ZMM510-NF24VB-Ver2.2.1']]]);
+        $this->assertTrue(app(DeviceCommandService::class)->available($device, 'set_access_group'));
+        $this->assertTrue(app(DeviceCommandService::class)->available($device, 'query_access_groups'));
+        $this->assertTrue(AccessGroupsRelationManager::canViewForRecord($device, EditDevice::class));
+        $admin = User::create(['name' => 'Access admin', 'pin' => '900', 'privilege' => 14, 'email' => 'supported-access@example.test', 'password' => 'password']);
+        $this->actingAs($admin, 'web');
+        URL::defaults(['tenant' => $company->shortname]);
+        Filament::setCurrentPanel(Filament::getPanel('tenant'));
+        Filament::bootCurrentPanel();
+        $roster = DeviceRosterEntry::create(['device_id' => $device->id, 'pin' => '0007', 'receipt_id' => (string) Str::uuid()]);
+        Livewire::test(DeviceUsersRelationManager::class, ['ownerRecord' => $device, 'pageClass' => EditDevice::class])
+            ->assertTableActionVisible('editDeviceUserAccess', $roster);
+        $supported = $device->options;
+        $device->update(['options' => ['observed_metadata' => ['model' => 'x 2008', 'platform' => 'ZMM510_TFT', 'firmware_version' => 'unknown']]]);
+        $this->assertFalse(app(DeviceCommandService::class)->available($device, 'set_access_group'));
+        $this->assertFalse(AccessGroupsRelationManager::canViewForRecord($device, EditDevice::class));
+        request()->attributes->remove('device-user-access-sync:'.tenant('id').':'.$device->id);
+        Livewire::test(DeviceUsersRelationManager::class, ['ownerRecord' => $device->fresh(), 'pageClass' => EditDevice::class])
+            ->assertTableActionHidden('editDeviceUserAccess', $roster);
+        try {
+            app(DeviceCommandService::class)->request($device, 'set_user_access_group', ['pin' => '0007', 'number' => '2']);
+            $this->fail('Unsupported firmware accepted an access write.');
+        } catch (HttpException $exception) {
+            $this->assertSame(403, $exception->getStatusCode());
+        }
+        $device->update(['options' => $supported]);
+        config(['device_gateway.access_groups_enabled' => false]);
+        $this->assertFalse(app(DeviceCommandService::class)->available($device, 'set_access_group'));
+        config(['device_gateway.access_groups_enabled' => true]);
+        $binding->update(['synced_at' => null]);
+        $this->assertFalse(AccessGroupsRelationManager::canViewForRecord($device, EditDevice::class));
+        tenancy()->end();
+        $event = ['id' => (string) Str::uuid(), 'serial' => 'ACCESSGROUP02', 'binding_version' => 1, 'kind' => 'access_groups',
+            'received_at' => now()->toIso8601String(), 'access_records' => [['number' => '2', 'TZ' => '1;2;0;0']]];
+        $this->deliver($event)->assertUnprocessable();
+        tenancy()->initialize($company);
+        $this->assertSame(0, DeviceAccessSetting::count());
     }
 
     public function test_device_access_period_validation_rejects_partial_dates_and_identity_fields(): void

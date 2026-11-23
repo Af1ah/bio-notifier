@@ -15,6 +15,11 @@ return [
 
     'class_namespace' => 'App\\Livewire',
 
+    'make_command' => [
+        'type' => 'class',
+        'emoji' => false,
+    ],
+
     /*
     |---------------------------------------------------------------------------
     | View Path
@@ -38,7 +43,7 @@ return [
     |
     */
 
-    'layout' => 'components.layouts.app',
+    'component_layout' => 'components.layouts.app',
 
     /*
     |---------------------------------------------------------------------------
@@ -50,7 +55,7 @@ return [
     |
     */
 
-    'lazy_placeholder' => null,
+    'component_placeholder' => null,
 
     /*
     |---------------------------------------------------------------------------
@@ -156,7 +161,7 @@ return [
     |
     */
 
-    'smart_wire_keys' => false,
+    'smart_wire_keys' => true,
 
     /*
     |---------------------------------------------------------------------------

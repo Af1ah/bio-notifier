@@ -2,9 +2,9 @@
 
 namespace App\Filament\Tenant\Resources\DeviceResource\Pages;
 
+use App\Filament\Tenant\Resources\DeviceResource;
 use Filament\Actions;
 use Filament\Resources\Pages\ViewRecord;
-use App\Filament\Tenant\Resources\DeviceResource;
 
 class ViewDevice extends ViewRecord
 {
@@ -14,7 +14,6 @@ class ViewDevice extends ViewRecord
     {
         return [
             Actions\EditAction::make(),
-            ...DeviceResource::connectionActions(),
         ];
     }
 }

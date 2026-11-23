@@ -12,6 +12,7 @@ use App\Models\TaskGroup;
 use App\Models\User;
 use App\Services\Imports\UserCsvImportService;
 use Filament\Facades\Filament;
+use Filament\Schemas\Components\Actions;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Auth;
@@ -52,6 +53,78 @@ class UserCsvImportTest extends TestCase
         Storage::disk('local')->put($path, $csv);
 
         return $path;
+    }
+
+    public function test_import_inherits_organisation_currency_without_a_currency_column(): void
+    {
+        tenant()->currency = 'AED';
+        $path = $this->upload("pin,name,pay_basis,basic_salary,effective_from,payroll_enabled\n901,AED employee,monthly,8000.00,2026-08-01,yes\n");
+        $preview = $this->service->preview($path, 'create');
+        $this->service->import($path, 'create', $preview['fingerprint']);
+        $this->assertSame('AED', User::where('pin', '901')->firstOrFail()->payrollProfile->currency);
+        $this->assertNotContains('currency', str_getcsv(strtok($this->service->template(true), "\n")));
+    }
+
+    public function test_import_preview_must_be_repeated_after_organisation_currency_changes(): void
+    {
+        $path = $this->upload("pin,name,pay_basis,basic_salary,effective_from,payroll_enabled\n902,Changed currency,monthly,8000.00,2026-08-01,yes\n");
+        $preview = $this->service->preview($path, 'create');
+        tenant()->currency = 'USD';
+        $this->expectException(ValidationException::class);
+        $this->service->import($path, 'create', $preview['fingerprint']);
+    }
+
+    public function test_ten_examples_validate_with_pay_and_assignment_combinations(): void
+    {
+        tenant()->currency = 'AED';
+        $branch = Branch::create(['name' => 'Example branch']);
+        $department = Department::create(['name' => 'Example department']);
+        $department->branches()->attach($branch);
+        TaskGroup::create(['name' => 'Example team A']);
+        TaskGroup::create(['name' => 'Example team B']);
+        $csv = $this->service->exampleTemplate();
+        $lines = array_map('str_getcsv', explode("\n", trim($csv)));
+        $this->assertCount(11, $lines);
+        $this->assertNotContains('currency', $lines[0]);
+        foreach (array_slice($lines, 1) as $line) {
+            $this->assertCount(count($lines[0]), $line);
+        }
+        $path = $this->upload($csv);
+        $preview = $this->service->preview($path, 'create');
+        $this->assertSame(10, $preview['created']);
+        $this->assertSame(8, $preview['payroll']);
+        $this->service->import($path, 'create', $preview['fingerprint']);
+        $hourly = User::where('pin', 'EXAMPLE08')->firstOrFail();
+        $this->assertSame('hourly', $hourly->payrollProfile->pay_basis);
+        $this->assertSame(8505, $hourly->payrollProfile->basic_salary_minor);
+        $this->assertSame('AED', $hourly->payrollProfile->currency);
+        $this->assertSame(2, $hourly->taskGroups()->count());
+        $this->assertFalse(User::where('pin', 'EXAMPLE02')->firstOrFail()->is_enabled);
+        $this->assertSame($department->id, User::where('pin', 'EXAMPLE03')->firstOrFail()->department_id);
+    }
+
+    public function test_import_download_buttons_are_visible_and_return_csv_files(): void
+    {
+        Filament::setCurrentPanel(Filament::getPanel('tenant'));
+        URL::defaults(['tenant' => 'sec']);
+        $page = Livewire::test(ListUsers::class)->mountAction('importUsers');
+        $schemaName = $page->instance()->getMountedActionSchemaName();
+        $downloads = collect($page->instance()->{$schemaName}->getFlatComponents())
+            ->first(fn ($component) => $component instanceof Actions);
+        $this->assertNotNull($downloads);
+        $this->assertFalse($downloads->isHidden());
+        $labels = collect($downloads->getChildSchema()->getComponents())->map(fn ($action) => $action->getLabel())->all();
+        $this->assertSame(['Download blank CSV', 'Download example'], $labels);
+        $page->call('downloadImportTemplate', true)->assertFileDownloaded('employees-10-examples.csv');
+        $page->call('downloadImportTemplate', false)->assertFileDownloaded('employees-blank.csv');
+        $this->assertSame(1, User::count());
+    }
+
+    public function test_ten_examples_also_validate_without_assignment_records(): void
+    {
+        $path = $this->upload($this->service->exampleTemplate());
+        $this->assertSame(10, $this->service->preview($path, 'create')['created']);
+        $this->assertCount(1, explode("\n", trim($this->service->template(true, blank: true))));
     }
 
     public function test_templates_round_trip_and_payroll_is_exact(): void
@@ -191,10 +264,39 @@ class UserCsvImportTest extends TestCase
             ->fillForm(['file' => UploadedFile::fake()->createWithContent('users.csv', "pin,name\n001,Preview Employee\n"), 'mode' => 'create'])
             ->goToNextWizardStep()
             ->assertHasNoErrors();
-        $this->assertStringContainsString('1 new employees', $page->get('importPreview'));
+        $this->assertSame('1 new · 0 updates', $page->get('importPreview'));
+        $this->assertSame('001', $page->get('importReview')['rows'][0]['values']['pin']);
+        $this->assertSame('Preview Employee', $page->get('importReview')['rows'][0]['values']['name']);
         $this->assertSame(1, User::count());
         $page->fillForm(['confirmed' => true])->callMountedAction()->assertHasNoErrors()->assertNotified('Import complete');
         $this->assertTrue(User::where('pin', '001')->exists());
+        $this->assertSame([], $page->get('importReview'));
+    }
+
+    public function test_review_contains_each_validated_row_and_masks_device_passwords(): void
+    {
+        User::create(['pin' => '001', 'name' => 'Original name']);
+        $csv = "pin,name,is_enabled,card_number,device_password,payroll_enabled,pay_basis,basic_salary,overtime_hourly_rate,effective_from\n001,Updated employee,0,0000123,987654,1,hourly,85.05,0.00,2026-08-01\n002,<script>alert(1)</script>,1,,,,,,,\n";
+        $preview = $this->service->preview($this->upload($csv), 'upsert');
+        $review = $preview['review'];
+        $this->assertCount(2, $review['rows']);
+        $this->assertSame('Update', $review['rows'][0]['action']);
+        $this->assertSame('New', $review['rows'][1]['action']);
+        $values = $review['rows'][0]['values'];
+        $this->assertSame('Disabled', $values['is_enabled']);
+        $this->assertSame('0000123', $values['card_number']);
+        $this->assertSame('85.05', $values['basic_salary']);
+        $this->assertSame('0.00', $values['overtime_hourly_rate']);
+        $this->assertSame('••••••', $values['device_password']);
+        $this->assertArrayNotHasKey('basic_salary', $review['rows'][1]['values']);
+        $html = view('filament.tenant.components.employee-import-review', compact('review'))->render();
+        $this->assertStringContainsString('Updated employee', $html);
+        $this->assertStringContainsString('85.05', $html);
+        $this->assertStringContainsString('&lt;script&gt;', $html);
+        $this->assertStringNotContainsString('<script>', $html);
+        $this->assertStringNotContainsString('987654', $html);
+        $this->assertSame('Original name', User::where('pin', '001')->firstOrFail()->name);
+        $this->assertFalse(User::where('pin', '002')->exists());
     }
 
     public function test_invalid_csv_error_is_visible_in_the_wizard(): void

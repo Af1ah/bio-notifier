@@ -13,7 +13,7 @@ final class RefreshEbioPhotoAction
     public static function make(): Action
     {
         return Action::make('refreshEbioPhoto')->label('Refresh photo')->icon('heroicon-o-photo')
-            ->authorize(fn (): bool => DeviceIntegration::usesEbio())
+            ->authorize(fn (): bool => (bool) auth('web')->user()?->canManageDevices() && (DeviceIntegration::usesEbio()))
             ->visible(fn (): bool => DeviceIntegration::usesEbio())
             ->action(function (User $record): void {
                 try {

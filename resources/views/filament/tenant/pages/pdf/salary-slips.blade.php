@@ -37,7 +37,7 @@
             <p><strong>{{ $slip->user?->name }}</strong> · PIN {{ $slip->user?->pin }}</p>
             <p>Branch: {{ $slip->user?->branch?->name ?? 'Not assigned' }} · Department: {{ $slip->user?->department?->name ?? 'Not assigned' }}</p>
             <p>Task groups: {{ $slip->user?->taskGroups->pluck('name')->implode(', ') ?: 'Not assigned' }}</p>
-            <p>Status: {{ ucfirst($slip->status) }} · Calculated: {{ \App\Services\Support\TenantTimezone::formatInstant($slip->calculated_at, 'd M Y H:i') }}</p>
+            <p>Status: {{ ucfirst($slip->display_status) }} · Calculated: {{ \App\Services\Support\TenantTimezone::formatInstant($slip->calculated_at, 'd M Y H:i') }}</p>
             <p>Per day salary: {{ $slip->per_day_salary_display }} · Total worked hours: {{ $slip->total_worked_hours ?? 'Not recorded' }}</p>
             @if ($slip->calculation_snapshot['needs_recalculation'] ?? false)
                 <p><strong>Attendance has changed. This slip requires payroll review.</strong></p>
@@ -60,7 +60,12 @@
                 </tbody>
             </table>
             @if (isset($slip->calculation_snapshot['eligible_start']))
-                <p>Eligible pay dates: {{ $slip->calculation_snapshot['eligible_start'] }}–{{ $slip->calculation_snapshot['eligible_end'] }} · {{ $slip->calculation_snapshot['eligible_days'] }} calendar days@if (($slip->calculation_snapshot['pay_basis'] ?? 'monthly') === 'monthly') of {{ $slip->calculation_snapshot['calendar_day_divisor'] }} in this month@endif</p>
+                <p>
+                    Eligible pay dates: {{ $slip->calculation_snapshot['eligible_start'] }}–{{ $slip->calculation_snapshot['eligible_end'] }} · {{ $slip->calculation_snapshot['eligible_days'] }} calendar days
+                    @if (($slip->calculation_snapshot['pay_basis'] ?? 'monthly') === 'monthly')
+                        of {{ $slip->calculation_snapshot['calendar_day_divisor'] }} in this month
+                    @endif
+                </p>
             @endif
             <p>Working days: {{ $slip->scheduled_days }} · Full days: {{ $slip->full_days }} · Half days: {{ $slip->half_days }} · Absent days: {{ $slip->absent_days + (($slip->calculation_snapshot['leave_other_half_absent_days'] ?? 0) / 2) }}</p>
             @if (($slip->calculation_snapshot['compensatory_payment_minor'] ?? 0) > 0)

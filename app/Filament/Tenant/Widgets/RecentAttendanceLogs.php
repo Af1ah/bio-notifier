@@ -2,34 +2,35 @@
 
 namespace App\Filament\Tenant\Widgets;
 
-use Filament\Actions\BulkActionGroup;
+use App\Services\Attendance\TodayAttendance;
+use App\Services\Support\TenantTimezone;
+use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 use Filament\Widgets\TableWidget;
-use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Database\Eloquent\Model;
 
 class RecentAttendanceLogs extends TableWidget
 {
-    protected ?string $pollingInterval = "30s";
+    protected ?string $pollingInterval = '30s';
 
-    protected int | string | array $columnSpan = 1;
+    protected int|string|array $columnSpan = 1;
+
     protected static ?int $sort = 2;
 
     public function table(Table $table): Table
     {
         return $table
-            ->query(\App\Models\AttendanceLog::query()->with('user', 'device')->latest('punched_at')->limit(5))
+            ->query(TodayAttendance::logs()->with('user', 'device')->latest('punched_at')->orderByDesc('id')->limit(5))
             ->columns([
-                \Filament\Tables\Columns\TextColumn::make('user.name')
+                TextColumn::make('user.name')
                     ->label('Name')
                     ->searchable()
                     ->sortable(),
-                \Filament\Tables\Columns\TextColumn::make('status_label')
+                TextColumn::make('status_label')
                     ->label('State')
                     ->badge(),
-                \Filament\Tables\Columns\TextColumn::make('punched_at')
+                TextColumn::make('punched_at')
                     ->label('Time')
-                    ->time()->timezone(fn () => \App\Services\Support\TenantTimezone::get())
+                    ->time()->timezone(fn () => TenantTimezone::get())
                     ->sortable(),
             ])
             ->paginated(false)

@@ -156,10 +156,12 @@ class LeaveBalanceService
         $lots = LeaveCreditLot::with('policyRevision')->where('user_id', $user->id)->where('leave_type_id', $typeId)->whereDate('available_on', '<=', $date)->orderBy('expires_on')->get();
         $eligible = $lots->filter(fn ($lot) => $lot->expires_on->gte($date->copy()->startOfDay()));
         $ids = $lots->pluck('id');
+        $remaining = $eligible->mapWithKeys(fn ($lot) => [$lot->id => $this->remaining($lot, $date)]);
+        $warningEnd = $date->copy()->addDays(LeaveSettingsService::expiryWarningDays());
 
-        return ['available_half_units' => $eligible->sum(fn ($lot) => $this->remaining($lot, $date)),
-            'expiring_half_units' => $eligible->filter(fn ($lot) => $lot->expires_on->lte($date->copy()->addDays(LeaveSettingsService::expiryWarningDays())))->sum(fn ($lot) => $this->remaining($lot, $date)),
-            'carried_half_units' => $eligible->filter(fn ($lot) => $lot->source_kind === 'entitlement' && ! empty($lot->evidence['period_end']) && Carbon::parse($lot->evidence['period_end'])->lt($date->copy()->startOfDay()))->sum(fn ($lot) => $this->remaining($lot, $date)),
+        return ['available_half_units' => $remaining->sum(),
+            'expiring_half_units' => $eligible->filter(fn ($lot) => $lot->expires_on->lte($warningEnd))->sum(fn ($lot) => $remaining[$lot->id]),
+            'carried_half_units' => $eligible->filter(fn ($lot) => $lot->source_kind === 'entitlement' && ! empty($lot->evidence['period_end']) && Carbon::parse($lot->evidence['period_end'])->lt($date->copy()->startOfDay()))->sum(fn ($lot) => $remaining[$lot->id]),
             'reserved_half_units' => (int) DB::table('leave_allocations')->whereIn('leave_credit_lot_id', $ids)->where('state', 'reserved')->sum('half_units'),
             'consumed_half_units' => (int) DB::table('leave_allocations')->whereIn('leave_credit_lot_id', $ids)->where('state', 'consumed')->sum('half_units')];
     }
@@ -211,7 +213,7 @@ class LeaveBalanceService
 
     public function opening(User $user, LeaveType $type, int $units, Carbon $available, Carbon $expiry, string $reason, User $actor, string $requestKey): LeaveCreditLot
     {
-        abort_unless((int) $actor->privilege === 14, 403);
+        abort_unless($actor->hasManagementAccess(), 403);
         if ($units < 1 || $units > 1464 || $expiry->lt($available) || trim($reason) === '' || strlen($requestKey) > 100 || trim($requestKey) === '' || strlen($reason) > 1000 || ! $type->is_paid) {
             throw ValidationException::withMessages(['reason' => 'Provide a valid balance, date range and review reason.']);
         }
@@ -227,7 +229,7 @@ class LeaveBalanceService
 
     public function reduce(LeaveCreditLot $lot, int $units, string $reason, User $actor, string $requestKey): void
     {
-        abort_unless((int) $actor->privilege === 14, 403);
+        abort_unless($actor->hasManagementAccess(), 403);
         if ($units < 1 || trim($reason) === '' || trim($requestKey) === '') {
             throw ValidationException::withMessages(['reason' => 'Provide a positive reduction and review reason.']);
         }

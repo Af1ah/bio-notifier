@@ -22,7 +22,7 @@ class EmployeeLeaveInfolist
                         TextEntry::make('state')->badge()->color(fn ($state): string => $state === 'approved' ? 'success' : 'gray'),
                         TextEntry::make('deduction_override_minor')
                             ->label('Deduction override')
-                            ->formatStateUsing(fn ($state): string => $state === null ? 'Policy default' : 'INR '.number_format(((int) $state) / 100, 2)),
+                            ->formatStateUsing(fn ($state): string => $state === null ? 'Policy default' : \App\Services\Support\TenantCurrency::format((int) $state)),
                         TextEntry::make('notes')->placeholder('No notes')->columnSpanFull(),
                     ])
                     ->columns([

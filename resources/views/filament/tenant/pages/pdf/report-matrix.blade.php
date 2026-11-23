@@ -80,6 +80,11 @@
             color: #92400e; /* dark yellow/orange */
             font-weight: bold;
         }
+        .attendance-report-hours { font-size: 7px; font-weight: normal; white-space: nowrap; }
+        .attendance-report-hours--success { color: #166534; }
+        .attendance-report-hours--warning { color: #92400e; }
+        .attendance-report-hours--danger { color: #991b1b; }
+        .attendance-report-hours--gray { color: #4b5563; }
     </style>
 </head>
 <body>
@@ -100,6 +105,7 @@
         </div>
     </div>
 
+    <p>Worked time (HH:MM)</p>
     <table class="matrix-table">
         <thead>
             <tr>
@@ -114,6 +120,7 @@
                 <th style="width: 30px;">Total<br>Hrs</th>
                 <th style="width: 30px;">OT</th>
                 <th style="width: 25px;">Prs</th>
+                <th style="width: 25px;">Half</th>
                 <th style="width: 25px;">Abs</th>
             </tr>
         </thead>
@@ -123,33 +130,14 @@
                 <td>{{ $index + 1 }}</td>
                 <td class="col-name">{{ $row['user_name'] }}</td>
                 @foreach ($reportData['period'] as $date)
-                    @php
-                        $d = $date['date'];
-                        $dayData = $row['daily'][$d] ?? null;
-                        
-                        $letter = 'A';
-                        $class = 'text-absent';
-                        
-                        if ($dayData) {
-                            if ($dayData['status'] === 'P') {
-                                $letter = 'P';
-                                $class = 'text-present';
-                            } elseif ($dayData['status'] === 'O') {
-                                $letter = 'O';
-                                $class = 'text-off';
-                            } elseif ($dayData['status'] === 'L') {
-                                $letter = 'L';
-                                $class = 'text-late';
-                            } else {
-                                $letter = substr($dayData['display'], 0, 1);
-                            }
-                        }
-                    @endphp
-                    <td class="{{ $class }}">{{ $letter }}</td>
+                    <td>
+                        @include('filament.tenant.attendance.report-hours', ['hours' => $row['daily'][$date['date']] ?? \App\Services\Attendance\AttendanceDayDisplay::forDay(null)])
+                    </td>
                 @endforeach
-                <td style="font-weight: bold;">{{ $row['total_display'] }}</td>
-                <td style="font-weight: bold;">{{ $row['overtime_display'] }}</td>
+                <td>@include('filament.tenant.attendance.report-hours', ['hours' => ['clock' => $row['total_display']]])</td>
+                <td>@include('filament.tenant.attendance.report-hours', ['hours' => ['clock' => $row['overtime_display']]])</td>
                 <td style="font-weight: bold;" class="text-present">{{ $row['present'] }}</td>
+                <td style="font-weight: bold;" class="text-late">{{ $row['half_day'] }}</td>
                 <td style="font-weight: bold;" class="text-absent">{{ $row['absent'] }}</td>
             </tr>
             @endforeach

@@ -34,7 +34,7 @@ class ListEmployeeLeaves extends ListRecords
 
     protected function getHeaderActions(): array
     {
-        return [CreateAction::make(), Action::make('requestRange')->label('Add leave range')->visible(fn () => (int) auth()->user()?->privilege === 14)->mountUsing(function (Schema $schema) {
+        return [CreateAction::make(), Action::make('requestRange')->label('Add leave range')->visible(fn () => (bool) auth()->user()?->hasManagementAccess())->mountUsing(function (Schema $schema) {
             $this->rangeSignature = '';
             $this->rangePreview = '';
             $this->rangeRequestKey = (string) Str::uuid();

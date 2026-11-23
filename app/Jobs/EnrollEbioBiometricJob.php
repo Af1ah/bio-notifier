@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Jobs\Concerns\TracksQueuedDeviceCommand;
 use App\Models\Device;
 use App\Models\DeviceCommand;
 use App\Models\Organisation;
@@ -18,6 +19,7 @@ use Illuminate\Support\Facades\Log;
 class EnrollEbioBiometricJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+    use TracksQueuedDeviceCommand;
 
     public $organisation;
 
@@ -36,6 +38,7 @@ class EnrollEbioBiometricJob implements ShouldQueue
         $this->deviceId = $deviceId;
         $this->type = $type;
         $this->fingerIndex = $fingerIndex;
+        $this->trackCommand($organisation, $type === 'finger' ? 'enroll_finger' : 'enroll_face', $deviceId);
     }
 
     public function handle(EbioSoapService $service): void
@@ -47,12 +50,13 @@ class EnrollEbioBiometricJob implements ShouldQueue
             if ($user && $device) {
                 $commandType = $this->type === 'finger' ? 'enroll_finger' : 'enroll_face';
                 $details = $this->type === 'finger' ? "Finger Index: {$this->fingerIndex}" : 'Face';
-                $commandModel = DeviceCommand::create([
+                $commandModel = $this->trackedCommand() ?? DeviceCommand::create([
                     'device_id' => $device->id,
                     'command_type' => $commandType,
                     'command_content' => "eBioServer SOAP Command: {$commandType} (Employee: {$user->pin}, {$details})",
                     'status' => 'sent',
                 ]);
+                $commandModel->markAsSent();
 
                 try {
                     if ($this->type === 'finger') {
@@ -71,6 +75,8 @@ class EnrollEbioBiometricJob implements ShouldQueue
                     Log::error('Failed to enroll biometric on eBioServer: '.$e->getMessage());
                     throw $e;
                 }
+            } else {
+                $this->trackedCommand()?->markAsFailed('Employee or device no longer exists.');
             }
         });
     }

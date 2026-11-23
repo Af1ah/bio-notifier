@@ -2,43 +2,49 @@
 
 namespace App\Filament\Tenant\Widgets;
 
-use Filament\Actions\BulkActionGroup;
+use App\Models\DeviceCommand;
+use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 use Filament\Widgets\TableWidget;
-use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Database\Eloquent\Model;
 
 class ActionRequired extends TableWidget
 {
-    protected ?string $pollingInterval = "30s";
+    public static function canView(): bool
+    {
+        return (bool) auth('web')->user()?->canManageDevices();
+    }
 
-    protected int | string | array $columnSpan = 'full';
+    protected ?string $pollingInterval = '30s';
+
+    protected int|string|array $columnSpan = 'full';
+
     protected static ?int $sort = 5;
 
     public function table(Table $table): Table
     {
         return $table
-            ->query(\App\Models\DeviceCommand::query()->whereIn('status', ['pending', 'failed'])->latest())
+            ->query(DeviceCommand::query()->with('device')->whereIn('status', ['pending', 'failed'])->latest()->orderByDesc('id'))
             ->columns([
-                \Filament\Tables\Columns\TextColumn::make('device.name')
+                TextColumn::make('device.name')
                     ->label('Device')
                     ->searchable()
                     ->sortable(),
-                \Filament\Tables\Columns\TextColumn::make('command_type')
+                TextColumn::make('command_type')
                     ->label('Command')
                     ->searchable(),
-                \Filament\Tables\Columns\TextColumn::make('status')
+                TextColumn::make('status')
                     ->badge()
                     ->color(fn (string $state): string => match ($state) {
                         'failed' => 'danger',
                         'pending' => 'warning',
                         default => 'gray',
                     }),
-                \Filament\Tables\Columns\TextColumn::make('created_at')
+                TextColumn::make('created_at')
                     ->dateTime()
                     ->sortable(),
             ])
-            ->paginated(false)
+            ->paginated([10])
+            ->defaultPaginationPageOption(10)
             ->toolbarActions([]);
     }
 }
