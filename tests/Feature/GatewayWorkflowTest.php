@@ -81,12 +81,15 @@ class GatewayWorkflowTest extends TestCase
     {
         [$company] = $this->company('DESKTOP01');
         $company->update(['device_integration' => DeviceIntegration::DESKTOP]);
+        $company->run(fn () => \App\Models\FrappeSetting::create([
+            'id' => 1, 'hostname' => 'hr.example.com', 'api_key' => 'testkey', 'api_secret' => 'testsecret', 'enabled' => true,
+        ]));
         Queue::fake();
         $uri = '/api/desktop-connector/punches';
         $batch = [
             'id' => (string) Str::uuid(),
             'serial' => 'DESKTOP01',
-            'punches' => [['pin' => '0007', 'at' => '2026-11-21T09:00:00+05:30', 'status' => 0, 'verify' => 1, 'work_code' => 0]],
+            'punches' => [['pin' => '0007', 'at' => '2026-11-21T09:00:00+05:30', 'status' => 1, 'verify' => 2, 'work_code' => 0]],
         ];
         $headers = ['X-API-Key' => $company->ebio_webhook_token];
         $this->postJson($uri, $batch)->assertUnauthorized();
@@ -100,7 +103,15 @@ class GatewayWorkflowTest extends TestCase
 
         $receipt = \App\Models\WebhookReceipt::where('desktop_batch_id', $batch['id'])->firstOrFail();
         (new ProcessEbioWebhookJob($company, [], $receipt->id))->handle();
-        $company->run(fn () => $this->assertSame('0007', AttendanceLog::firstOrFail()->pin));
+        (new ProcessEbioWebhookJob($company, [], $receipt->id))->handle();
+        $company->run(function () {
+            $log = AttendanceLog::sole();
+            $this->assertSame('0007', $log->pin);
+            $this->assertSame(1, (int) $log->status);
+            $this->assertSame(2, (int) $log->verify_type);
+            $this->assertDatabaseCount('frappe_checkin_deliveries', 1);
+            $this->assertDatabaseHas('frappe_checkin_deliveries', ['attendance_log_id' => $log->id]);
+        });
     }
 
     public function test_managed_access_rule_uses_safe_slots_and_queues_hours_before_group(): void

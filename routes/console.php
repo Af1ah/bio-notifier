@@ -19,3 +19,7 @@ Schedule::command('users:prune-imports')->hourly()->withoutOverlapping();
 Schedule::command('gateway:recover')->everyMinute()->withoutOverlapping();
 
 Schedule::command('leave:sync-balances')->hourly()->withoutOverlapping();
+
+Schedule::command('frappe:queue-checkins')->everyMinute()->withoutOverlapping();
+
+Schedule::command('organisations:queue-backups')->everyMinute()->withoutOverlapping();

@@ -10,18 +10,20 @@ use Filament\Forms\Components\Toggle;
 use Filament\Forms\Concerns\InteractsWithForms;
 use Filament\Forms\Contracts\HasForms;
 use Filament\Notifications\Notification;
-use Filament\Pages\Page;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
+use Filament\Support\Icons\Heroicon;
 use Illuminate\Validation\Rule;
 
-class OrganisationSettings extends Page implements HasForms
+class OrganisationSettings extends SettingsPage implements HasForms
 {
     use InteractsWithForms;
 
     protected static bool $shouldRegisterNavigation = false;
 
-    protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-cog-6-tooth';
+    protected static ?string $slug = 'organisation-settings';
+
+    protected static string|\BackedEnum|null $navigationIcon = Heroicon::OutlinedCog6Tooth;
 
     protected static string|\UnitEnum|null $navigationGroup = 'Organisation Management';
 
@@ -31,9 +33,9 @@ class OrganisationSettings extends Page implements HasForms
 
     public ?array $data = [];
 
-    public static function canAccess(): bool
+    public static function getNavigationLabel(): string
     {
-        return tenant() && (bool) auth('web')->user()?->has_login;
+        return __('organisation-settings.overview');
     }
 
     public function mount(): void

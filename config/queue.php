@@ -55,6 +55,16 @@ return [
             'central' => true,
         ],
 
+        'backups' => [
+            'driver' => 'database',
+            'connection' => env('DB_QUEUE_CONNECTION') ?: env('DB_CONNECTION', 'sqlite'),
+            'table' => 'jobs',
+            'queue' => 'backup-uploads',
+            'retry_after' => 900,
+            'central' => true,
+            'after_commit' => false,
+        ],
+
         'beanstalkd' => [
             'driver' => 'beanstalkd',
             'host' => env('BEANSTALKD_QUEUE_HOST', 'localhost'),

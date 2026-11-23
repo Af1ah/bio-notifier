@@ -8,6 +8,7 @@ use App\Models\Organisation;
 use App\Models\WebhookReceipt;
 use App\Services\Attendance\AttendanceReplayReconciler;
 use App\Services\Devices\DeviceIntegration;
+use App\Services\Integrations\FrappeCheckins;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\QueryException;
@@ -15,6 +16,7 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 
 class ProcessEbioWebhookJob implements ShouldQueue
 {
@@ -120,16 +122,23 @@ class ProcessEbioWebhookJob implements ShouldQueue
                     }
 
                     // Save to tenant's AttendanceLog table
-                    $log = AttendanceLog::firstOrCreate([
-                        'pin' => $logData['EmployeeCode'],
-                        'punched_at' => Carbon::parse($logData['LogDate']),
-                    ], [
-                        'device_id' => $device ? $device->id : 0,
-                        'status' => $desktop ? (int) ($logData['StatusCode'] ?? $status) : $status,
-                        'verify_type' => $desktop ? (int) ($logData['VerifyCode'] ?? $verifyType) : $verifyType,
-                        'work_code' => isset($logData['WorkCode']) ? (int) $logData['WorkCode'] : null,
-                        'raw_data' => $logData,
-                    ]);
+                    $log = DB::transaction(function () use ($logData, $device, $status, $verifyType, $desktop) {
+                        $log = AttendanceLog::firstOrCreate([
+                            'pin' => $logData['EmployeeCode'],
+                            'punched_at' => Carbon::parse($logData['LogDate']),
+                        ], [
+                            'device_id' => $device ? $device->id : 0,
+                            'status' => $desktop ? (int) ($logData['StatusCode'] ?? $status) : $status,
+                            'verify_type' => $desktop ? (int) ($logData['VerifyCode'] ?? $verifyType) : $verifyType,
+                            'work_code' => isset($logData['WorkCode']) ? (int) $logData['WorkCode'] : null,
+                            'raw_data' => $logData,
+                        ]);
+                        if ($log->wasRecentlyCreated) {
+                            FrappeCheckins::record($log->id);
+                        }
+
+                        return $log;
+                    });
                     if (! $log->wasRecentlyCreated) {
                         $reconciler->recoverMissingDay($log);
                     }

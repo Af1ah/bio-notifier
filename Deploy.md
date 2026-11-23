@@ -120,6 +120,18 @@ php artisan queue:failed
 sudo supervisorctl status
 ```
 
+Organisation Settings → Backups needs `pg_dump` on the web application’s PATH for PostgreSQL. Use a client compatible with the server version. File-backed SQLite development needs the `sqlite3` CLI for SQL exports.
+
+For scheduled Google Drive backups, enable the Drive API and create a Google OAuth web client. Register the exact callback URL `https://<app-host>/oauth/google-drive/callback` and configure `BACKUP_GOOGLE_CLIENT_ID`, `BACKUP_GOOGLE_CLIENT_SECRET`, and, if needed, `BACKUP_GOOGLE_REDIRECT_URI`. Use an OAuth consent configuration intended for production so refresh tokens can support unattended schedules. Organisation admins connect their Google accounts from **Organisation settings → Backups**. Grant the app access to files it creates through the `drive.file` scope. Backups are stored as SQL files in the connected account’s My Drive. Use an organisation-controlled account and restrict access to the files. [Google OAuth setup](https://developers.google.com/identity/protocols/oauth2/web-server)
+
+Run a supervised worker for the separate backup queue alongside the existing minute scheduler.
+
+```bash
+php artisan queue:work backups --queue=backup-uploads --timeout=600 --tries=1
+```
+
+Frappe HR check-in delivery uses the tenant migrations, the existing minute scheduler and the `gateway` connection’s `exports-notifications` worker. The worker needs PHP cURL, DNS and outbound HTTPS to the organisation’s public Frappe hostname.
+
 `gateway:recover` is scheduled for bounded recovery. Inspect the failure and durable receipt/command state before replay or retry. Avoid bulk retries, queue deletion or resetting device stamps as a first troubleshooting step.
 
 ## Add a device

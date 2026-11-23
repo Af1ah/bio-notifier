@@ -15,6 +15,7 @@ use App\Services\Attendance\AttendanceReplayReconciler;
 use App\Services\Attendance\ManualAttendanceProtection;
 use App\Services\Devices\BiometricCredentials;
 use App\Services\Devices\PrivateBiometricPhoto;
+use App\Services\Integrations\FrappeCheckins;
 use App\Services\Payroll\PayrollFreshnessService;
 use App\Services\Support\TenantTimezone;
 use Illuminate\Support\Carbon;
@@ -49,6 +50,7 @@ final class ReceiptApplier
                 $calculations = [];
                 $invalidated = [];
                 $evidence = [];
+                $frappeLogIds = [];
                 foreach ($payload['punches'] as $index => $punch) {
                     // The legacy application stores tenant-local wall time. Keep the original offset as evidence.
                     $at = Carbon::parse($punch['at'])->setTimezone(TenantTimezone::get());
@@ -67,6 +69,7 @@ final class ReceiptApplier
                         $reconciler->recoverMissingDay($log);
                     }
                     if ($log->wasRecentlyCreated) {
+                        $frappeLogIds[] = $log->id;
                         $employee = $employees->get($punch['pin']);
                         if ($employee) {
                             // Reuse the already-loaded employee/device; no extra lookup per punch.
@@ -115,6 +118,7 @@ final class ReceiptApplier
                         }
                     }
                 }
+                FrappeCheckins::record(...$frappeLogIds);
                 foreach (array_chunk($evidence, 500) as $rows) {
                     DB::table('gateway_attendance_evidence')->insert($rows);
                 }

@@ -5,6 +5,8 @@ namespace App\Providers\Filament;
 use App\Filament\Support\PanelPwa;
 use App\Filament\Tenant\Pages\OrganisationSettings;
 use App\Filament\Tenant\TenantPanel;
+use App\Http\Controllers\ConnectOrganisationGoogleDrive;
+use App\Http\Controllers\DownloadOrganisationBackup;
 use App\Http\Middleware\InitializeTenancyByShortname;
 use App\Livewire\Tenant\ResultNotifications;
 use Filament\Actions\Action;
@@ -22,6 +24,7 @@ use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
 use Illuminate\Routing\Middleware\SubstituteBindings;
 use Illuminate\Session\Middleware\StartSession;
+use Illuminate\Support\Facades\Route;
 use Illuminate\View\Middleware\ShareErrorsFromSession;
 
 class TenantPanelProvider extends PanelProvider
@@ -37,6 +40,12 @@ class TenantPanelProvider extends PanelProvider
             // ->path('admin')
             ->path('{tenant}/admin')
             ->login()
+            ->authenticatedRoutes(function () {
+                Route::post('organisation-settings/backups/download', DownloadOrganisationBackup::class)
+                    ->name('organisation-backups.download');
+                Route::post('organisation-settings/backups/google/connect', [ConnectOrganisationGoogleDrive::class, 'start'])
+                    ->middleware('throttle:10,1')->name('organisation-backups.google.connect');
+            })
             ->databaseNotifications(livewireComponent: ResultNotifications::class)
             ->databaseNotificationsPolling('15s')
             ->userMenuItems([

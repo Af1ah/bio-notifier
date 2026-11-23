@@ -9,6 +9,9 @@ use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 use Stancl\Tenancy\Middleware\InitializeTenancyByDomain;
 
+Route::get('/oauth/google-drive/callback', [\App\Http\Controllers\ConnectOrganisationGoogleDrive::class, 'callback'])
+    ->middleware('throttle:30,1')->name('backups.google.callback');
+
 Route::get('/', function () {
     return redirect('/master');
 });
