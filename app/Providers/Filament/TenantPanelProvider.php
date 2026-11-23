@@ -2,6 +2,8 @@
 
 namespace App\Providers\Filament;
 
+use App\Http\Controllers\ConnectOrganisationGoogleDrive;
+use App\Http\Controllers\DownloadOrganisationBackup;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
 use Filament\Http\Middleware\DisableBladeIconComponents;
@@ -19,6 +21,7 @@ use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
 use Illuminate\Routing\Middleware\SubstituteBindings;
 use Illuminate\Session\Middleware\StartSession;
 use Illuminate\View\Middleware\ShareErrorsFromSession;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\HtmlString;
 use Filament\View\PanelsRenderHook;
 
@@ -35,6 +38,12 @@ class TenantPanelProvider extends PanelProvider
             // ->path('admin')
             ->path('{tenant}/admin')
             ->login()
+            ->authenticatedRoutes(function () {
+                Route::post('organisation-settings/backups/download', DownloadOrganisationBackup::class)
+                    ->name('organisation-backups.download');
+                Route::post('organisation-settings/backups/google/connect', [ConnectOrganisationGoogleDrive::class, 'start'])
+                    ->middleware('throttle:10,1')->name('organisation-backups.google.connect');
+            })
             ->userMenuItems([
                 Action::make('installApp')
                     ->label('Install app')

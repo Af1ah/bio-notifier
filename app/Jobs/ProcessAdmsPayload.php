@@ -11,12 +11,14 @@ use App\Models\Organisation;
 use App\Models\User;
 use App\Services\Attendance\AdmsRequestParser;
 use App\Services\Attendance\DeviceCommandBuilder;
+use App\Services\Integrations\FrappeCheckins;
 use Carbon\Carbon;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class ProcessAdmsPayload implements ShouldQueue
@@ -94,21 +96,28 @@ class ProcessAdmsPayload implements ShouldQueue
                 $status = ($lastLog && $lastLog->status === 0) ? 1 : 0;
             }
 
-            $record = $modelClass::firstOrCreate(
-                [
-                    'pin' => $log['pin'],
-                    'punched_at' => $log['punched_at'],
-                ],
-                [
-                    'device_id' => $device->id,
-                    'status' => $status,
-                    'verify_type' => $log['verify_type'],
-                    'work_code' => $log['work_code'],
-                    'reserved_1' => $log['reserved_1'],
-                    'reserved_2' => $log['reserved_2'],
-                    'raw_data' => ['raw' => $log['raw']],
-                ]
-            );
+            $record = DB::transaction(function () use ($modelClass, $log, $device, $status) {
+                $record = $modelClass::firstOrCreate(
+                    [
+                        'pin' => $log['pin'],
+                        'punched_at' => $log['punched_at'],
+                    ],
+                    [
+                        'device_id' => $device->id,
+                        'status' => $status,
+                        'verify_type' => $log['verify_type'],
+                        'work_code' => $log['work_code'],
+                        'reserved_1' => $log['reserved_1'],
+                        'reserved_2' => $log['reserved_2'],
+                        'raw_data' => ['raw' => $log['raw']],
+                    ]
+                );
+                if ($record->wasRecentlyCreated) {
+                    FrappeCheckins::record($record->id);
+                }
+
+                return $record;
+            });
 
             if ($record->wasRecentlyCreated && config('zkteco-adms.events.dispatch_attendance_received', true)) {
                 event(new AttendanceReceived($record, $device));

@@ -7,23 +7,30 @@ use Filament\Forms\Components\Select;
 use Filament\Forms\Concerns\InteractsWithForms;
 use Filament\Forms\Contracts\HasForms;
 use Filament\Notifications\Notification;
-use Filament\Pages\Page;
+use Filament\Support\Icons\Heroicon;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
 
-class OrganisationSettings extends Page implements HasForms
+class OrganisationSettings extends SettingsPage implements HasForms
 {
     use InteractsWithForms;
 
-    protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-cog-6-tooth';
+    protected static ?string $slug = 'organisation-settings';
+
+    protected static string|\BackedEnum|null $navigationIcon = Heroicon::OutlinedCog6Tooth;
     protected static string|\UnitEnum|null $navigationGroup = 'Organisation Management';
     protected static ?int $navigationSort = 99;
     protected string $view = 'filament.tenant.pages.organisation-settings';
     public ?array $data = [];
 
-    public static function canAccess(): bool
+    public static function getNavigationLabel(): string
     {
-        return tenant() && (bool) auth('web')->user()?->has_login;
+        return __('organisation-settings.overview');
+    }
+
+    public static function getNavigationItemActiveRoutePattern(): array
+    {
+        return [static::getRouteName(), Backups::getRouteName(), Integrations::getRouteName()];
     }
 
     public function mount(): void
@@ -35,9 +42,9 @@ class OrganisationSettings extends Page implements HasForms
     public function form(Schema $schema): Schema
     {
         return $schema->components([
-            Section::make('Organisation time')->description('Used for attendance dates, shifts and displayed timestamps. Choose it before recording attendance; changing existing history requires a reviewed migration.')
+            Section::make(__('organisation-settings.time'))->description(__('organisation-settings.time_help'))
                 ->schema([
-                    Select::make('timezone')->label('Organisation timezone')
+                    Select::make('timezone')->label(__('organisation-settings.timezone'))
                         ->options(array_combine(\DateTimeZone::listIdentifiers(), \DateTimeZone::listIdentifiers()))
                         ->searchable()->required()->rules(['timezone']),
                 ]),
@@ -48,6 +55,6 @@ class OrganisationSettings extends Page implements HasForms
     {
         abort_unless(static::canAccess(), 403);
         tenant()->update(['timezone' => $this->form->getState()['timezone']]);
-        Notification::make()->title('Timezone saved')->success()->send();
+        Notification::make()->title(__('organisation-settings.timezone_saved'))->success()->send();
     }
 }
