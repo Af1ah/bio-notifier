@@ -36,6 +36,7 @@ class TenantPanelProvider extends PanelProvider
 
         $panel = TenantPanel::make()
             ->id('tenant')
+            ->viteTheme('resources/css/filament/tenant/theme.css')
             // ->domain('{tenant}.' . $centralDomain)
             // ->path('admin')
             ->path('{tenant}/admin')

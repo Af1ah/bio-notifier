@@ -9,7 +9,6 @@ use Filament\Forms\Components\Toggle;
 use Filament\Forms\Concerns\InteractsWithForms;
 use Filament\Forms\Contracts\HasForms;
 use Filament\Notifications\Notification;
-use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Illuminate\Support\Facades\Cache;
@@ -46,24 +45,27 @@ class Integrations extends SettingsPage implements HasForms
         ]);
     }
 
+    public function connect(): void
+    {
+        $this->resetValidation();
+        $this->mount();
+        $this->dispatch('open-modal', id: 'frappe-connection');
+    }
+
     public function form(Schema $schema): Schema
     {
         return $schema->components([
-            Section::make(__('organisation-settings.frappe'))
-                ->description(__('organisation-settings.frappe_help'))
-                ->schema([
-                    TextInput::make('hostname')->label(__('organisation-settings.frappe_host'))
-                        ->helperText(__('organisation-settings.frappe_host_help'))
-                        ->required()->maxLength(253)->regex(FrappeCheckins::HOSTNAME_PATTERN),
-                    TextInput::make('api_key')->label(__('organisation-settings.frappe_key'))
-                        ->password()->autocomplete('new-password')->maxLength(128)->regex('/\A[a-zA-Z0-9]+\z/')
-                        ->helperText(__('organisation-settings.frappe_keep')),
-                    TextInput::make('api_secret')->label(__('organisation-settings.frappe_secret'))
-                        ->password()->autocomplete('new-password')->maxLength(128)->regex('/\A[a-zA-Z0-9]+\z/')
-                        ->helperText(__('organisation-settings.frappe_keep')),
-                    Toggle::make('enabled')->label(__('organisation-settings.frappe_enabled'))
-                        ->helperText(__('organisation-settings.frappe_enabled_help')),
-                ]),
+            TextInput::make('hostname')->label(__('organisation-settings.frappe_host'))
+                ->helperText(__('organisation-settings.frappe_host_help'))
+                ->required()->maxLength(253)->regex(FrappeCheckins::HOSTNAME_PATTERN),
+            TextInput::make('api_key')->label(__('organisation-settings.frappe_key'))
+                ->password()->autocomplete('new-password')->maxLength(128)->regex('/\A[a-zA-Z0-9]+\z/')
+                ->helperText(__('organisation-settings.frappe_keep')),
+            TextInput::make('api_secret')->label(__('organisation-settings.frappe_secret'))
+                ->password()->autocomplete('new-password')->maxLength(128)->regex('/\A[a-zA-Z0-9]+\z/')
+                ->helperText(__('organisation-settings.frappe_keep')),
+            Toggle::make('enabled')->label(__('organisation-settings.frappe_enabled'))
+                ->helperText(__('organisation-settings.frappe_enabled_help')),
         ])->statePath('data');
     }
 
@@ -103,6 +105,9 @@ class Integrations extends SettingsPage implements HasForms
         }
 
         $this->notify($saved, 'frappe_saved');
+        if ($saved) {
+            $this->dispatch('close-modal', id: 'frappe-connection');
+        }
     }
 
     public function retryFailed(?int $attendanceLogId = null): void
@@ -130,6 +135,35 @@ class Integrations extends SettingsPage implements HasForms
         $this->notify($queued, 'frappe_retried');
     }
 
+    public function checkHealth(): void
+    {
+        abort_unless(static::canAccess(), 403);
+        $settings = FrappeSetting::find(1);
+        if (! $settings) {
+            Notification::make()->title(__('organisation-settings.frappe_health_not_configured'))->warning()->send();
+
+            return;
+        }
+        if (! Cache::add('frappe-health-throttle:'.tenant('id'), true, 15)) {
+            Notification::make()->title(__('organisation-settings.frappe_health_wait'))->warning()->send();
+
+            return;
+        }
+
+        $frappe = app(FrappeCheckins::class);
+        $status = $frappe->health($settings, $frappe->resolvePublicAddress($settings->hostname));
+        Cache::put($this->healthKey($settings), ['status' => $status, 'checked_at' => now()->toIso8601String()], 300);
+        $notification = Notification::make()->title(__('organisation-settings.frappe_health_'.$status));
+        ($status === 'healthy' ? $notification->success() : $notification->danger())->send();
+    }
+
+    private function healthKey(FrappeSetting $settings): string
+    {
+        return 'frappe-health:'.tenant('id').':'.hash('sha256', json_encode([
+            $settings->hostname, $settings->getRawOriginal('api_key'), $settings->getRawOriginal('api_secret'),
+        ]));
+    }
+
     public function deliverySummary(): array
     {
         abort_unless(static::canAccess(), 403);
@@ -138,12 +172,16 @@ class Integrations extends SettingsPage implements HasForms
         $totals = (clone $deliveries)->selectRaw(
             'COUNT(sent_at) AS sent, COUNT(retry_at) AS pending, COUNT(*) - COUNT(sent_at) - COUNT(retry_at) AS failed'
         )->first();
+        $settings = FrappeSetting::find(1);
 
         return [
             'sent' => $totals->sent,
             'pending' => $totals->pending,
             'failed' => $totals->failed,
-            'cooldown' => FrappeSetting::find(1)?->cooldown_until,
+            'hostname' => $settings?->hostname,
+            'health' => $settings ? Cache::get($this->healthKey($settings)) : null,
+            'enabled' => $settings?->enabled ?? false,
+            'cooldown' => $settings?->cooldown_until,
             'recent' => $deliveries->whereNotNull('last_attempt_at')->orderByDesc('last_attempt_at')
                 ->orderByDesc('attendance_log_id')->limit(15)->get(),
         ];

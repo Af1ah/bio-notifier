@@ -45,6 +45,7 @@ class OrganisationSettingsPagesTest extends TestCase
 
     public function test_settings_pages_require_a_tenant_admin_and_keep_the_existing_route(): void
     {
+        $this->assertSame('resources/css/filament/tenant/theme.css', Filament::getPanel('tenant')->getViteTheme());
         $base = '/settings-fixture/admin/organisation-settings';
         $this->get($base.'/integrations')->assertRedirect('/settings-fixture/admin/login');
         $this->post($base.'/backups/download')->assertRedirect('/settings-fixture/admin/login');
@@ -80,8 +81,12 @@ class OrganisationSettingsPagesTest extends TestCase
         ]), 'web');
 
         Livewire::test(Integrations::class)
+            ->assertSee('Not connected')->assertSee('Connect')
+            ->call('connect')->assertDispatched('open-modal', id: 'frappe-connection')
             ->fillForm(['hostname' => 'HR.Example.com', 'api_key' => 'samplekey', 'api_secret' => 'samplesecret', 'enabled' => true])
             ->call('save')->assertHasNoFormErrors()
+            ->assertDispatched('close-modal', id: 'frappe-connection')
+            ->assertSee('Sync enabled')->assertSee('Edit connection')->assertSee('hr.example.com')
             ->assertSet('data.api_key', null)->assertSet('data.api_secret', null);
 
         $settings = FrappeSetting::findOrFail(1);
@@ -92,9 +97,43 @@ class OrganisationSettingsPagesTest extends TestCase
 
         Livewire::test(Integrations::class)
             ->assertSet('data.api_secret', null)
+            ->fillForm(['api_key' => 'unsavedkey', 'api_secret' => 'unsavedsecret'])
+            ->call('connect')->assertSet('data.api_key', null)->assertSet('data.api_secret', null)
             ->fillForm(['hostname' => 'elsewhere.example.com'])
             ->call('save')->assertHasFormErrors(['api_key']);
         $this->assertEquals('hr.example.com', $settings->fresh()->hostname);
+    }
+
+    public function test_health_results_are_cached_throttled_and_invalidated_when_connection_changes(): void
+    {
+        tenancy()->initialize($this->organisation);
+        URL::defaults(['tenant' => $this->organisation->shortname]);
+        Filament::setCurrentPanel(Filament::getPanel('tenant'));
+        Filament::bootCurrentPanel();
+        $this->actingAs(User::create([
+            'name' => 'Settings admin', 'pin' => '906', 'privilege' => 14,
+            'email' => 'health-admin@example.test', 'password' => 'test-only-password',
+        ]), 'web');
+        $settings = FrappeSetting::create([
+            'id' => 1, 'hostname' => '127.0.0.1', 'api_key' => 'testkey', 'api_secret' => 'testsecret', 'enabled' => true,
+        ]);
+        Http::preventStrayRequests();
+        Http::fake();
+
+        $page = Livewire::test(Integrations::class)->assertSee('Health not checked')
+            ->call('checkHealth')->assertNotified('Hostname must resolve to a public server.');
+        $this->assertSame('destination', $page->instance()->deliverySummary()['health']['status']);
+        $page->call('checkHealth')->assertNotified('Wait a few seconds before checking again.');
+        Livewire::test(Integrations::class)->assertSee('Hostname must resolve to a public server.');
+        $settings->update(['api_secret' => 'changedsecret']);
+        $this->assertNull($page->instance()->deliverySummary()['health']);
+        $this->travel(16)->seconds();
+        $page->call('checkHealth');
+        $this->assertSame('destination', $page->instance()->deliverySummary()['health']['status']);
+        $this->travel(301)->seconds();
+        $this->assertNull($page->instance()->deliverySummary()['health']);
+        $this->travelBack();
+        Http::assertNothingSent();
     }
 
     public function test_ebio_punches_create_one_delivery_and_unsafe_destinations_are_blocked(): void

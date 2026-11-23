@@ -4,7 +4,9 @@ namespace App\Services\Integrations;
 
 use App\Models\AttendanceLog;
 use App\Models\FrappeSetting;
+use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Schema;
@@ -55,26 +57,14 @@ final class FrappeCheckins
 
     public function push(FrappeSetting $settings, AttendanceLog $log, ?string $address): FrappeDeliveryResult
     {
-        $hostname = $settings->hostname;
-        if (! preg_match(self::HOSTNAME_PATTERN, $hostname) || $address === null
-            || ! self::isPublicIpv4($address) || ! extension_loaded('curl')) {
+        $request = $this->request($settings, $address);
+        if ($request === null) {
             return new FrappeDeliveryResult(error: 'destination', cooldownSeconds: 900);
         }
 
         $payload = self::payload($log);
         try {
-            $response = Http::acceptJson()
-                ->withHeaders(['Authorization' => 'token '.$settings->api_key.':'.$settings->api_secret])
-                ->withoutRedirecting()
-                ->connectTimeout(3)
-                ->timeout(7)
-                // Use the validated address for this connection while retaining HTTPS hostname verification.
-                ->withOptions(['verify' => true, 'proxy' => '', 'curl' => [
-                    CURLOPT_PROXY => '',
-                    CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4,
-                    CURLOPT_RESOLVE => [$hostname.':443:'.$address],
-                ]])
-                ->post('https://'.$hostname.'/api/method/hrms.hr.doctype.employee_checkin.employee_checkin.add_log_based_on_employee_field', $payload);
+            $response = $request->post('https://'.$settings->hostname.'/api/method/hrms.hr.doctype.employee_checkin.employee_checkin.add_log_based_on_employee_field', $payload);
         } catch (ConnectionException) {
             return new FrappeDeliveryResult(error: 'connection', cooldownSeconds: 60);
         }
@@ -122,6 +112,61 @@ final class FrappeCheckins
         };
 
         return new FrappeDeliveryResult(error: 'http_'.$status, cooldownSeconds: $cooldown);
+    }
+
+    public function health(FrappeSetting $settings, ?string $address): string
+    {
+        try {
+            $request = $this->request($settings, $address);
+            if ($request === null) {
+                return 'destination';
+            }
+            if (blank($settings->api_key) || blank($settings->api_secret)) {
+                return 'authentication';
+            }
+            $response = $request->get('https://'.$settings->hostname.'/api/method/frappe.auth.get_logged_user');
+        } catch (ConnectionException) {
+            return 'connection';
+        } catch (DecryptException) {
+            return 'authentication';
+        }
+
+        if ($response->status() === 401) {
+            return 'authentication';
+        }
+        if ($response->status() === 403) {
+            return 'permission';
+        }
+        if ($response->status() === 429) {
+            return 'rate_limited';
+        }
+        if ($response->serverError()) {
+            return 'server';
+        }
+        if (! $response->successful() || $response->toPsrResponse()->getBody()->getSize() > 1048576) {
+            return 'unexpected_response';
+        }
+        $user = $response->json('message');
+
+        return is_string($user) && filled($user) && $user !== 'Guest' ? 'healthy' : 'unexpected_response';
+    }
+
+    private function request(FrappeSetting $settings, ?string $address): ?PendingRequest
+    {
+        $hostname = $settings->hostname;
+        if (! preg_match(self::HOSTNAME_PATTERN, $hostname) || $address === null
+            || ! self::isPublicIpv4($address) || ! extension_loaded('curl')) {
+            return null;
+        }
+
+        return Http::acceptJson()
+            ->withHeaders(['Authorization' => 'token '.$settings->api_key.':'.$settings->api_secret])
+            ->withoutRedirecting()->connectTimeout(3)->timeout(7)
+            // Pin the validated public address while retaining HTTPS hostname verification.
+            ->withOptions(['verify' => true, 'proxy' => '', 'curl' => [
+                CURLOPT_PROXY => '', CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4,
+                CURLOPT_RESOLVE => [$hostname.':443:'.$address],
+            ]]);
     }
 
     private function retryAfter(?string $header): int
