@@ -68,8 +68,17 @@ class OrganisationInfolist
                                     ->view('infolists.components.ebioserver-table'),
                             ]),
 
+                        Tab::make('Desktop connector')
+                            ->visible(fn (Organisation $record): bool => $record->device_integration === DeviceIntegration::DESKTOP)
+                            ->schema([
+                                TextEntry::make('desktop_endpoint')->label('Punch URL')
+                                    ->state(fn (): string => url('/api/desktop-connector/punches'))->copyable(),
+                                TextEntry::make('ebio_webhook_token')->label('API key')
+                                    ->formatStateUsing(fn (): string => 'Copy API key')
+                                    ->copyable(fn (Organisation $record): string => $record->ebio_webhook_token),
+                            ]),
                         Tab::make('ADMS gateway')
-                            ->visible(fn (Organisation $record): bool => ! DeviceIntegration::usesEbio($record))
+                            ->visible(fn (Organisation $record): bool => $record->device_integration === DeviceIntegration::GATEWAY)
                             ->icon('heroicon-o-server')
                             ->schema([
                                 TextEntry::make('gateway_connection')

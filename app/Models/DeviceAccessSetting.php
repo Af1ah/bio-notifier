@@ -21,4 +21,9 @@ class DeviceAccessSetting extends Model
     {
         return $this->belongsTo(DeviceCommand::class, 'command_id', 'gateway_command_id');
     }
+
+    public function managedPeriod(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'managed_period_id');
+    }
 }

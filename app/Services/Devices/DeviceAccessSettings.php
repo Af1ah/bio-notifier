@@ -75,7 +75,7 @@ final class DeviceAccessSettings
     public function save(Device $device, string $kind, array $data, ?DeviceAccessSetting $record = null): DeviceAccessSetting
     {
         $binding = $this->binding($device);
-        abort_unless(in_array($kind, ['group', 'period'], true) && DeviceProfilePolicy::supportsValidity($device), 403);
+        abort_unless(in_array($kind, ['group', 'period'], true) && app(DeviceCommandService::class)->available($device, $kind === 'group' ? 'query_access_groups' : 'query_access_periods'), 403);
         $name = validator($data, ['name' => ['required', 'string', 'max:100']])->validate()['name'];
         $parameters = self::parameters('set_access_'.$kind, $data['settings'] ?? []);
         if (! $record) {
@@ -97,7 +97,7 @@ final class DeviceAccessSettings
                 abort_unless((string) $record->number === $parameters['number'], 422);
                 if ($kind === 'group') {
                     $preserved = $record->reported ?? $record->desired;
-                    abort_unless($parameters['Verify'] === $preserved['Verify'] && $parameters['ValidHoliday'] === $preserved['ValidHoliday'], 422);
+                    abort_unless($parameters['Verify'] === $preserved['Verify'], 422);
                 }
                 $record->update(['name' => $name, 'desired' => $parameters, 'revision' => $record->revision + 1]);
 
@@ -135,12 +135,12 @@ final class DeviceAccessSettings
         return $record->reported_at?->gte(now()->subMinutes(10)) && $record->desired == $record->reported;
     }
 
-    public function apply(Device $device, DeviceAccessSetting $record, int $revision): DeviceCommand
+    public function apply(Device $device, DeviceAccessSetting $record, int $revision, ?string $dependsOn = null): DeviceCommand
     {
         $binding = $this->binding($device);
         $operation = 'set_access_'.$record->kind;
         abort_unless(app(DeviceCommandService::class)->available($device, $operation), 403);
-        [$record, $requestId] = DB::transaction(function () use ($device, $binding, $record, $revision): array {
+        [$record, $requestId] = DB::transaction(function () use ($device, $binding, $record, $revision, $dependsOn): array {
             Device::whereKey($device->id)->lockForUpdate()->firstOrFail();
             $current = DeviceAccessSetting::whereKey($record->id)->where('device_id', $device->id)->lockForUpdate()->firstOrFail();
             abort_unless($current->binding_id === $binding->id && $current->binding_version === $binding->version && $current->revision === $revision, 409);
@@ -154,7 +154,10 @@ final class DeviceAccessSettings
             if ($current->kind === 'group') {
                 foreach (array_unique(array_filter(array_slice(explode(';', $current->desired['TZ']), 1), fn ($slot) => $slot !== '0')) as $slot) {
                     $period = DeviceAccessSetting::where('device_id', $device->id)->where('kind', 'period')->where('number', $slot)->first();
-                    if (! $period || ! $this->ready($period, $binding)) {
+                    $queuedDependency = $period && $dependsOn !== null && $period->command_id === $dependsOn
+                        && $period->submitted_revision === $period->revision && $period->binding_id === $binding->id && $period->binding_version === $binding->version
+                        && in_array($period->command?->status, ['pending', 'sent', 'acknowledged'], true);
+                    if (! $period || (! $this->ready($period, $binding) && ! $queuedDependency)) {
                         throw ValidationException::withMessages(['access' => 'Read or apply every referenced daily period before applying this group.']);
                     }
                 }
@@ -167,7 +170,7 @@ final class DeviceAccessSettings
 
         // Stable request identity permits recovery after a queue/submission failure.
         // No network calls or queue submission while holding settings locks.
-        return app(DeviceCommandService::class)->request($device, $operation, $record->desired, requestId: $requestId);
+        return app(DeviceCommandService::class)->request($device, $operation, $record->desired, dependsOn: $dependsOn, requestId: $requestId);
     }
 
     public function assign(Device $device, DeviceRosterEntry $user, DeviceAccessSetting $group, ?array $periods = null, ?string $requestId = null): DeviceCommand

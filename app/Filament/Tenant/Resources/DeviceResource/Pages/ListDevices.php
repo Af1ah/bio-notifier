@@ -49,6 +49,16 @@ class ListDevices extends ListRecords
                     Notification::make()->title('Device added')->body('Its registration is being connected automatically. Configure the device to use the company gateway address, then it will appear online.')->success()->send();
                     $this->redirect(DeviceResource::getUrl('index'));
                 }),
+            Actions\Action::make('registerDesktopDevice')
+                ->label('Add device')
+                ->icon('heroicon-o-plus')
+                ->authorize(fn (): bool => tenant()?->device_integration === DeviceIntegration::DESKTOP && auth('web')->user()?->canManageDevices())
+                ->schema([
+                    TextInput::make('name')->label('Device name')->required()->maxLength(255),
+                    TextInput::make('serial_number')->label('Serial number')->required()
+                        ->regex('/^[A-Za-z0-9_-]{1,64}$/')->unique(Device::class, 'serial_number'),
+                ])
+                ->action(fn (array $data) => Device::create($data)),
             Actions\Action::make('syncEbioDevices')
                 ->authorize(fn (): bool => DeviceIntegration::usesEbio())
                 ->label('Sync devices')

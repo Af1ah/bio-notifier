@@ -95,35 +95,23 @@ class DeviceUsersRelationManager extends RelationManager
                             ->getStateUsing(fn (DeviceRosterEntry $record): string => DeviceUserAccess::schedule($record)),
                         TextEntry::make('access_settings.Grp')->label('Reported access group')->placeholder('Not reported'),
                     ]),
-                Action::make('editDeviceUserAccess')->label('Edit access settings (Beta)')->icon('heroicon-o-pencil-square')
+                Action::make('editDeviceUserAccess')->label('Access rule (Beta)')->icon('heroicon-o-clock')
                     ->authorize(fn (): bool => (bool) auth('web')->user()?->canManageDevices() && $this->accessSyncAvailable())
                     ->visible(fn (): bool => $this->accessSyncAvailable())
-                    ->modalHeading('Edit access settings (Beta)')->modalSubmitActionLabel('Save and sync')
-                    ->modalDescription('Choose this user’s group or personal daily periods. Expiration rules are managed separately.')
-                    ->fillForm(function (DeviceRosterEntry $record): array {
-                        $access = $record->access_settings ?? [];
-                        $tz = $access['TZ'] ?? '';
-                        $personal = preg_match('/^0001[0-9a-fA-F]{12}$/', $tz);
-                        $periods = $personal ? array_values(array_filter(array_map(fn ($offset) => (string) hexdec(substr($tz, $offset, 4)), [4, 8, 12]), fn ($slot) => $slot !== '0')) : [];
-
-                        return ['request_id' => (string) Str::uuid(), 'mode' => $personal ? 'personal' : (preg_match('/^0000[0-9a-fA-F]{12}$/', $tz) ? 'group' : null),
-                            'group_id' => DeviceAccessSetting::where('device_id', $this->getOwnerRecord()->id)->where('kind', 'group')->where('number', $access['Grp'] ?? 0)->value('id'),
-                            'periods' => $periods];
-                    })
+                    ->modalHeading('Choose access rule')->modalSubmitActionLabel('Save and sync')
+                    ->modalDescription('The selected rule replaces this user’s current access schedule.')
+                    ->fillForm(fn (DeviceRosterEntry $record): array => ['request_id' => (string) Str::uuid(),
+                        'group_id' => DeviceAccessSetting::where('device_id', $this->getOwnerRecord()->id)->where('kind', 'group')->where('number', $record->access_settings['Grp'] ?? 0)->value('id')])
                     ->schema([
                         Hidden::make('request_id')->required()->rules(['uuid']),
-                        Select::make('group_id')->label('Access group')->required()->searchable()
-                            ->options(fn () => DeviceAccessSetting::where('device_id', $this->getOwnerRecord()->id)->where('kind', 'group')->orderBy('number')->limit(1000)->get()->mapWithKeys(fn ($group) => [$group->id => $group->number.' · '.$group->name])->all()),
-                        Select::make('mode')->label('Daily periods')->options(['group' => 'Use group periods', 'personal' => 'Use personal periods'])->live()->required(),
-                        Select::make('periods')->label('Personal periods')->multiple()->minItems(1)->maxItems(3)->required()
-                            ->visible(fn ($get): bool => $get('mode') === 'personal')
-                            ->options(fn () => DeviceAccessSetting::where('device_id', $this->getOwnerRecord()->id)->where('kind', 'period')->orderBy('number')->limit(1000)->get()->mapWithKeys(fn ($period) => [(string) $period->number => $period->number.' · '.$period->name])->all()),
+                        Select::make('group_id')->label('Access rule')->required()->searchable()->preload()
+                            ->options(fn () => DeviceAccessSetting::where('device_id', $this->getOwnerRecord()->id)->where('kind', 'group')->orderBy('name')->limit(1000)->pluck('name', 'id')->all()),
                     ])
                     ->action(function (DeviceRosterEntry $record, array $data): void {
-                        validator($data, ['request_id' => ['required', 'uuid'], 'mode' => ['required', 'in:group,personal']])->validate();
+                        validator($data, ['request_id' => ['required', 'uuid']])->validate();
                         $group = DeviceAccessSetting::where('device_id', $this->getOwnerRecord()->id)->where('kind', 'group')->findOrFail($data['group_id']);
-                        app(DeviceAccessSettings::class)->assign($this->getOwnerRecord(), $record, $group, $data['mode'] === 'personal' ? ($data['periods'] ?? []) : null, $data['request_id']);
-                        Notification::make()->title('User access sync queued')->body('The device-user snapshot refreshes after acknowledgement. Track progress in Device actions.')->success()->send();
+                        app(DeviceAccessSettings::class)->assign($this->getOwnerRecord(), $record, $group, null, $data['request_id']);
+                        Notification::make()->title('Access rule queued')->success()->send();
                     }),
                 DeviceAccessPeriodAction::make($this->getOwnerRecord()),
             ])->toolbarActions([]);

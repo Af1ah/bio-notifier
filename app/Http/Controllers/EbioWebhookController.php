@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Jobs\ProcessEbioWebhookJob;
+use App\Models\Device;
 use App\Models\Organisation;
 use App\Models\WebhookReceipt;
 use App\Services\Devices\DeviceIntegration;
@@ -12,6 +13,63 @@ use Illuminate\Support\Facades\Validator;
 
 class EbioWebhookController extends Controller
 {
+    public function desktop(Request $request)
+    {
+        $key = $request->header('X-API-Key');
+        abort_unless(is_string($key) && preg_match('/^[a-f0-9]{64}$/', $key), 401);
+        $organisation = Organisation::where('device_integration', DeviceIntegration::DESKTOP)
+            ->where('ebio_webhook_token', $key)->first();
+        abort_unless($organisation, 401);
+        abort_if(strlen($request->getContent()) > 1048576, 413);
+        abort_unless($request->isJson(), 415);
+
+        $data = $request->validate([
+            'id' => ['required', 'uuid'],
+            'serial' => ['required', 'regex:/^[A-Za-z0-9_-]{1,64}$/'],
+            'punches' => ['required', 'array', 'list', 'min:1', 'max:250'],
+            'punches.*' => ['required', 'array:pin,at,status,verify,work_code'],
+            'punches.*.pin' => ['required', 'string', 'max:100'],
+            'punches.*.at' => ['required', 'date_format:Y-m-d\TH:i:sP'],
+            'punches.*.status' => ['required', 'integer', 'between:0,255'],
+            'punches.*.verify' => ['required', 'integer', 'between:0,255'],
+            'punches.*.work_code' => ['nullable', 'integer'],
+        ]);
+        $known = $organisation->run(fn () => Device::where('serial_number', $data['serial'])->exists());
+        abort_unless($known, 422, 'Register the device serial in Bio-Notifier before sending punches.');
+
+        $logs = array_map(fn (array $punch): array => [
+            'EmployeeCode' => $punch['pin'],
+            'LogDate' => $punch['at'],
+            'SerialNumber' => $data['serial'],
+            'StatusCode' => (int) $punch['status'],
+            'VerifyCode' => (int) $punch['verify'],
+            'WorkCode' => $punch['work_code'] ?? null,
+        ], $data['punches']);
+
+        $id = strtolower($data['id']);
+        $hash = hash('sha256', json_encode([$id, $logs], JSON_THROW_ON_ERROR));
+        $receipt = $organisation->getConnection()->transaction(function () use ($organisation, $key, $id, $hash, $logs) {
+            $current = Organisation::whereKey($organisation->id)->lockForUpdate()->first();
+            abort_unless($current?->device_integration === DeviceIntegration::DESKTOP &&
+                hash_equals((string) $current->ebio_webhook_token, $key), 401);
+            $existing = WebhookReceipt::where(['organisation_id' => $organisation->id, 'desktop_batch_id' => $id])->first();
+            if ($existing) {
+                abort_unless(hash_equals($existing->payload_hash, $hash), 409);
+
+                return $existing;
+            }
+            abort_if(WebhookReceipt::where('organisation_id', $organisation->id)->where('state', '!=', 'processed')->count() >= 1000, 503);
+
+            return WebhookReceipt::create([
+                'organisation_id' => $organisation->id, 'desktop_batch_id' => $id,
+                'payload_hash' => $hash, 'payload' => $logs,
+            ]);
+        });
+        $this->dispatchReceipt($organisation, $receipt);
+
+        return response()->json(['accepted' => true, 'id' => $data['id']], 202);
+    }
+
     public function handle(Request $request, $token)
     {
         if (! is_string($token) || ! preg_match('/^[a-f0-9]{64}$/', $token)) {
@@ -91,23 +149,37 @@ class EbioWebhookController extends Controller
             'logs.*.WorkCode' => ['nullable', 'integer'],
         ])->validate();
 
-        if (! empty($logs)) {
-            // Commit recoverable evidence before acknowledgement, independently
-            // of whether the queue is available. Queue payload contains only IDs.
-            if (WebhookReceipt::where('organisation_id', $organisation->id)->where('state', '!=', 'processed')->count() >= 1000) {
-                return response('Ingestion backlog full; retry later', 503);
-            }
-            $receipt = WebhookReceipt::firstOrCreate(['organisation_id' => $organisation->id, 'payload_hash' => hash('sha256', json_encode($logs, JSON_THROW_ON_ERROR))], ['payload' => $logs]);
-            if (! $receipt->wasRecentlyCreated) {
-                return response('Success', 200, ['Content-Type' => 'text/plain; charset=UTF-8']);
-            }
+        if (! $this->record($organisation, $logs)) {
+            return response('Ingestion backlog full; retry later', 503);
+        }
+
+        return response('Success', 200, ['Content-Type' => 'text/plain; charset=UTF-8']);
+    }
+
+    private function record(Organisation $organisation, array $logs): bool
+    {
+        $key = ['organisation_id' => $organisation->id, 'payload_hash' => hash('sha256', json_encode($logs, JSON_THROW_ON_ERROR))];
+        if (WebhookReceipt::where($key)->exists()) {
+            return true;
+        }
+        if (WebhookReceipt::where('organisation_id', $organisation->id)->where('state', '!=', 'processed')->count() >= 1000) {
+            return false;
+        }
+
+        $receipt = WebhookReceipt::firstOrCreate($key, ['payload' => $logs]);
+        $this->dispatchReceipt($organisation, $receipt);
+
+        return true;
+    }
+
+    private function dispatchReceipt(Organisation $organisation, WebhookReceipt $receipt): void
+    {
+        if ($receipt->wasRecentlyCreated) {
             try {
                 ProcessEbioWebhookJob::dispatch($organisation, [], $receipt->id);
             } catch (\Throwable $exception) {
                 $receipt->update(['last_error' => 'Queue dispatch failed; awaiting recovery.']);
             }
         }
-
-        return response('Success', 200, ['Content-Type' => 'text/plain; charset=UTF-8']);
     }
 }

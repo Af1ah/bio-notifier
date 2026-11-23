@@ -661,6 +661,56 @@ class EmployeePortalTest extends TestCase
         Livewire::test(ManagePortalPunches::class)->assertForbidden();
     }
 
+    public function test_bulk_manual_punch_approval_keeps_photo_checks_and_processes_valid_rows(): void
+    {
+        $this->enable();
+        Queue::fake();
+        $location = $this->fence();
+        $valid = app(GeofencedPunchService::class)->record($this->gps($location));
+        $this->travel(2)->seconds();
+        $missing = app(GeofencedPunchService::class)->record($this->gps($location, 'out'));
+        $this->travelBack();
+        Storage::disk('local')->delete($missing->photo_path);
+        $this->actingAs($this->manager, 'web');
+        Filament::setCurrentPanel(Filament::getPanel('tenant'));
+
+        Livewire::test(ManagePortalPunches::class)
+            ->callTableBulkAction('approve', [$missing, $valid], data: ['review_note' => 'Photos reviewed'])->assertStatus(200)
+            ->assertHasNoActionErrors()->assertNotified('Some punches could not be reviewed');
+
+        $this->assertSame('approved', $valid->fresh()->state);
+        $this->assertSame($this->manager->id, $valid->fresh()->reviewed_by_user_id);
+        $this->assertSame('pending', $missing->fresh()->state);
+        $this->assertSame(1, AttendanceLog::count());
+    }
+
+    public function test_bulk_manual_punch_rejection_requires_reason_and_creates_no_logs(): void
+    {
+        $this->enable();
+        Queue::fake();
+        $location = $this->fence();
+        $first = app(GeofencedPunchService::class)->record($this->gps($location));
+        $this->travel(2)->seconds();
+        $second = app(GeofencedPunchService::class)->record($this->gps($location, 'out'));
+        $this->travelBack();
+        $this->actingAs($this->manager, 'web');
+        Filament::setCurrentPanel(Filament::getPanel('tenant'));
+
+        Livewire::test(ManagePortalPunches::class)->callTableBulkAction('reject', [$first, $second], data: [])
+            ->assertHasActionErrors(['review_note' => 'required']);
+        $this->assertSame('pending', $first->fresh()->state);
+        Livewire::test(ManagePortalPunches::class)
+            ->callTableBulkAction('reject', [$first, $second], data: ['review_note' => 'Photos do not match'])
+            ->assertStatus(200)->assertHasNoActionErrors()->assertNotified('Punches rejected');
+        foreach ([$first, $second] as $request) {
+            $this->assertSame('rejected', $request->fresh()->state);
+            $this->assertSame('Photos do not match', $request->fresh()->review_note);
+            $this->assertSame($this->manager->id, $request->fresh()->reviewed_by_user_id);
+        }
+        $this->assertSame(0, AttendanceLog::count());
+        Queue::assertNothingPushed();
+    }
+
     public function test_native_manual_approval_records_original_time_and_missing_photo_blocks_approval(): void
     {
         $this->enable();

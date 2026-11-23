@@ -38,8 +38,7 @@ abstract class AccessSettingsRelationManager extends RelationManager
 
     private function editable(): bool
     {
-        return (bool) auth('web')->user()?->canManageDevices() && self::canViewForRecord($this->getOwnerRecord(), static::class)
-            && app(DeviceCommandService::class)->available($this->getOwnerRecord(), 'set_access_'.static::$accessKind);
+        return (bool) auth('web')->user()?->canManageDevices() && self::canViewForRecord($this->getOwnerRecord(), static::class);
     }
 
     private function fields(bool $creating): array
@@ -107,7 +106,9 @@ abstract class AccessSettingsRelationManager extends RelationManager
             }),
             TextColumn::make('reported_at')->label('Last read')->dateTime(timezone: fn () => TenantTimezone::get())->placeholder('Not read yet'),
         ])->defaultSort('number')->modifyQueryUsing(fn ($query) => $query->with('command'))
-            ->description('Save a draft, then apply it on demand. Shared changes affect everyone using this group or period. Missing records do not prove that device slots are unused.')
+            ->description(fn (): string => app(DeviceCommandService::class)->available($this->getOwnerRecord(), 'set_access_'.static::$accessKind)
+                ? 'Save a draft, then apply it to the device. Shared rules affect all assigned users.'
+                : 'Create local drafts. Applying changes is unavailable until this device’s access commands are verified.')
             ->emptyStateHeading('No '.(static::$accessKind === 'group' ? 'access groups' : 'daily periods').' received')
             ->emptyStateDescription('Read access settings from the device. Firmware that does not return usable settings cannot provide existing-group editing.')
             ->headerActions([
@@ -143,7 +144,7 @@ abstract class AccessSettingsRelationManager extends RelationManager
 
                         return $data;
                     })->modalSubmitActionLabel('Save draft')->action(fn (DeviceAccessSetting $record, array $data) => $this->saveData($data, $record)),
-                Action::make('applyAccessSetting')->label('Apply to device')->authorize(fn (): bool => $this->editable())
+                Action::make('applyAccessSetting')->label('Apply to device')->authorize(fn (): bool => $this->editable() && app(DeviceCommandService::class)->available($this->getOwnerRecord(), 'set_access_'.static::$accessKind))
                     ->visible(fn (): bool => app(DeviceCommandService::class)->available($this->getOwnerRecord(), 'set_access_'.static::$accessKind))
                     ->modalDescription('This changes a shared device setting. All users and groups referencing it may be affected. Check the draft and current readback before applying.')
                     ->schema([Hidden::make('revision'), Checkbox::make('confirmed')->label('I reviewed the shared access change.')->required()->accepted()])

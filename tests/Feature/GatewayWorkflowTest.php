@@ -77,6 +77,98 @@ use Tests\TestCase;
 
 class GatewayWorkflowTest extends TestCase
 {
+    public function test_desktop_connector_authenticates_and_replays_an_acknowledged_batch(): void
+    {
+        [$company] = $this->company('DESKTOP01');
+        $company->update(['device_integration' => DeviceIntegration::DESKTOP]);
+        Queue::fake();
+        $uri = '/api/desktop-connector/punches';
+        $batch = [
+            'id' => (string) Str::uuid(),
+            'serial' => 'DESKTOP01',
+            'punches' => [['pin' => '0007', 'at' => '2026-11-21T09:00:00+05:30', 'status' => 0, 'verify' => 1, 'work_code' => 0]],
+        ];
+        $headers = ['X-API-Key' => $company->ebio_webhook_token];
+        $this->postJson($uri, $batch)->assertUnauthorized();
+        $this->postJson($uri, array_replace($batch, ['serial' => 'UNREGISTERED']), $headers)->assertUnprocessable();
+        $this->postJson($uri, $batch, $headers)->assertAccepted()->assertJson(['id' => $batch['id'], 'accepted' => true]);
+        $this->postJson($uri, $batch, $headers)->assertAccepted();
+        $changed = $batch;
+        $changed['punches'][0]['pin'] = '0008';
+        $this->postJson($uri, $changed, $headers)->assertConflict();
+        Queue::assertPushed(ProcessEbioWebhookJob::class, 1);
+
+        $receipt = \App\Models\WebhookReceipt::where('desktop_batch_id', $batch['id'])->firstOrFail();
+        (new ProcessEbioWebhookJob($company, [], $receipt->id))->handle();
+        $company->run(fn () => $this->assertSame('0007', AttendanceLog::firstOrFail()->pin));
+    }
+
+    public function test_managed_access_rule_uses_safe_slots_and_queues_hours_before_group(): void
+    {
+        [$company, $binding] = $this->company('MANAGEDRULE01');
+        $binding->update(['capabilities' => DeviceAccessSettings::OPERATIONS]);
+        tenancy()->initialize($company);
+        $device = Device::firstOrFail();
+        $device->update(['options' => ['observed_metadata' => ['model' => 'x 2008', 'platform' => 'ZMM510_TFT', 'firmware_version' => 'ZMM510-NF24VB-Ver2.2.1'], 'approved_access_slots' => ['group' => [21], 'period' => [22]]]]);
+        $this->actingAs(User::create(['name' => 'Admin', 'pin' => '900', 'privilege' => 14, 'email' => 'managed-rule@example.test', 'password' => 'password']), 'web');
+        URL::defaults(['tenant' => $company->shortname]);
+        Filament::setCurrentPanel(Filament::getPanel('tenant'));
+        Filament::bootCurrentPanel();
+        Queue::fake();
+        $data = ['name' => 'Office hours', 'days' => ['Mon', 'Tues', 'Wed', 'Thurs', 'Fri'], 'start_time' => '09:00', 'end_time' => '17:00', 'holidays' => '1'];
+        Livewire::test(AccessGroupsRelationManager::class, ['ownerRecord' => $device, 'pageClass' => EditDevice::class])
+            ->callTableAction('addAccessRule', data: $data)->assertHasNoTableActionErrors();
+        $rule = DeviceAccessSetting::where('kind', 'group')->with('managedPeriod')->firstOrFail();
+        $this->assertSame(21, $rule->number);
+        $this->assertSame(22, $rule->managedPeriod->number);
+        $this->assertSame('0900', $rule->managedPeriod->desired['MonStart']);
+        $this->assertSame('1700', $rule->managedPeriod->desired['MonEnd']);
+        $this->assertSame('2359', $rule->managedPeriod->desired['SunStart']);
+        $this->assertSame('0000', $rule->managedPeriod->desired['SunEnd']);
+        $this->assertSame('1', $rule->desired['ValidHoliday']);
+        try {
+            app(\App\Services\Devices\DeviceAccessRules::class)->save($device, $data + ['revision' => 99, 'period_revision' => 1], $rule);
+            $this->fail('Stale rule edit accepted.');
+        } catch (ValidationException) {
+            $this->assertSame(1, $rule->managedPeriod->fresh()->revision);
+        }
+        Livewire::test(AccessGroupsRelationManager::class, ['ownerRecord' => $device, 'pageClass' => EditDevice::class])
+            ->callTableAction('sendAccessRule', $rule, data: ['revision' => 1, 'period_revision' => 1])->assertHasNoTableActionErrors();
+        $period = DB::table('gateway_command_outbox')->where('operation', 'set_access_period')->firstOrFail();
+        $group = DB::table('gateway_command_outbox')->where('operation', 'set_access_group')->firstOrFail();
+        $this->assertSame($period->id, ProtectedArray::decode($group->parameters)['__depends_on']);
+        $this->assertSame('1;22;0;0', ProtectedArray::decode($group->parameters)['TZ']);
+        app(\App\Services\Devices\DeviceAccessRules::class)->apply($device, $rule, 1, 1);
+        $this->assertSame(2, DeviceCommand::count());
+        try {
+            app(\App\Services\Devices\DeviceAccessRules::class)->save($device, $data);
+            $this->fail('An unconfirmed slot was allocated.');
+        } catch (ValidationException) {
+            $this->assertSame(2, DeviceAccessSetting::count());
+        }
+    }
+
+    public function test_unverified_device_can_create_local_access_drafts_but_cannot_apply_them(): void
+    {
+        [$company, $binding] = $this->company('ACCESSDRAFT01');
+        $binding->update(['capabilities' => DeviceAccessSettings::OPERATIONS]);
+        tenancy()->initialize($company);
+        $device = Device::firstOrFail();
+        $device->update(['options' => ['observed_metadata' => ['platform' => 'ZLM60_TFT'], 'approved_access_slots' => ['group' => [21], 'period' => [22]]]]);
+        $this->actingAs(User::create(['name' => 'Admin', 'pin' => '900', 'privilege' => 14, 'email' => 'draft-access@example.test', 'password' => 'password']), 'web');
+        URL::defaults(['tenant' => $company->shortname]);
+        Filament::setCurrentPanel(Filament::getPanel('tenant'));
+        Filament::bootCurrentPanel();
+        Livewire::test(AccessGroupsRelationManager::class, ['ownerRecord' => $device, 'pageClass' => EditDevice::class])
+            ->callTableAction('addAccessRule', data: ['name' => 'Office hours', 'days' => ['Mon', 'Tues', 'Wed', 'Thurs', 'Fri'], 'start_time' => '09:00', 'end_time' => '17:00', 'holidays' => '0'])->assertHasNoTableActionErrors();
+        $group = DeviceAccessSetting::where('kind', 'group')->firstOrFail();
+        $this->assertSame('1;22;0;0', $group->desired['TZ']);
+        $this->assertSame(0, DeviceCommand::count());
+        Livewire::test(AccessGroupsRelationManager::class, ['ownerRecord' => $device, 'pageClass' => EditDevice::class])->assertTableActionHidden('sendAccessRule', $group);
+        $this->expectException(HttpException::class);
+        app(DeviceAccessSettings::class)->apply($device, $group, $group->revision);
+    }
+
     public function test_verified_f22_expiration_form_sends_times_and_rejects_unverified_modes(): void
     {
         config(['device_gateway.verified_date_expiration_serials' => ['VERIFIEDF22']]);
@@ -1675,21 +1767,15 @@ class GatewayWorkflowTest extends TestCase
         URL::defaults(['tenant' => $company->shortname]);
         Filament::setCurrentPanel(Filament::getPanel('tenant'));
         Filament::bootCurrentPanel();
-        Livewire::test(AccessGroupsRelationManager::class, [
-            'ownerRecord' => $device, 'pageClass' => EditDevice::class,
-        ])->assertCanSeeTableRecords([$group])
-            ->callTableAction('editAccessSetting', $group, data: ['name' => 'Day staff revised', 'revision' => $group->revision, 'periods' => ['2']])
-            ->assertHasNoTableActionErrors();
+        Livewire::test(AccessGroupsRelationManager::class, ['ownerRecord' => $device, 'pageClass' => EditDevice::class])->assertCanSeeTableRecords([$group]);
+        $service->save($device, 'group', ['name' => 'Day staff revised', 'revision' => $group->revision, 'settings' => $group->desired], $group);
         $this->assertSame('Day staff revised', $group->fresh()->name);
         $this->assertSame(1, DeviceCommand::where('command_type', 'set_access_group')->count());
         request()->attributes->remove('device-access-readback:'.tenant('id').':'.$device->id);
         $user->update(['access_settings' => ['Grp' => '2', 'TZ' => '0000000000000000']]);
         $this->assertStringContainsString('Monday 09:00–17:00', DeviceUserAccess::schedule($user->fresh()));
         $requestId = (string) Str::uuid();
-        Livewire::test(DeviceUsersRelationManager::class, [
-            'ownerRecord' => $device, 'pageClass' => EditDevice::class,
-        ])->callTableAction('editDeviceUserAccess', $user, data: ['request_id' => $requestId, 'group_id' => $group->id, 'mode' => 'personal', 'periods' => ['2']])
-            ->assertHasNoTableActionErrors();
+        $service->assign($device, $user, $group->fresh(), ['2'], $requestId);
         $row = DB::table('gateway_command_outbox')->where('id', $requestId)->firstOrFail();
         $this->assertSame(['pin' => '0007', 'number' => '2', 'period1' => '2', 'period2' => '0', 'period3' => '0'], ProtectedArray::decode($row->parameters));
         $read = DeviceCommand::where('command_type', 'query_users')->latest('id')->firstOrFail();
@@ -1793,7 +1879,7 @@ class GatewayWorkflowTest extends TestCase
         $this->assertFalse(app(DeviceCommandService::class)->available($device, 'set_access_group'));
         $this->assertTrue(AccessGroupsRelationManager::canViewForRecord($device, EditDevice::class));
         Livewire::test(AccessGroupsRelationManager::class, ['ownerRecord' => $device->fresh(), 'pageClass' => EditDevice::class])
-            ->assertTableActionVisible('readAccessSettings')->assertTableActionHidden('addAccessSetting');
+            ->assertTableActionVisible('readAccessSettings')->assertTableActionVisible('addAccessRule');
         request()->attributes->remove('device-user-access-sync:'.tenant('id').':'.$device->id);
         Livewire::test(DeviceUsersRelationManager::class, ['ownerRecord' => $device->fresh(), 'pageClass' => EditDevice::class])
             ->assertTableActionHidden('editDeviceUserAccess', $roster);

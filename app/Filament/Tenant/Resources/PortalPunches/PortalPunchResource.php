@@ -7,6 +7,8 @@ use App\Models\PortalPunch;
 use App\Services\EmployeePortal\PunchApprovalService;
 use Filament\Actions\Action;
 use Filament\Actions\ActionGroup;
+use Filament\Actions\BulkAction;
+use Filament\Actions\BulkActionGroup;
 use Filament\Actions\ViewAction;
 use Filament\Forms\Components\Textarea;
 use Filament\Infolists\Components\TextEntry;
@@ -18,6 +20,8 @@ use Filament\Schemas\Components\Section;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Validation\ValidationException;
 
 class PortalPunchResource extends Resource
 {
@@ -81,9 +85,34 @@ class PortalPunchResource extends Resource
                 'approved' => 'success', 'rejected' => 'danger', default => 'warning'
             }),
         ])->filters([SelectFilter::make('state')->label('Status')->options(['pending' => 'Pending', 'approved' => 'Approved', 'rejected' => 'Rejected'])->default('pending')])
+            ->checkIfRecordIsSelectableUsing(fn (PortalPunch $record) => $record->state === 'pending' && $record->user_id !== auth('web')->id())
+            ->toolbarActions([BulkActionGroup::make([self::bulkReview(true), self::bulkReview(false)])])
             ->recordActions([ActionGroup::make([ViewAction::make()->schema(self::details(includeReviewNote: true))->modalWidth('3xl'), $review(true), $review(false)])])
             ->recordAction('view')->defaultSort('punched_at', 'desc')->defaultKeySort()
             ->paginated([10, 25, 50])->defaultPaginationPageOption(10)->enforcePaginationPageOptions();
+    }
+
+    private static function bulkReview(bool $approve): BulkAction
+    {
+        return BulkAction::make($approve ? 'approve' : 'reject')->label($approve ? 'Approve selected' : 'Reject selected')
+            ->color($approve ? 'success' : 'danger')->icon($approve ? 'heroicon-o-check' : 'heroicon-o-x-mark')
+            ->requiresConfirmation()
+            ->schema([Textarea::make('review_note')->label('Reason')->maxLength(1000)->required(! $approve)])
+            ->action(function (Collection $records, array $data, BulkAction $action) use ($approve): void {
+                $actor = auth('web')->user()?->fresh();
+                abort_unless($actor?->is_enabled && $actor->hasManagementAccess(), 403);
+                foreach ($records as $record) {
+                    try {
+                        app(PunchApprovalService::class)->decide($record, $actor, $approve, $data['review_note'] ?? null);
+                    } catch (ValidationException $exception) {
+                        $message = implode(' ', $exception->validator->errors()->all());
+                        $action->reportBulkProcessingFailure(key: $message, message: $message);
+                    }
+                }
+            })
+            ->successNotificationTitle($approve ? 'Punches approved' : 'Punches rejected')
+            ->failureNotificationTitle('Some punches could not be reviewed')
+            ->deselectRecordsAfterCompletion();
     }
 
     public static function getPages(): array

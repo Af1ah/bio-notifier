@@ -61,7 +61,12 @@ class ProcessEbioWebhookJob implements ShouldQueue
             if ($receipt) {
                 $this->logs = $receipt->payload;
             }
-            DeviceIntegration::requireEbio($this->organisation);
+            $desktop = $receipt && $receipt->desktop_batch_id;
+            if (! $desktop) {
+                DeviceIntegration::requireEbio($this->organisation);
+            } elseif ($this->organisation->fresh()?->device_integration !== DeviceIntegration::DESKTOP) {
+                throw new \RuntimeException('The company is no longer using the desktop connector.');
+            }
             tenancy()->initialize($this->organisation);
             $reconciler = new AttendanceReplayReconciler;
             foreach ($this->logs as $logData) {
@@ -75,7 +80,7 @@ class ProcessEbioWebhookJob implements ShouldQueue
                     if (Device::onlyTrashed()->where('serial_number', $serial)->exists()) {
                         continue;
                     }
-                    if (! config('services.ebio.allow_device_discovery', true) && ! Device::where('serial_number', $serial)->exists()) {
+                    if (($desktop || ! config('services.ebio.allow_device_discovery', true)) && ! Device::where('serial_number', $serial)->exists()) {
                         throw new \RuntimeException('Unregistered webhook device. Provision the device before replay.');
                     }
                     $device = null;
@@ -120,8 +125,8 @@ class ProcessEbioWebhookJob implements ShouldQueue
                         'punched_at' => Carbon::parse($logData['LogDate']),
                     ], [
                         'device_id' => $device ? $device->id : 0,
-                        'status' => $status,
-                        'verify_type' => $verifyType,
+                        'status' => $desktop ? (int) ($logData['StatusCode'] ?? $status) : $status,
+                        'verify_type' => $desktop ? (int) ($logData['VerifyCode'] ?? $verifyType) : $verifyType,
                         'work_code' => isset($logData['WorkCode']) ? (int) $logData['WorkCode'] : null,
                         'raw_data' => $logData,
                     ]);
