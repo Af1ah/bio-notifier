@@ -32,15 +32,23 @@ final class GeofencedPunchService
         }
         RateLimiter::hit($key, 60);
 
+        $existing = PortalPunch::where('user_id', $employee->id)->where('request_id', $data['request_id'])->first();
+        if ($existing) {
+            return $existing;
+        }
+        $submittedAt = now();
+        $photo = app(PunchPhoto::class)->prepare($data['photo']);
+        $path = 'biometric-photos/punches/'.Str::uuid().'.jpg';
+        $keepPhoto = false;
         try {
-            return DB::transaction(function () use ($employee, $data, $input) {
+            PrivateBiometricPhoto::put($path, $photo['bytes']);
+            $request = DB::transaction(function () use ($employee, $data, $input, $photo, $path, $submittedAt) {
                 $employee = User::lockForUpdate()->findOrFail($employee->id);
                 abort_unless($employee->canAccessEmployeePortal() && ! $employee->requires_password_change, 403);
                 $existing = PortalPunch::where('user_id', $employee->id)->where('request_id', $data['request_id'])->first();
                 if ($existing) {
                     return $existing;
                 }
-                $submittedAt = now();
                 $lastSubmission = PortalPunch::where('user_id', $employee->id)->latest('id')->first(['created_at']);
                 if ($lastSubmission?->created_at?->addMinute()->isAfter($submittedAt)) {
                     throw ValidationException::withMessages(['punch' => __('employee-punch.duplicate')]);
@@ -73,53 +81,35 @@ final class GeofencedPunchService
                     }
                 }
 
-                $prefix = 'data:image/jpeg;base64,';
-                $bytes = str_starts_with($data['photo'], $prefix) ? base64_decode(substr($data['photo'], strlen($prefix)), true) : false;
-                $size = $bytes ? @getimagesizefromstring($bytes) : false;
-                if (! $bytes || strlen($bytes) > 786432 || ! $size || ($size['mime'] ?? '') !== 'image/jpeg'
-                    || $size[0] < 160 || $size[1] < 120 || $size[0] > 1600 || $size[1] > 1600) {
-                    throw ValidationException::withMessages(['photo' => 'Take a clear camera photo and try again.']);
-                }
-                $image = @imagecreatefromstring($bytes);
-                if (! $image) {
-                    throw ValidationException::withMessages(['photo' => 'The camera photo could not be read. Please retake it.']);
-                }
-                ob_start();
-                imagejpeg($image, null, 85);
-                $bytes = ob_get_clean();
-                imagedestroy($image);
-                if (strlen($bytes) > 786432) {
-                    throw ValidationException::withMessages(['photo' => 'Retake a smaller camera photo and try again.']);
-                }
-                $path = 'biometric-photos/punches/'.Str::uuid().'.jpg';
-                PrivateBiometricPhoto::put($path, $bytes);
-                try {
-                    return PortalPunch::create([
-                        'user_id' => $employee->id, 'work_location_id' => $location?->id, 'request_id' => $data['request_id'],
-                        'kind' => $data['kind'], 'punched_at' => $submittedAt->copy()->setTimezone(TenantTimezone::get()),
-                        'created_at' => $submittedAt, 'photo_path' => $path, 'state' => 'pending',
-                        'evidence' => ['source' => 'employee_portal', 'geofencing_enabled' => (bool) $setting->geofencing_enabled,
-                            'location_id' => $location?->id, 'location_name' => $location?->name,
-                            'note' => filled($data['note'] ?? null) ? trim($data['note']) : null,
-                            'branch_id' => $location?->branch_id, 'pin' => $employee->pin,
-                            'latitude' => isset($gps['latitude']) ? (float) $gps['latitude'] : null,
-                            'longitude' => isset($gps['longitude']) ? (float) $gps['longitude'] : null,
-                            'accuracy_meters' => isset($gps['accuracy']) ? (float) $gps['accuracy'] : null,
-                            'distance_meters' => $distance === null ? null : round($distance, 2),
-                            'fence_latitude' => $location?->latitude, 'fence_longitude' => $location?->longitude,
-                            'radius_meters' => $location?->radius_meters, 'captured_at' => $gps['captured_at'] ?? null],
-                    ]);
-                } catch (\Throwable $exception) {
-                    Storage::disk('local')->delete($path);
-                    throw $exception;
-                }
+                return PortalPunch::create([
+                    'user_id' => $employee->id, 'work_location_id' => $location?->id, 'request_id' => $data['request_id'],
+                    'kind' => $data['kind'], 'punched_at' => $submittedAt->copy()->setTimezone(TenantTimezone::get()),
+                    'created_at' => $submittedAt, 'photo_path' => $path, 'state' => 'pending',
+                    'evidence' => ['source' => 'employee_portal', 'photo_validation' => $photo['validation'], 'geofencing_enabled' => (bool) $setting->geofencing_enabled,
+                        'location_id' => $location?->id, 'location_name' => $location?->name,
+                        'note' => filled($data['note'] ?? null) ? trim($data['note']) : null,
+                        'branch_id' => $location?->branch_id, 'pin' => $employee->pin,
+                        'latitude' => isset($gps['latitude']) ? (float) $gps['latitude'] : null,
+                        'longitude' => isset($gps['longitude']) ? (float) $gps['longitude'] : null,
+                        'accuracy_meters' => isset($gps['accuracy']) ? (float) $gps['accuracy'] : null,
+                        'distance_meters' => $distance === null ? null : round($distance, 2),
+                        'fence_latitude' => $location?->latitude, 'fence_longitude' => $location?->longitude,
+                        'radius_meters' => $location?->radius_meters, 'captured_at' => $gps['captured_at'] ?? null],
+                ]);
             });
+            $keepPhoto = $request->photo_path === $path;
+
+            return $request;
         } catch (UniqueConstraintViolationException $exception) {
             $existing = PortalPunch::where('user_id', $employee->id)->where('request_id', $data['request_id'])->first();
             if ($existing) {
                 return $existing;
             }
             throw ValidationException::withMessages(['location' => 'A punch was already recorded at this time. Wait a moment before punching again.']);
+        } finally {
+            if (! $keepPhoto) {
+                Storage::disk('local')->delete($path);
+            }
         }
     }
 }
