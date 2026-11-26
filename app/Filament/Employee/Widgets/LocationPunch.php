@@ -8,7 +8,6 @@ use App\Models\WorkLocation;
 use App\Services\EmployeePortal\GeofencedPunchService;
 use App\Services\EmployeePortal\PortalAccess;
 use Filament\Forms\Components\Select;
-use Filament\Notifications\Notification;
 use Filament\Schemas\Concerns\InteractsWithSchemas;
 use Filament\Schemas\Contracts\HasSchemas;
 use Filament\Schemas\Schema;
@@ -45,7 +44,7 @@ class LocationPunch extends Widget implements HasSchemas
     public function form(Schema $schema): Schema
     {
         return $schema->components([
-            Select::make('location_id')->label('Work location (optional)')->placeholder('Select a work location')->searchable()->preload()
+            Select::make('location_id')->label(__('employee-punch.location'))->placeholder(__('employee-punch.selectLocation'))->searchable()->preload()
                 ->options(fn () => WorkLocation::where('is_active', true)->orderBy('name')->limit(50)->pluck('name', 'id')->all())
                 ->getSearchResultsUsing(fn (string $search) => WorkLocation::where('is_active', true)->where('name', 'like', '%'.$search.'%')->orderBy('name')->limit(50)->pluck('name', 'id')->all())
                 ->getOptionLabelUsing(fn ($value) => WorkLocation::where('is_active', true)->find($value)?->name),
@@ -62,13 +61,12 @@ class LocationPunch extends Widget implements HasSchemas
         try {
             $log = app(GeofencedPunchService::class)->record($data);
         } catch (ValidationException $exception) {
-            Notification::make()->title('Punch not recorded')->body(collect($exception->errors())->flatten()->first())->danger()->send();
+            $this->dispatch('portal-punch-rejected', message: collect($exception->errors())->flatten()->first());
 
             return false;
         }
         $this->dispatch('portal-punch-submitted');
-        Notification::make()->title($log->kind === 'in' ? 'Check-in requested' : 'Checkout requested')
-            ->body($log->punched_at->format('d M, h:i A').(filled($log->evidence['location_name'] ?? null) ? ' · '.$log->evidence['location_name'] : ''))->success()->send();
+        $this->dispatch('portal-punch-receipt', kind: $log->kind, time: $log->punched_at->format('d M, h:i A'), state: $log->state);
 
         return true;
     }

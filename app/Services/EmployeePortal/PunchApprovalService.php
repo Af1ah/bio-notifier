@@ -14,16 +14,16 @@ final class PunchApprovalService
 {
     public function decide(PortalPunch $request, User $actor, bool $approve, ?string $note = null): PortalPunch
     {
-        $actor = $actor->fresh();
-        abort_unless($actor?->is_enabled && $actor->hasManagementAccess(), 403);
-        abort_if($actor->id === $request->user_id, 403);
-        if (mb_strlen((string) $note) > 1000 || (! $approve && blank($note))) {
-            throw ValidationException::withMessages(['review_note' => 'Add a reason of up to 1,000 characters.']);
-        }
         try {
             return DB::transaction(function () use ($request, $actor, $approve, $note) {
                 $user = User::lockForUpdate()->findOrFail($request->user_id);
+                $actor = $actor->fresh();
+                abort_unless($actor, 403);
+                DepartmentReview::authorizeDecision($actor, $user);
                 $request = PortalPunch::where('user_id', $user->id)->lockForUpdate()->findOrFail($request->id);
+                if (mb_strlen((string) $note) > 1000 || (! $approve && blank($note))) {
+                    throw ValidationException::withMessages(['review_note' => 'Add a reason of up to 1,000 characters.']);
+                }
                 $state = $approve ? 'approved' : 'rejected';
                 if ($request->state !== 'pending') {
                     if ($request->state === $state) {

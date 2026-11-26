@@ -37,7 +37,7 @@ class PortalPunchResource extends Resource
 
     protected static string|\UnitEnum|null $navigationGroup = 'Organisation Management';
 
-    private static function details(bool $includeReviewNote = false): array
+    public static function details(bool $includeReviewNote = false): array
     {
         return [
             Grid::make(['default' => 1, 'md' => 3])->schema([
@@ -69,13 +69,6 @@ class PortalPunchResource extends Resource
 
     public static function table(Table $table): Table
     {
-        $review = fn (bool $approve) => Action::make($approve ? 'approve' : 'reject')->label($approve ? 'Approve' : 'Reject')
-            ->color($approve ? 'success' : 'danger')->icon($approve ? 'heroicon-o-check' : 'heroicon-o-x-mark')
-            ->visible(fn (PortalPunch $record) => $record->state === 'pending')->modalWidth('3xl')->requiresConfirmation()
-            ->schema([...self::details(), Textarea::make('review_note')->label('Reason')->maxLength(1000)->required(! $approve)])
-            ->action(fn (PortalPunch $record, array $data) => app(PunchApprovalService::class)->decide($record, auth('web')->user(), $approve, $data['review_note'] ?? null))
-            ->successNotificationTitle($approve ? 'Punch approved' : 'Punch rejected');
-
         return $table->modifyQueryUsing(fn ($query) => $query->with(['user', 'reviewer']))->columns([
             TextColumn::make('user.name')->label('Employee')->searchable(),
             TextColumn::make('kind')->label('Punch')->formatStateUsing(fn ($state) => $state === 'in' ? 'Check in' : 'Check out'),
@@ -87,9 +80,19 @@ class PortalPunchResource extends Resource
         ])->filters([SelectFilter::make('state')->label('Status')->options(['pending' => 'Pending', 'approved' => 'Approved', 'rejected' => 'Rejected'])->default('pending')])
             ->checkIfRecordIsSelectableUsing(fn (PortalPunch $record) => $record->state === 'pending' && $record->user_id !== auth('web')->id())
             ->toolbarActions([BulkActionGroup::make([self::bulkReview(true), self::bulkReview(false)])])
-            ->recordActions([ActionGroup::make([ViewAction::make()->schema(self::details(includeReviewNote: true))->modalWidth('3xl'), $review(true), $review(false)])])
+            ->recordActions([ActionGroup::make([ViewAction::make()->schema(self::details(includeReviewNote: true))->modalWidth('3xl'), self::reviewAction(true, fn () => auth('web')->user()), self::reviewAction(false, fn () => auth('web')->user())])])
             ->recordAction('view')->defaultSort('punched_at', 'desc')->defaultKeySort()
             ->paginated([10, 25, 50])->defaultPaginationPageOption(10)->enforcePaginationPageOptions();
+    }
+
+    public static function reviewAction(bool $approve, \Closure $actor): Action
+    {
+        return Action::make($approve ? 'approve' : 'reject')->label($approve ? 'Approve' : 'Reject')
+            ->color($approve ? 'success' : 'danger')->icon($approve ? 'heroicon-o-check' : 'heroicon-o-x-mark')
+            ->visible(fn (PortalPunch $record) => $record->state === 'pending')->modalWidth('3xl')->requiresConfirmation()
+            ->schema([...self::details(), Textarea::make('review_note')->label('Reason')->maxLength(1000)->required(! $approve)])
+            ->action(fn (PortalPunch $record, array $data) => app(PunchApprovalService::class)->decide($record, $actor(), $approve, $data['review_note'] ?? null))
+            ->successNotificationTitle($approve ? 'Punch approved' : 'Punch rejected');
     }
 
     private static function bulkReview(bool $approve): BulkAction

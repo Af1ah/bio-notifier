@@ -7,9 +7,12 @@ use App\Filament\Employee\Pages\Attendance;
 use App\Filament\Employee\Pages\ChangePassword;
 use App\Filament\Employee\Pages\LeaveRequests;
 use App\Filament\Employee\Pages\SalarySlips;
+use App\Filament\Employee\Pages\TeamLeaveRequests;
+use App\Filament\Employee\Pages\TeamPunchRequests;
 use App\Filament\Employee\Widgets\LocationPunch;
 use App\Filament\Employee\Widgets\PortalOverview;
 use App\Filament\Tenant\Pages\OrganisationSettings;
+use App\Filament\Tenant\Resources\Departments\Pages\EditDepartment;
 use App\Filament\Tenant\Resources\EmployeeLeaves\Tables\EmployeeLeavesTable;
 use App\Filament\Tenant\Resources\PortalPunches\Pages\ManagePortalPunches;
 use App\Filament\Tenant\Resources\WorkLocations\Pages\ManageWorkLocations;
@@ -19,6 +22,7 @@ use App\Livewire\Tenant\UserAttendanceCalendar;
 use App\Models\AttendanceDay;
 use App\Models\AttendanceLog;
 use App\Models\Branch;
+use App\Models\Department;
 use App\Models\EmployeeLeave;
 use App\Models\EmployeePortalSetting;
 use App\Models\LeaveType;
@@ -103,6 +107,106 @@ class EmployeePortalTest extends TestCase
         }
         $this->employee->refresh();
         $this->actingAs($this->employee, 'employee');
+    }
+
+    public function test_department_manager_can_review_team_leave_and_punches_but_not_their_own_or_other_departments(): void
+    {
+        $this->enable();
+        Queue::fake();
+        $admin = User::create(['name' => 'Admin', 'pin' => 'admin', 'privilege' => 14,
+            'email' => 'admin@example.test', 'password' => 'Test-password1!', 'is_enabled' => true]);
+        $department = Department::create(['name' => 'Operations']);
+        $otherDepartment = Department::create(['name' => 'Support']);
+        $head = $this->employee;
+        $head->update(['department_id' => $department->id]);
+        $member = User::create(['name' => 'Operations employee', 'pin' => 'operations', 'department_id' => $department->id,
+            'email' => 'operations@example.test', 'password' => 'Test-password1!', 'is_enabled' => true, 'portal_enabled' => true]);
+        $outsider = User::create(['name' => 'Support employee', 'pin' => 'support', 'department_id' => $otherDepartment->id,
+            'email' => 'support@example.test', 'password' => 'Test-password1!', 'is_enabled' => true, 'portal_enabled' => true]);
+
+        $this->actingAs($admin, 'web');
+        Filament::setCurrentPanel(Filament::getPanel('tenant'));
+        Livewire::test(EditDepartment::class, ['record' => $department->id])
+            ->fillForm(['manager_id' => $head->id])->call('save')->assertHasNoFormErrors();
+        $this->assertSame($head->id, $department->fresh()->manager_id);
+        $this->assertFalse($head->canAccessPanel(Filament::getPanel('tenant')));
+        Auth::guard('web')->forgetUser();
+
+        $location = $this->fence();
+        $type = LeaveType::create(['name' => 'Unpaid', 'code' => 'MGT', 'active' => true, 'is_paid' => false]);
+        $leaves = $punches = [];
+        foreach ([$head, $member, $outsider] as $employee) {
+            $this->actingAs($employee, 'employee');
+            $leaves[] = app(EmployeeLeaveService::class)->save(null, [
+                'user_id' => $employee->id, 'leave_type_id' => $type->id,
+                'state' => 'pending', 'duration' => 'full', 'leave_date' => today()->addDay()->toDateString(),
+            ], $employee);
+            $punches[] = app(GeofencedPunchService::class)->record($this->gps($location));
+        }
+
+        [$ownLeave, $teamLeave, $outsideLeave] = $leaves;
+        [$ownPunch, $teamPunch, $outsidePunch] = $punches;
+        $this->actingAs($head, 'employee');
+        Filament::setCurrentPanel(Filament::getPanel('employee'));
+        Livewire::test(TeamLeaveRequests::class)->assertCanSeeTableRecords([$teamLeave])
+            ->assertCanNotSeeTableRecords([$ownLeave, $outsideLeave]);
+        Livewire::test(TeamPunchRequests::class)->assertCanSeeTableRecords([$teamPunch])
+            ->assertCanNotSeeTableRecords([$ownPunch, $outsidePunch])
+            ->mountTableAction('view', $teamPunch)->assertMountedActionModalSee('Captured photo');
+        $this->get($teamPunch->photo_url)->assertOk();
+        $this->get($outsidePunch->photo_url)->assertNotFound();
+
+        foreach ([$ownLeave, $outsideLeave, $ownPunch, $outsidePunch] as $request) {
+            try {
+                $request instanceof EmployeeLeave
+                    ? app(EmployeeLeaveService::class)->decide($request, 'approved', $head)
+                    : app(PunchApprovalService::class)->decide($request, $head, true);
+                $this->fail('A manager reviewed an unassigned or personal request.');
+            } catch (HttpException $exception) {
+                $this->assertSame(403, $exception->getStatusCode());
+            }
+        }
+
+        Filament::setCurrentPanel(Filament::getPanel('employee'));
+        Livewire::test(TeamLeaveRequests::class)->callTableAction('approve', $teamLeave)->assertHasNoActionErrors();
+        Livewire::test(TeamPunchRequests::class)->callTableAction('approve', $teamPunch)->assertHasNoActionErrors();
+        $this->assertSame('approved', $teamLeave->fresh()->state);
+        $this->assertSame($head->id, $teamLeave->fresh()->reviewed_by_user_id);
+        $this->assertSame('approved', $teamPunch->fresh()->state);
+        $this->assertSame($head->id, $teamPunch->fresh()->reviewed_by_user_id);
+
+        $this->actingAs($this->manager->fresh(), 'web');
+        Filament::setCurrentPanel(Filament::getPanel('tenant'));
+        Livewire::test(ManagePortalPunches::class)->assertCanSeeTableRecords([$ownPunch])
+            ->callTableAction('approve', $ownPunch)->assertHasNoActionErrors();
+        $this->assertSame($this->manager->id, $ownPunch->fresh()->reviewed_by_user_id);
+        EmployeeLeavesTable::decide($ownLeave, 'approved');
+        $this->assertSame($this->manager->id, $ownLeave->fresh()->reviewed_by_user_id);
+    }
+
+    public function test_department_manager_assignment_requires_admin_and_removal_revokes_ess_access(): void
+    {
+        $this->enable();
+        $department = Department::create(['name' => 'Operations']);
+        $this->actingAs($this->manager->fresh(), 'web');
+        try {
+            $department->update(['manager_id' => $this->employee->id]);
+            $this->fail('HR assigned a manager.');
+        } catch (HttpException $exception) {
+            $this->assertSame(403, $exception->getStatusCode());
+        }
+
+        Auth::guard('web')->forgetUser();
+        $admin = User::create(['name' => 'Admin', 'pin' => 'admin', 'privilege' => 14,
+            'email' => 'admin@example.test', 'password' => 'Test-password1!', 'is_enabled' => true]);
+        $this->actingAs($admin, 'web');
+        $department->update(['manager_id' => $this->employee->id]);
+        $teamPage = Livewire::test(TeamLeaveRequests::class)->assertOk();
+        $department->update(['manager_id' => null]);
+        Auth::guard('web')->forgetUser();
+
+        $teamPage->call('$refresh')->assertForbidden();
+        Livewire::test(TeamPunchRequests::class)->assertForbidden();
     }
 
     public function test_device_password_bootstrap_and_first_login_gate(): void
@@ -471,6 +575,38 @@ class EmployeePortalTest extends TestCase
         $log->update(['kind' => 'out']);
     }
 
+    public function test_punch_dialog_receipt_and_sixty_second_submission_window(): void
+    {
+        $this->enable();
+        $location = $this->fence();
+        $service = app(GeofencedPunchService::class);
+
+        Carbon::setTestNow(Carbon::parse('2026-11-03 10:00:00', TenantTimezone::get()));
+        try {
+            $first = $this->gps($location);
+            $widget = Livewire::test(LocationPunch::class)
+                ->assertSeeHtml('capture="user"')
+                ->assertSee('Punch request submitted')
+                ->call('punch', $first)
+                ->assertDispatched('portal-punch-submitted')
+                ->assertDispatched('portal-punch-receipt', kind: 'in', time: '03 Nov, 10:00 AM', state: 'pending');
+            $saved = PortalPunch::sole();
+
+            Carbon::setTestNow(Carbon::parse('2026-11-03 10:00:59', TenantTimezone::get()));
+            $widget->call('punch', $this->gps($location, 'out'))
+                ->assertDispatched('portal-punch-rejected', message: 'Wait one minute after your last punch request before submitting another.')
+                ->assertNotDispatched('portal-punch-receipt');
+            $this->assertSame($saved->id, $service->record($first)->id);
+            $this->assertSame(1, PortalPunch::count());
+
+            Carbon::setTestNow(Carbon::parse('2026-11-03 10:01:00', TenantTimezone::get()));
+            $this->assertSame('out', $service->record($this->gps($location, 'out'))->kind);
+            $this->assertSame(2, PortalPunch::count());
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
     public function test_geofence_rejects_outside_inaccurate_stale_or_invalid_location(): void
     {
         $this->enable();
@@ -506,7 +642,7 @@ class EmployeePortalTest extends TestCase
             'latitude' => 12, 'longitude' => 76, 'radius_meters' => 250, 'is_active' => true]);
         $service = app(GeofencedPunchService::class);
         $service->record($this->gps($one));
-        $this->travel(2)->seconds();
+        $this->travel(1)->minutes();
         $log = $service->record($this->gps($two, 'out'));
         $this->travelBack();
         $this->assertSame($branch->id, $log->evidence['branch_id']);
@@ -572,7 +708,8 @@ class EmployeePortalTest extends TestCase
         try {
             $service = app(GeofencedPunchService::class);
             $one = $service->record($this->gps($location));
-            $two = $service->record($this->gps($location, 'out'));
+            $two = $one->replicate()->fill(['request_id' => (string) Str::uuid(), 'kind' => 'out']);
+            $two->save();
             app(PunchApprovalService::class)->decide($one, $this->manager, true);
             try {
                 app(PunchApprovalService::class)->decide($two, $this->manager, true);
@@ -667,7 +804,7 @@ class EmployeePortalTest extends TestCase
         Queue::fake();
         $location = $this->fence();
         $valid = app(GeofencedPunchService::class)->record($this->gps($location));
-        $this->travel(2)->seconds();
+        $this->travel(1)->minutes();
         $missing = app(GeofencedPunchService::class)->record($this->gps($location, 'out'));
         $this->travelBack();
         Storage::disk('local')->delete($missing->photo_path);
@@ -690,7 +827,7 @@ class EmployeePortalTest extends TestCase
         Queue::fake();
         $location = $this->fence();
         $first = app(GeofencedPunchService::class)->record($this->gps($location));
-        $this->travel(2)->seconds();
+        $this->travel(1)->minutes();
         $second = app(GeofencedPunchService::class)->record($this->gps($location, 'out'));
         $this->travelBack();
         $this->actingAs($this->manager, 'web');
@@ -727,7 +864,7 @@ class EmployeePortalTest extends TestCase
         $this->assertSame('approved', $request->fresh()->state);
         $this->assertSame($this->manager->id, $request->fresh()->reviewed_by_user_id);
         $this->actingAs($this->employee, 'employee');
-        $this->travel(2)->seconds();
+        $this->travel(1)->minutes();
         $missing = app(GeofencedPunchService::class)->record($this->gps($this->fence(), 'out'));
         $this->travelBack();
         Storage::disk('local')->delete($missing->photo_path);

@@ -3,7 +3,6 @@
 namespace App\Filament\Tenant\Resources\EmployeeLeaves\Tables;
 
 use App\Models\EmployeeLeave;
-use App\Models\User;
 use App\Services\Leave\EmployeeLeaveService;
 use App\Services\Support\TenantCurrency;
 use Filament\Actions\Action;
@@ -14,8 +13,6 @@ use Filament\Notifications\Notification;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Validation\ValidationException;
 
 class EmployeeLeavesTable
 {
@@ -56,15 +53,7 @@ class EmployeeLeavesTable
     public static function decide(EmployeeLeave $record, string $state): void
     {
         abort_unless(auth('web')->user()?->hasManagementAccess(), 403);
-        DB::transaction(function () use ($record, $state) {
-            // Match the service's employee-before-leave lock order.
-            User::lockForUpdate()->findOrFail($record->user_id);
-            $record = EmployeeLeave::lockForUpdate()->findOrFail($record->id);
-            if ($record->state !== 'pending') {
-                throw ValidationException::withMessages(['state' => 'This request has already been reviewed.']);
-            }
-            app(EmployeeLeaveService::class)->save($record, $record->only(['user_id', 'leave_type_id', 'leave_date', 'duration', 'deduction_override_minor', 'notes']) + ['state' => $state], auth('web')->user());
-        }, 3);
+        app(EmployeeLeaveService::class)->decide($record, $state, auth('web')->user());
         Notification::make()->title($state === 'approved' ? 'Leave approved' : 'Leave rejected')->success()->send();
     }
 }

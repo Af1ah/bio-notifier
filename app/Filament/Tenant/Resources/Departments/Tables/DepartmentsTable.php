@@ -18,6 +18,7 @@ class DepartmentsTable
 
                 TextColumn::make('name')
                     ->searchable(),
+                TextColumn::make('manager.name')->label(__('department-review.manager'))->placeholder('—'),
                 TextColumn::make('branches.name')
                     ->label('Branches')
                     ->badge(),

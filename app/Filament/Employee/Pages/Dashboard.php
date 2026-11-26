@@ -15,6 +15,6 @@ class Dashboard extends \Filament\Pages\Dashboard
 
     public function getWidgets(): array
     {
-        return [PortalOverview::class, LocationPunch::class];
+        return [LocationPunch::class, PortalOverview::class];
     }
 }

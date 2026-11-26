@@ -9,6 +9,7 @@ use App\Models\SalarySlip;
 use App\Models\User;
 use App\Services\Attendance\AttendanceCalculationService;
 use App\Services\Attendance\ShiftAssignmentResolver;
+use App\Services\EmployeePortal\DepartmentReview;
 use App\Services\Payroll\PayrollFreshnessService;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -26,6 +27,32 @@ class EmployeeLeaveService
                 && (int) ($data['user_id'] ?? 0) === $actor->id && ($data['state'] ?? null) === 'pending'
                 && ! filled($data['deduction_override_minor'] ?? null), 403);
         }
+        return $this->persist($leave, $data, $actor, $employeeRequest);
+    }
+
+    public function decide(EmployeeLeave $leave, string $state, User $actor): EmployeeLeave
+    {
+        abort_unless(in_array($state, ['approved', 'rejected'], true), 422);
+
+        return DB::transaction(function () use ($leave, $state, $actor) {
+            $employee = User::employees()->lockForUpdate()->findOrFail($leave->user_id);
+            $actor = $actor->fresh();
+            abort_unless($actor?->is_enabled, 403);
+            if (! $actor->hasManagementAccess()) {
+                DepartmentReview::authorizeDecision($actor, $employee);
+            }
+            $leave = EmployeeLeave::where('user_id', $employee->id)->lockForUpdate()->findOrFail($leave->id);
+            if ($leave->state !== 'pending') {
+                throw ValidationException::withMessages(['state' => __('department-review.reviewed')]);
+            }
+
+            return $this->persist($leave, $leave->only(['user_id', 'leave_type_id', 'leave_date', 'duration', 'deduction_override_minor', 'notes'])
+                + ['state' => $state], $actor, false);
+        }, 3);
+    }
+
+    private function persist(?EmployeeLeave $leave, array $data, User $actor, bool $employeeRequest): EmployeeLeave
+    {
         $v = Validator::make($data, ['user_id' => 'required|integer|exists:users,id', 'leave_type_id' => 'required|integer|exists:leave_types,id',
             'leave_date' => 'required|date', 'duration' => 'required|in:full,half', 'state' => 'required|in:pending,approved,rejected,cancelled',
             'deduction_override_minor' => 'nullable|integer|min:0', 'notes' => 'nullable|string|max:1000'])->validate();

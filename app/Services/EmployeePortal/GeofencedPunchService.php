@@ -39,6 +39,12 @@ final class GeofencedPunchService
                 if ($existing) {
                     return $existing;
                 }
+                $submittedAt = now();
+                $lastSubmission = PortalPunch::where('user_id', $employee->id)->latest('id')->first(['created_at']);
+                if ($lastSubmission?->created_at?->addMinute()->isAfter($submittedAt)) {
+                    throw ValidationException::withMessages(['punch' => __('employee-punch.duplicate')]);
+                }
+
                 $setting = EmployeePortalSetting::query()->whereKey(1)->sharedLock()->first();
                 if (! $setting) {
                     throw ValidationException::withMessages(['location' => 'Attendance settings are unavailable. Contact HR or Admin.']);
@@ -89,7 +95,8 @@ final class GeofencedPunchService
                 try {
                     return PortalPunch::create([
                         'user_id' => $employee->id, 'work_location_id' => $location?->id, 'request_id' => $data['request_id'],
-                        'kind' => $data['kind'], 'punched_at' => now(TenantTimezone::get()), 'photo_path' => $path, 'state' => 'pending',
+                        'kind' => $data['kind'], 'punched_at' => $submittedAt->copy()->setTimezone(TenantTimezone::get()),
+                        'created_at' => $submittedAt, 'photo_path' => $path, 'state' => 'pending',
                         'evidence' => ['source' => 'employee_portal', 'geofencing_enabled' => (bool) $setting->geofencing_enabled,
                             'location_id' => $location?->id, 'location_name' => $location?->name,
                             'branch_id' => $location?->branch_id, 'pin' => $employee->pin,
