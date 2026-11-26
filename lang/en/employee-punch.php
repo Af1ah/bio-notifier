@@ -1,13 +1,20 @@
 <?php
 
 return [
-    'heading' => 'Check in or out',
+    'choosePunch' => 'Check-in / Check-out',
+    'noSite' => 'No site selected',
+    'autoGps' => 'Automatic GPS',
+    'note' => 'Note',
+    'optional' => '(optional)',
+    'notePlaceholder' => 'e.g., Morning site inspection',
+    'continueCamera' => 'Continue to camera',
+    'back' => 'Back',
     'location' => 'Work location (optional)',
     'selectLocation' => 'Select a work location',
     'radius' => 'If selected, you must be within its allowed radius.',
     'checkIn' => 'Check in',
     'checkOut' => 'Check out',
-    'requirements' => 'A photo and location are required. HR or Admin will review your punch.',
+    'requirements' => 'A photo and GPS location are required. Your request will be reviewed.',
     'cameraDialog' => 'Take a punch photo',
     'checkInPhoto' => 'Check-in photo',
     'checkOutPhoto' => 'Check-out photo',

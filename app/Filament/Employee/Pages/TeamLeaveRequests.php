@@ -10,6 +10,7 @@ use BackedEnum;
 use Filament\Actions\Action;
 use Filament\Actions\ActionGroup;
 use Filament\Support\Icons\Heroicon;
+use Filament\Tables\Columns\Layout\Split;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
@@ -32,9 +33,10 @@ class TeamLeaveRequests extends DepartmentReviewPage
     {
         return $table->query(fn () => EmployeeLeave::whereIn('user_id', DepartmentReview::employees(PortalAccess::employee())->select('users.id'))
             ->with(['user', 'leaveType']))
-            ->columns([
+            ->contentGrid(['default' => 1])
+            ->columns([Split::make([
                 TextColumn::make('user.name')->label(__('department-review.employee'))->searchable(),
-                TextColumn::make('leave_date')->label(__('department-review.date'))->date('d M Y')->sortable(),
+                TextColumn::make('leave_date')->label(__('department-review.date'))->date('d M Y')->extraAttributes(['class' => 'portal-number'])->sortable(),
                 TextColumn::make('leaveType.name')->label(__('department-review.leave_type')),
                 TextColumn::make('duration')->label(__('department-review.duration'))->formatStateUsing(fn (string $state) => __('department-review.duration_'.$state)),
                 TextColumn::make('state')->label(__('department-review.status'))->badge()
@@ -42,7 +44,7 @@ class TeamLeaveRequests extends DepartmentReviewPage
                     ->color(fn (string $state) => match ($state) {
                         'approved' => 'success', 'rejected' => 'danger', 'pending' => 'warning', default => 'gray',
                     }),
-            ])
+            ])])
             ->filters([SelectFilter::make('state')->label(__('department-review.status'))->options([
                 'pending' => __('department-review.state_pending'),
                 'approved' => __('department-review.state_approved'),

@@ -5,6 +5,7 @@ namespace App\Providers\Filament;
 use App\Filament\Employee\Auth\Login;
 use App\Filament\Employee\Pages;
 use App\Filament\Support\PanelPwa;
+use App\Filament\Support\PanelTheme;
 use App\Filament\Tenant\TenantPanel;
 use App\Http\Middleware\InitializeTenancyByShortname;
 use App\Http\Middleware\RequireEmployeePasswordChange;
@@ -15,7 +16,8 @@ use Filament\Http\Middleware\DisableBladeIconComponents;
 use Filament\Http\Middleware\DispatchServingFilamentEvent;
 use Filament\Panel;
 use Filament\PanelProvider;
-use Filament\Support\Colors\Color;
+use Filament\View\PanelsRenderHook;
+use Illuminate\Support\HtmlString;
 use Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse;
 use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
@@ -29,7 +31,9 @@ class EmployeePanelProvider extends PanelProvider
     {
         $panel = TenantPanel::make()->id('employee')->path('{tenant}/ess')->authGuard('employee')->login(Login::class)
             ->brandName(fn () => tenant()?->name ?? 'BIO-Notifier')
-            ->favicon(asset('icon-192-v3.png'))->colors(['primary' => Color::Amber])
+            ->favicon(asset('icon-192-v3.png'))->colors(['primary' => PanelTheme::PRIMARY])
+            ->renderHook(PanelsRenderHook::HEAD_END, fn () => new HtmlString('<link rel="stylesheet" href="'.e(asset('css/portal-ui.css')).'">'))
+            ->renderHook(PanelsRenderHook::BODY_END, fn () => view('filament.employee.mobile-navigation'))
             ->pages([Pages\Dashboard::class, Pages\Calendar::class, Pages\Attendance::class, Pages\LeaveRequests::class, Pages\SalarySlips::class,
                 Pages\TeamLeaveRequests::class, Pages\TeamPunchRequests::class, Pages\ChangePassword::class])
             ->userMenuItems([

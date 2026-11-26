@@ -1,3 +1,3 @@
 <x-filament-panels::page>
-    {{ $this->table }}
+    <div class="portal-data-grid">{{ $this->table }}</div>
 </x-filament-panels::page>

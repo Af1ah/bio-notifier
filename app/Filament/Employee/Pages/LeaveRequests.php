@@ -18,6 +18,7 @@ use Filament\Forms\Components\Textarea;
 use Filament\Notifications\Notification;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Schema;
+use Filament\Tables\Columns\Layout\Split;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
@@ -89,8 +90,9 @@ class LeaveRequests extends PortalPage implements HasTable
     public function table(Table $table): Table
     {
         return $table->query(fn () => EmployeeLeave::where('user_id', PortalAccess::employee()->id)->with('leaveType'))
-            ->columns([
-                TextColumn::make('leave_date')->label('Date')->date('d M Y')->sortable(),
+            ->contentGrid(['default' => 1])
+            ->columns([Split::make([
+                TextColumn::make('leave_date')->label('Date')->date('d M Y')->extraAttributes(['class' => 'portal-number'])->sortable(),
                 TextColumn::make('leaveType.name')->label('Leave')->wrap(),
                 TextColumn::make('state')->label('Status')->formatStateUsing(fn ($state) => ucfirst($state))
                     ->color(fn ($state) => match ($state) {
@@ -98,7 +100,7 @@ class LeaveRequests extends PortalPage implements HasTable
                     }),
                 TextColumn::make('duration')->formatStateUsing(fn ($state) => ucfirst($state).' day')->visibleFrom('sm'),
                 TextColumn::make('notes')->label('Reason')->wrap()->visibleFrom('md'),
-            ])->filters([SelectFilter::make('state')->label('Status')->options(['pending' => 'Pending', 'approved' => 'Approved', 'rejected' => 'Rejected', 'cancelled' => 'Cancelled'])])
+            ])])->filters([SelectFilter::make('state')->label('Status')->options(['pending' => 'Pending', 'approved' => 'Approved', 'rejected' => 'Rejected', 'cancelled' => 'Cancelled'])])
             ->defaultSort('leave_date', 'desc')->defaultKeySort()->paginated([10, 25, 50])->defaultPaginationPageOption(10)->enforcePaginationPageOptions()
             ->emptyStateHeading('No leave requests')->emptyStateDescription('Use Request leave to send a request.');
     }

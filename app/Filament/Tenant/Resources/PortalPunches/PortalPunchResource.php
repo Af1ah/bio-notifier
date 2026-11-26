@@ -53,6 +53,7 @@ class PortalPunchResource extends Resource
                 ])->columns(2)->columnSpan(['default' => 1, 'md' => 2]),
             ])->columnSpanFull(),
             Section::make('Location')->compact()->columns(2)->schema([
+                TextEntry::make('evidence.note')->label(__('employee-punch.note'))->visible(fn (PortalPunch $record) => filled($record->evidence['note'] ?? null))->columnSpanFull(),
                 TextEntry::make('evidence.location_name')->label('Work location')->placeholder('Not required')->columnSpanFull(),
                 TextEntry::make('evidence.distance_meters')->label('Distance from pin')->formatStateUsing(fn ($state) => $state === null ? null : number_format((float) $state, 2))->suffix(' m')->placeholder('—'),
                 TextEntry::make('evidence.accuracy_meters')->label('GPS accuracy')->formatStateUsing(fn ($state) => $state === null ? null : number_format((float) $state, 2))->suffix(' m')->placeholder('—'),

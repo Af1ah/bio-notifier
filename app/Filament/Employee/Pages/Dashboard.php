@@ -13,6 +13,11 @@ class Dashboard extends \Filament\Pages\Dashboard
         PortalAccess::employee();
     }
 
+    public function getHeading(): string
+    {
+        return '';
+    }
+
     public function getWidgets(): array
     {
         return [LocationPunch::class, PortalOverview::class];

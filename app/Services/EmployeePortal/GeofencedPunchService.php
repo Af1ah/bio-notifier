@@ -24,6 +24,7 @@ final class GeofencedPunchService
         $data = Validator::make($input, [
             'kind' => 'required|in:in,out', 'request_id' => 'required|uuid',
             'photo' => 'required|string|max:1048600',
+            'note' => 'nullable|string|max:500',
         ])->validate();
         $key = 'portal-punch:'.tenant('id').':'.$employee->id;
         if (RateLimiter::tooManyAttempts($key, 10)) {
@@ -99,6 +100,7 @@ final class GeofencedPunchService
                         'created_at' => $submittedAt, 'photo_path' => $path, 'state' => 'pending',
                         'evidence' => ['source' => 'employee_portal', 'geofencing_enabled' => (bool) $setting->geofencing_enabled,
                             'location_id' => $location?->id, 'location_name' => $location?->name,
+                            'note' => filled($data['note'] ?? null) ? trim($data['note']) : null,
                             'branch_id' => $location?->branch_id, 'pin' => $employee->pin,
                             'latitude' => isset($gps['latitude']) ? (float) $gps['latitude'] : null,
                             'longitude' => isset($gps['longitude']) ? (float) $gps['longitude'] : null,

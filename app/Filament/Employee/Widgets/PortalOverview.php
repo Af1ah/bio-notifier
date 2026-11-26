@@ -38,6 +38,37 @@ class PortalOverview extends StatsOverviewWidget
         return $this->getCachedStats();
     }
 
+    public function recentActivity(): array
+    {
+        $employee = PortalAccess::employee();
+
+        $devicePunches = $employee->attendanceLogs()->whereNotNull('device_id')
+            ->latest('punched_at')->latest('id')->limit(10)->get(['id', 'punched_at', 'status', 'raw_data'])
+            ->map(fn (AttendanceLog $log): array => [
+                'at' => $log->punched_at,
+                'title' => match ($log->attendance_status) {
+                    0 => __('portal-ui.check_in'),
+                    1 => __('portal-ui.check_out'),
+                    255 => __('portal-ui.punch'),
+                    default => $log->status_label,
+                },
+                'source' => __('portal-ui.device'),
+                'state' => null,
+            ]);
+
+        // The original manual request also represents an approved portal punch.
+        $manualPunches = PortalPunch::where('user_id', $employee->id)
+            ->latest('punched_at')->latest('id')->limit(10)->get(['id', 'kind', 'punched_at', 'state'])
+            ->map(fn (PortalPunch $punch): array => [
+                'at' => $punch->punched_at,
+                'title' => __($punch->kind === 'in' ? 'portal-ui.check_in' : 'portal-ui.check_out'),
+                'source' => __('portal-ui.manual_punch'),
+                'state' => $punch->state,
+            ]);
+
+        return $devicePunches->concat($manualPunches)->sortByDesc('at')->take(10)->values()->all();
+    }
+
     protected function getStats(): array
     {
         $employee = PortalAccess::employee();

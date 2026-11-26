@@ -32,6 +32,14 @@
 
         $weeks[] = $week;
     }
+    $tileCalendar = filament()->getCurrentPanel()?->getId() === 'employee';
+    $calendarTag = $tileCalendar ? 'div' : 'table';
+    $headTag = $tileCalendar ? 'div' : 'thead';
+    $bodyTag = $tileCalendar ? 'div' : 'tbody';
+    $rowTag = $tileCalendar ? 'div' : 'tr';
+    $headingTag = $tileCalendar ? 'span' : 'th';
+    $emptyTag = $tileCalendar ? 'span' : 'td';
+    $dayTag = $tileCalendar ? 'button' : 'td';
 @endphp
 
 <div x-data="{ details: null }" class="user-attendance-calendar">
@@ -46,9 +54,9 @@
     .user-attendance-calendar__empty-day { border-radius: .5rem; background: rgb(255 255 255 / .05); }
     .user-attendance-calendar__day { border: 1px solid rgb(0 0 0 / .08); border-radius: .5rem; color: rgb(17 24 39); cursor: pointer; text-align: center; transition: filter .15s ease, transform .15s ease; }
     .user-attendance-calendar__day:hover { filter: brightness(.96); transform: translateY(-1px); }
-    .user-attendance-calendar__date { font-weight: 700; line-height: 1.1; }
-    .user-attendance-calendar__status { margin-top: .25rem; font-size: .75rem; line-height: 1.1; }
-    .user-attendance-calendar__worked { margin-top: .2rem; color: rgb(55 65 81); font-size: .6875rem; line-height: 1.1; }
+    .user-attendance-calendar__date { display: block; font-weight: 700; line-height: 1.1; }
+    .user-attendance-calendar__status { display: block; margin-top: .25rem; font-size: .75rem; line-height: 1.1; }
+    .user-attendance-calendar__worked { display: block; margin-top: .2rem; color: rgb(55 65 81); font-size: .6875rem; line-height: 1.1; }
     @media (max-width: 480px) {
         .user-attendance-calendar__table td { height: 3.5rem; padding: .125rem; }
         .user-attendance-calendar__status { display: none; }
@@ -70,18 +78,18 @@
             <x-filament::icon-button icon="heroicon-m-chevron-right" wire:click="nextMonth" label="Next month" />
         </div>
 
-        <table class="user-attendance-calendar__table">
-            <thead><tr>
+        <{{ $calendarTag }} class="{{ $tileCalendar ? 'user-attendance-calendar__tiles' : 'user-attendance-calendar__table' }}">
+            <{{ $headTag }}><{{ $rowTag }} class="user-attendance-calendar__week">
                 @foreach (['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as $name)
-                    <th scope="col">{{ $name }}</th>
+                    <{{ $headingTag }} @unless ($tileCalendar) scope="col" @endunless>{{ $name }}</{{ $headingTag }}>
                 @endforeach
-            </tr></thead>
-            <tbody>
+            </{{ $rowTag }}></{{ $headTag }}>
+            <{{ $bodyTag }}>
                 @foreach ($weeks as $week)
-                    <tr>
+                    <{{ $rowTag }} class="user-attendance-calendar__week">
                         @foreach ($week as $number)
                             @if (! $number)
-                                <td class="user-attendance-calendar__empty-day"></td>
+                                <{{ $emptyTag }} class="user-attendance-calendar__empty-day"></{{ $emptyTag }}>
                             @else
                                 @php
                                     $key = $month->format('Y-m-').str_pad($number, 2, '0', STR_PAD_LEFT);
@@ -111,19 +119,19 @@
                                         'logs' => $dayLogs->map(fn ($log) => ['time' => $log->punched_at->format('h:i A'), 'status' => $log->status_label])->values()->all(),
                                     ];
                                 @endphp
-                                <td role="button" tabindex="0" aria-label="{{ $payload['date'] }}: {{ $label }}, {{ $payload['worked'] }}" @keydown.enter.prevent="$el.click()" @keydown.space.prevent="$el.click()" class="user-attendance-calendar__day" style="background-color: {{ $colors }}" @click='details = @json($payload); $dispatch("open-modal", { id: "attendance-day-detail" })'>
-                                    <div class="user-attendance-calendar__date">{{ $number }}</div>
-                                    <div class="user-attendance-calendar__status {{ $holidayNames || $status === 'holiday' ? 'user-attendance-calendar__status--holiday' : '' }}">
+                                <{{ $dayTag }} @if ($tileCalendar) type="button" @else role="button" tabindex="0" @endif aria-label="{{ $payload['date'] }}: {{ $label }}, {{ $payload['worked'] }}" @unless ($tileCalendar) @keydown.enter.prevent="$el.click()" @keydown.space.prevent="$el.click()" @endunless class="user-attendance-calendar__day" style="background-color: {{ $colors }}" @click='details = @json($payload); $dispatch("open-modal", { id: "attendance-day-detail" })'>
+                                    <span class="user-attendance-calendar__date">{{ $number }}</span>
+                                    <span class="user-attendance-calendar__status {{ $holidayNames || $status === 'holiday' ? 'user-attendance-calendar__status--holiday' : '' }}">
                                         {{ $label }}@if ($holidayNames && $status !== 'holiday') · Holiday @endif
-                                    </div>
-                                    @if ($result)<div class="user-attendance-calendar__worked">{{ $payload['worked'] }}</div>@endif
-                                </td>
+                                    </span>
+                                    @if ($result)<span class="user-attendance-calendar__worked">{{ $payload['worked'] }}</span>@endif
+                                </{{ $dayTag }}>
                             @endif
                         @endforeach
-                    </tr>
+                    </{{ $rowTag }}>
                 @endforeach
-            </tbody>
-        </table>
+            </{{ $bodyTag }}>
+        </{{ $calendarTag }}>
     </div>
 
     <x-filament::modal id="attendance-day-detail" width="lg">

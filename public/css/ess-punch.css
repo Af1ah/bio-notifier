@@ -42,21 +42,12 @@
 }
 
 .ess-punch__hint,
-.ess-punch__detail,
 .ess-punch__error {
     font-size: .875rem;
     line-height: 1.5;
 }
 
 .ess-punch__hint { margin-top: .625rem; color: var(--ess-muted); }
-.ess-punch__detail { color: var(--ess-ink); overflow-wrap: anywhere; }
-
-.ess-punch__last {
-    margin-top: 1rem;
-    padding-top: .625rem;
-    border-top: 1px solid var(--ess-line);
-}
-
 .ess-punch__sheet {
     box-sizing: border-box;
     margin: auto;
@@ -144,4 +135,62 @@
         border-bottom: 0;
         border-radius: 1.5rem 1.5rem 0 0;
     }
+}
+
+.ess-punch__sheet::backdrop { backdrop-filter: blur(3px); }
+.ess-punch__setup { display: grid; gap: .875rem; margin-top: 1rem; }
+.ess-punch__direction {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: .25rem;
+    padding: .25rem;
+    border: 1px solid var(--ess-line);
+    border-radius: 1rem;
+}
+.ess-punch__direction button {
+    min-height: 2.75rem;
+    border-radius: .75rem;
+    color: var(--ess-muted);
+    font-size: .9rem;
+    font-weight: 650;
+    cursor: pointer;
+}
+.ess-punch__direction button[aria-pressed="true"] {
+    background: color-mix(in oklab, var(--portal-accent) 27%, var(--ess-surface));
+    color: var(--ess-ink);
+}
+.ess-punch__sites { min-width: 0; }
+.ess-punch__sites legend,
+.ess-punch__note { font-size: .875rem; font-weight: 650; }
+.ess-punch__site-list { display: grid; gap: .375rem; max-height: 8.5rem; overflow: auto; margin-top: .5rem; }
+.ess-punch__site {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .75rem;
+    min-height: 2.75rem;
+    padding: .55rem .75rem;
+    border: 1px solid var(--ess-line);
+    border-radius: .875rem;
+    cursor: pointer;
+    font-size: .875rem;
+}
+.ess-punch__site:has(input:checked) {
+    background: color-mix(in oklab, var(--portal-accent) 17%, var(--ess-surface));
+    border-color: color-mix(in oklab, var(--portal-accent) 40%, var(--ess-line));
+}
+.ess-punch__site small { display: block; color: var(--ess-muted); font-weight: 400; }
+.ess-punch__site input { flex: none; accent-color: var(--portal-accent); }
+.ess-punch__note span { color: var(--ess-muted); font-weight: 400; }
+.ess-punch__note textarea {
+    display: block;
+    width: 100%;
+    margin-top: .375rem;
+    padding: .55rem .75rem;
+    border: 1px solid var(--ess-line);
+    border-radius: .875rem;
+    background: color-mix(in oklab, var(--ess-ink) 5%, var(--ess-surface));
+    color: var(--ess-ink);
+    font-weight: 400;
+    resize: vertical;
 }

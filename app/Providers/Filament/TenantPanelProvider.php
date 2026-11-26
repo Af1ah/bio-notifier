@@ -3,6 +3,7 @@
 namespace App\Providers\Filament;
 
 use App\Filament\Support\PanelPwa;
+use App\Filament\Support\PanelTheme;
 use App\Filament\Tenant\Pages\OrganisationSettings;
 use App\Filament\Tenant\TenantPanel;
 use App\Http\Controllers\ConnectOrganisationGoogleDrive;
@@ -18,7 +19,8 @@ use Filament\Navigation\NavigationGroup;
 use Filament\Pages\Dashboard;
 use Filament\Panel;
 use Filament\PanelProvider;
-use Filament\Support\Colors\Color;
+use Filament\View\PanelsRenderHook;
+use Illuminate\Support\HtmlString;
 use Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse;
 use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
@@ -66,8 +68,9 @@ class TenantPanelProvider extends PanelProvider
             ->brandName(fn () => tenant()?->name ?? 'BIO-Notifier')
             ->favicon(asset('icon-192-v3.png'))
             ->colors([
-                'primary' => Color::Amber,
+                'primary' => PanelTheme::PRIMARY,
             ])
+            ->renderHook(PanelsRenderHook::HEAD_END, fn () => new HtmlString('<link rel="stylesheet" href="'.e(asset('css/portal-ui.css')).'">'))
             ->discoverResources(in: app_path('Filament/Tenant/Resources'), for: 'App\Filament\Tenant\Resources')
             ->discoverPages(in: app_path('Filament/Tenant/Pages'), for: 'App\Filament\Tenant\Pages')
             ->pages([

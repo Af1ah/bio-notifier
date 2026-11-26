@@ -495,7 +495,8 @@ class EmployeePortalTest extends TestCase
         $page->mountTableAction('view', $slips['reviewed'])->assertActionMounted();
         $page->unmountAction();
         $this->assertSame('reviewed', $slips['approved']->display_status);
-        $this->get('http://localhost/portal/ess/salary-slips')->assertOk();
+        $this->get('http://localhost/portal/ess/salary-slips')->assertOk()->assertDontSeeHtml('<table')
+            ->assertSee('Latest paid payslip')->assertSee('INR 1,234.56')->assertSee('₹1,234.56');
     }
 
     public function test_salary_month_defaults_to_all_and_keeps_employee_scope(): void
@@ -923,21 +924,50 @@ class EmployeePortalTest extends TestCase
         $this->assertSame(1, AttendanceLog::count());
     }
 
+    public function test_dashboard_activity_shows_only_ten_latest_own_device_and_manual_punches(): void
+    {
+        $this->enable();
+        $now = now(TenantTimezone::get());
+        $manual = PortalPunch::create([
+            'user_id' => $this->employee->id, 'request_id' => (string) Str::uuid(), 'kind' => 'out',
+            'punched_at' => $now, 'photo_path' => 'fixture.jpg', 'state' => 'approved', 'evidence' => [],
+        ]);
+
+        AttendanceLog::withoutEvents(function () use ($now, $manual) {
+            $device = \App\Models\Device::create(['name' => 'Activity fixture', 'serial_number' => 'ESS-ACTIVITY']);
+            foreach (range(1, 11) as $minutes) {
+                AttendanceLog::create(['device_id' => $device->id, 'pin' => $this->employee->pin,
+                    'punched_at' => $now->copy()->subMinutes($minutes), 'status' => 0, 'verify_type' => 1]);
+            }
+            AttendanceLog::create(['device_id' => $device->id, 'pin' => 'other-person',
+                'punched_at' => $now, 'status' => 0, 'verify_type' => 1]);
+            AttendanceLog::create(['portal_user_id' => $this->employee->id, 'portal_request_id' => $manual->request_id,
+                'pin' => $this->employee->pin, 'punched_at' => $manual->punched_at, 'status' => 1, 'verify_type' => 254]);
+        });
+
+        $widget = Livewire::test(PortalOverview::class)->assertSee('Recent activity')->assertDontSee('See all');
+        $activity = $widget->instance()->recentActivity();
+        $this->assertCount(10, $activity);
+        $this->assertSame('Manual punch', $activity[0]['source']);
+        $this->assertSame('approved', $activity[0]['state']);
+        $this->assertSame(array_fill(0, 9, 'Device'), array_column(array_slice($activity, 1), 'source'));
+        $this->assertSame($now->copy()->subMinutes(9)->toDateTimeString(), $activity[9]['at']->toDateTimeString());
+    }
+
     public function test_optional_site_starts_empty_and_punch_records_gps_without_a_site(): void
     {
         $this->enable();
         Queue::fake();
         $location = $this->fence();
         $data = $this->gps($location);
-        $widget = Livewire::test(LocationPunch::class)->assertSet('data.location_id', null)
-            ->assertSee('Work location (optional)')->assertSee('Check in');
-        $select = $widget->instance()->form->getComponent('location_id');
-        $this->assertSame('Office', $select->getOptions()[$location->id]);
-        $this->assertSame('Office', $select->getSearchResults('Off')[$location->id]);
+        Livewire::test(LocationPunch::class)->assertSee('Work location (optional)')
+            ->assertSee('No site selected')->assertSee('Office')->assertSee('Continue to camera');
+        $data['note'] = 'Morning site inspection';
         unset($data['location_id']);
         $data['latitude'] = 40.7128;
         $request = app(GeofencedPunchService::class)->record($data);
         $this->assertNull($request->work_location_id);
+        $this->assertSame('Morning site inspection', $request->evidence['note']);
         $this->assertEquals(40.7128, $request->evidence['latitude']);
         $this->assertSame('pending', $request->state);
     }
@@ -962,7 +992,7 @@ class EmployeePortalTest extends TestCase
     {
         $this->enable();
         EmployeePortalSetting::whereKey(1)->update(['geofencing_enabled' => true]);
-        Livewire::test(LocationPunch::class)->assertSet('data.location_id', null)
+        Livewire::test(LocationPunch::class)->assertSee('Manual punch')
             ->assertSee('Check in')->assertSee('Work location (optional)')
             ->assertDontSee('needs to add a work location');
     }

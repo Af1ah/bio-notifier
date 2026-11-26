@@ -6,8 +6,11 @@ use App\Filament\Employee\Actions\RequestCorrectionAction;
 use App\Models\AttendanceDay;
 use App\Services\Attendance\AttendanceDayDisplay;
 use App\Services\EmployeePortal\PortalAccess;
+use Filament\Actions\Action;
 use Filament\Actions\ActionGroup;
+use Filament\Support\Icons\Heroicon;
 use Filament\Forms\Components\DatePicker;
+use Filament\Tables\Columns\Layout\Split;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
@@ -28,21 +31,26 @@ class Attendance extends PortalPage implements HasTable
 
     protected function getHeaderActions(): array
     {
-        return [RequestCorrectionAction::make()];
+        return [
+            Action::make('manualPunch')->label(__('portal-ui.manual_punch'))->icon(Heroicon::OutlinedCamera)
+                ->url(fn () => Dashboard::getUrl(panel: 'employee').'#manual-punch'),
+            RequestCorrectionAction::make()->color('gray'),
+        ];
     }
 
     public function table(Table $table): Table
     {
         return $table->query(fn () => AttendanceDay::where('user_id', PortalAccess::employee()->id)->whereNotIn('status', ['off', 'holiday'])->with('approvals'))
-            ->columns([
-                TextColumn::make('work_date')->label('Date')->date('d M Y')->sortable(),
+            ->contentGrid(['default' => 1])
+            ->columns([Split::make([
+                TextColumn::make('work_date')->label('Date')->date('d M Y')->weight('bold')->extraAttributes(['class' => 'portal-number']),
                 TextColumn::make('status')->label('Attendance')->formatStateUsing(fn (AttendanceDay $record) => AttendanceDayDisplay::forDay($record)['label'])
                     ->color(fn (AttendanceDay $record) => match (AttendanceDayDisplay::forDay($record)['status']) {
                         'present' => 'success', 'half_day' => 'warning', 'absent' => 'danger', default => 'gray'
                     }),
-                TextColumn::make('worked')->label('Worked')->state(fn (AttendanceDay $record) => AttendanceDayDisplay::forDay($record)['clock'].'h'),
+                TextColumn::make('worked')->label('Worked')->extraAttributes(['class' => 'portal-number'])->state(fn (AttendanceDay $record) => AttendanceDayDisplay::forDay($record)['clock'].'h'),
                 TextColumn::make('approvals.state')->label('Review')->listWithLineBreaks()->visibleFrom('md'),
-            ])->filters([
+            ])])->filters([
                 Filter::make('date')->schema([
                     DatePicker::make('from')->label('From'),
                     DatePicker::make('to')->label('To')->afterOrEqual('from'),

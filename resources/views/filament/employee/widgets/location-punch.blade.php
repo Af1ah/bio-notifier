@@ -1,18 +1,23 @@
 <x-filament-widgets::widget>
     <link rel="stylesheet" href="{{ asset('css/ess-punch.css') }}">
-    <x-filament::section :heading="__('employee-punch.heading')">
-        <div class="ess-punch" x-data="{
+    <div class="portal-stack" id="manual-punch">
+        <div class="ess-punch portal-stack" x-data="{
             labels: @js(__('employee-punch')),
-            location: $wire.$entangle('data.location_id'),
+            location: '', note: '', step: 'setup',
             busy: false, starting: false, error: '', request: null,
             nativeCamera: false, ready: false, stream: null, kind: null, receipt: null,
-            openCamera(kind) {
+            openPunch(kind = 'in') {
                 if (this.busy || this.starting) return;
                 this.kind = kind;
+                this.step = 'setup';
                 this.error = '';
                 this.nativeCamera = window.matchMedia('(pointer: coarse)').matches;
                 this.$refs.cameraDialog.showModal();
-                if (!this.nativeCamera) this.startPreview();
+            },
+            continueToCamera() {
+                this.step = 'camera';
+                if (this.nativeCamera) this.capture();
+                else this.$nextTick(() => this.startPreview());
             },
             async startPreview() {
                 if (this.starting) return;
@@ -96,8 +101,8 @@
                         this.request = { kind: this.kind, id: crypto.randomUUID() };
                     }
                     const gps = { latitude: position.coords.latitude, longitude: position.coords.longitude, accuracy: position.coords.accuracy, captured_at: position.timestamp };
-                    if ($wire.geofenceEnabled && this.location !== null && this.location !== '') gps.location_id = Number(this.location);
-                    await $wire.punch({ kind: this.kind, request_id: this.request.id, ...gps, photo });
+                    if ($wire.geofenceEnabled && this.location !== '') gps.location_id = Number(this.location);
+                    await $wire.punch({ kind: this.kind, request_id: this.request.id, ...gps, photo, note: this.note });
                 } catch (error) {
                     this.error = error.code === 1
                         ? this.labels.locationPermission
@@ -112,55 +117,114 @@
                 if (!this.$refs.cameraDialog.open) return;
                 this.receipt = detail;
                 this.request = null;
+                this.location = '';
+                this.note = '';
                 this.stopPreview();
                 this.$refs.cameraDialog.close();
                 this.$refs.successDialog.showModal();
             },
             destroy() { this.stopPreview(); }
         }"
+        x-on:ess-open-manual-punch.window="openPunch()"
         x-on:portal-punch-receipt.window="showReceipt($event.detail)"
         x-on:portal-punch-rejected.window="if ($refs.cameraDialog.open) { error = $event.detail.message; request = null }"
         x-on:pagehide.window="stopPreview()"
         x-on:visibilitychange.document="if (document.hidden) stopPreview()">
-            @if ($this->geofenceEnabled)
-                <div class="ess-punch__location">
-                    {{ $this->form }}
-                    <p class="ess-punch__hint">{{ __('employee-punch.radius') }}</p>
+            <div class="portal-row">
+                <div>
+                    <p class="portal-kicker portal-number">{{ $today->translatedFormat('D, d M Y') }}</p>
+                    <h1 class="portal-title">{{ $employee->name }}</h1>
                 </div>
-            @endif
-
-            <div class="ess-punch__choices">
-                <x-filament::button type="button" class="ess-punch__touch" :icon="\Filament\Support\Icons\Heroicon::OutlinedArrowRightEndOnRectangle" x-on:click="openCamera('in')">
-                    {{ __('employee-punch.checkIn') }}
-                </x-filament::button>
-                <x-filament::button type="button" class="ess-punch__touch" color="gray" :icon="\Filament\Support\Icons\Heroicon::OutlinedArrowLeftStartOnRectangle" x-on:click="openCamera('out')">
-                    {{ __('employee-punch.checkOut') }}
-                </x-filament::button>
             </div>
 
-            <p class="ess-punch__hint">{{ __('employee-punch.requirements') }}</p>
+            <x-portal-ui.card variant="hero" class="portal-stack">
+                <div class="portal-row">
+                    <div class="portal-clock" x-data="{
+                        clock: @js($today->format('h:i A')), timer: null,
+                        init() {
+                            const format = new Intl.DateTimeFormat('en', { timeZone: @js($timezone), hour: '2-digit', minute: '2-digit', hour12: true });
+                            const tick = () => { this.clock = format.format(new Date()) };
+                            tick();
+                            this.timer = setInterval(tick, 1000);
+                        },
+                        destroy() { clearInterval(this.timer) }
+                    }" x-text="clock">{{ $today->format('h:i A') }}</div>
+                </div>
+
+                <dl class="portal-metrics portal-metrics--ruled">
+                    <x-portal-ui.metric :label="__('portal-ui.check_in')" :value="$firstIn" />
+                    <x-portal-ui.metric :label="__('portal-ui.check_out')" :value="$lastOut" />
+                    <x-portal-ui.metric :label="__('portal-ui.logged')" :value="$logged" />
+                </dl>
+
+                <div class="portal-punch-actions">
+                    <x-portal-ui.button variant="primary" class="ess-punch__touch" :icon="\Filament\Support\Icons\Heroicon::OutlinedCamera" x-on:click="openPunch()">
+                        {{ __('portal-ui.manual_punch') }}
+                    </x-portal-ui.button>
+                    <x-portal-ui.button variant="icon" :href="\App\Filament\Employee\Pages\Calendar::getUrl(panel: 'employee')"
+                        :icon="\Filament\Support\Icons\Heroicon::OutlinedCalendarDays" :aria-label="__('portal-ui.calendar')" wire:navigate />
+                </div>
+            </x-portal-ui.card>
 
             <dialog x-ref="cameraDialog" wire:ignore.self aria-label="{{ __('employee-punch.cameraDialog') }}"
                 x-on:close="stopPreview()" x-on:cancel="if (busy) $event.preventDefault()"
                 class="ess-punch__sheet">
-                <div class="ess-punch__symbol" aria-hidden="true">
-                    <x-filament::icon :icon="\Filament\Support\Icons\Heroicon::OutlinedCamera" />
+                <div class="portal-row">
+                    <div>
+                        <p class="portal-kicker">{{ __('portal-ui.manual_punch') }}</p>
+                        <h2 class="ess-punch__title" x-text="step === 'setup' ? labels.choosePunch : (kind === 'in' ? labels.checkInPhoto : labels.checkOutPhoto)"></h2>
+                    </div>
+                    <x-portal-ui.button variant="icon" :aria-label="__('employee-punch.cancel')" :icon="\Filament\Support\Icons\Heroicon::OutlinedXMark"
+                        x-on:click="$refs.cameraDialog.close()" x-bind:disabled="busy" />
                 </div>
-                <h2 class="ess-punch__title" x-text="kind === 'in' ? labels.checkInPhoto : labels.checkOutPhoto"></h2>
-                <p x-show="nativeCamera" class="ess-punch__hint">{{ __('employee-punch.phoneHelp') }}</p>
-                <input type="file" accept="image/*" capture="user" x-ref="cameraInput" x-on:change="phonePhoto($event)" hidden>
-                <video x-show="!nativeCamera" x-ref="video" autoplay playsinline muted
-                    class="ess-punch__preview"
-                    aria-label="{{ __('employee-punch.preview') }}"></video>
-                <canvas x-ref="canvas" hidden></canvas>
-                <p x-show="starting || busy" x-text="busy ? labels.submitting : labels.cameraStarting" class="ess-punch__hint" role="status"></p>
-                <p x-show="error" x-text="error" class="ess-punch__error" role="alert"></p>
-                <div class="ess-punch__actions">
-                    <x-filament::button type="button" class="ess-punch__touch" x-show="nativeCamera || ready" x-on:click="capture()" x-bind:disabled="busy || starting">
-                        <span x-text="nativeCamera ? labels.phoneCamera : labels.capture"></span>
-                    </x-filament::button>
-                    <x-filament::button type="button" class="ess-punch__touch" x-show="!nativeCamera && !ready && !starting" x-on:click="startPreview()">{{ __('employee-punch.openCamera') }}</x-filament::button>
-                    <x-filament::button type="button" class="ess-punch__touch" color="gray" x-on:click="$refs.cameraDialog.close()" x-bind:disabled="busy">{{ __('employee-punch.cancel') }}</x-filament::button>
+
+                <div x-show="step === 'setup'" class="ess-punch__setup">
+                    <div class="ess-punch__direction">
+                        @foreach (['in' => 'checkIn', 'out' => 'checkOut'] as $direction => $label)
+                            <button type="button" x-on:click="kind = @js($direction)" x-bind:aria-pressed="kind === @js($direction)">
+                                {{ __('employee-punch.'.$label) }}
+                            </button>
+                        @endforeach
+                    </div>
+
+                    @if ($this->geofenceEnabled)
+                        <fieldset class="ess-punch__sites">
+                            <legend>{{ __('employee-punch.location') }}</legend>
+                            <div class="ess-punch__site-list">
+                                @foreach (['' => __('employee-punch.noSite')] + $locations->all() as $id => $name)
+                                    <label class="ess-punch__site">
+                                        <span>{{ $name }}@if ($id === '')<small>{{ __('employee-punch.autoGps') }}</small>@endif</span>
+                                        <input type="radio" name="punch-site" value="{{ $id }}" x-model="location">
+                                    </label>
+                                @endforeach
+                            </div>
+                        </fieldset>
+                    @endif
+
+                    <label class="ess-punch__note">
+                        {{ __('employee-punch.note') }} <span>{{ __('employee-punch.optional') }}</span>
+                        <textarea x-model="note" maxlength="500" rows="2" placeholder="{{ __('employee-punch.notePlaceholder') }}"></textarea>
+                    </label>
+                    <x-portal-ui.button class="ess-punch__touch" variant="primary" :icon="\Filament\Support\Icons\Heroicon::OutlinedCamera"
+                        x-on:click="continueToCamera()">{{ __('employee-punch.continueCamera') }}</x-portal-ui.button>
+                </div>
+
+                <div x-show="step === 'camera'" class="ess-punch__setup">
+                    <p class="ess-punch__hint">{{ __('employee-punch.requirements') }}</p>
+                    <input type="file" accept="image/*" capture="user" x-ref="cameraInput" x-on:change="phonePhoto($event)" hidden>
+                    <video x-show="!nativeCamera" x-ref="video" autoplay playsinline muted
+                        class="ess-punch__preview"
+                        aria-label="{{ __('employee-punch.preview') }}"></video>
+                    <canvas x-ref="canvas" hidden></canvas>
+                    <p x-show="starting || busy" x-text="busy ? labels.submitting : labels.cameraStarting" class="ess-punch__hint" role="status"></p>
+                    <p x-show="error" x-text="error" class="ess-punch__error" role="alert"></p>
+                    <div class="ess-punch__actions">
+                        <x-portal-ui.button class="ess-punch__touch" variant="primary" x-show="nativeCamera || ready" x-on:click="capture()" x-bind:disabled="busy || starting">
+                            <span x-text="nativeCamera ? labels.phoneCamera : labels.capture"></span>
+                        </x-portal-ui.button>
+                        <x-portal-ui.button class="ess-punch__touch" variant="primary" x-show="!nativeCamera && !ready && !starting" x-on:click="startPreview()">{{ __('employee-punch.openCamera') }}</x-portal-ui.button>
+                        <x-portal-ui.button class="ess-punch__touch" x-on:click="stopPreview(); step = 'setup'; error = ''" x-bind:disabled="busy || starting">{{ __('employee-punch.back') }}</x-portal-ui.button>
+                    </div>
                 </div>
             </dialog>
 
@@ -173,16 +237,15 @@
                 <p class="ess-punch__time" x-text="receipt?.time"></p>
                 <p class="ess-punch__hint" x-text="receipt?.state === 'approved' ? labels.approved : (receipt?.state === 'rejected' ? labels.rejected : labels.pending)"></p>
                 <div class="ess-punch__actions">
-                    <x-filament::button type="button" class="ess-punch__touch" x-on:click="$refs.successDialog.close()">{{ __('employee-punch.done') }}</x-filament::button>
+                    <x-portal-ui.button class="ess-punch__touch" variant="primary" x-on:click="$refs.successDialog.close()">{{ __('employee-punch.done') }}</x-portal-ui.button>
                 </div>
             </dialog>
 
             @if ($last = $this->lastPunch())
-                <div class="ess-punch__last">
-                    <p class="ess-punch__hint">{{ __('employee-punch.lastRequest') }}</p>
-                    <p class="ess-punch__detail">{{ __($last->kind === 'in' ? 'employee-punch.checkIn' : 'employee-punch.checkOut') }} · {{ $last->punched_at->format('d M, h:i A') }} · {{ ucfirst($last->state) }}@if (filled($last->evidence['location_name'] ?? null)) · {{ $last->evidence['location_name'] }}@endif</p>
-                </div>
+                <x-portal-ui.punch-row :title="__($last->kind === 'in' ? 'portal-ui.check_in' : 'portal-ui.check_out')"
+                    :at="$last->punched_at" :state="$last->state" :detail="$last->evidence['location_name'] ?? null"
+                    :eyebrow="__('employee-punch.lastRequest')" :icon="\Filament\Support\Icons\Heroicon::OutlinedCamera" role="status" />
             @endif
         </div>
-    </x-filament::section>
+    </div>
 </x-filament-widgets::widget>

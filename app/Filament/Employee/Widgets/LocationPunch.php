@@ -2,25 +2,20 @@
 
 namespace App\Filament\Employee\Widgets;
 
+use App\Models\AttendanceDay;
 use App\Models\EmployeePortalSetting;
 use App\Models\PortalPunch;
 use App\Models\WorkLocation;
+use App\Services\Attendance\AttendanceDayDisplay;
 use App\Services\EmployeePortal\GeofencedPunchService;
 use App\Services\EmployeePortal\PortalAccess;
-use Filament\Forms\Components\Select;
-use Filament\Schemas\Concerns\InteractsWithSchemas;
-use Filament\Schemas\Contracts\HasSchemas;
-use Filament\Schemas\Schema;
+use App\Services\Support\TenantTimezone;
 use Filament\Widgets\Widget;
 use Illuminate\Validation\ValidationException;
 use Livewire\Attributes\Locked;
 
-class LocationPunch extends Widget implements HasSchemas
+class LocationPunch extends Widget
 {
-    use InteractsWithSchemas;
-
-    public ?array $data = [];
-
     #[Locked]
     public bool $geofenceEnabled = true;
 
@@ -36,19 +31,28 @@ class LocationPunch extends Widget implements HasSchemas
         $this->geofenceEnabled = EmployeePortalSetting::geofencingEnabled();
     }
 
-    public function mount(): void
+    protected function getViewData(): array
     {
-        $this->form->fill(['location_id' => null]);
-    }
+        $employee = PortalAccess::employee();
+        $timezone = TenantTimezone::get();
+        $today = now($timezone);
+        $day = AttendanceDay::with(['occurrences', 'approvals'])->where('user_id', $employee->id)
+            ->whereDate('work_date', $today)->first();
+        $occurrences = $day?->occurrences;
+        $firstIn = $occurrences?->pluck('first_in_at')->filter()->sort()->first();
+        $lastOut = $occurrences?->pluck('last_out_at')->filter()->sortDesc()->first();
 
-    public function form(Schema $schema): Schema
-    {
-        return $schema->components([
-            Select::make('location_id')->label(__('employee-punch.location'))->placeholder(__('employee-punch.selectLocation'))->searchable()->preload()
-                ->options(fn () => WorkLocation::where('is_active', true)->orderBy('name')->limit(50)->pluck('name', 'id')->all())
-                ->getSearchResultsUsing(fn (string $search) => WorkLocation::where('is_active', true)->where('name', 'like', '%'.$search.'%')->orderBy('name')->limit(50)->pluck('name', 'id')->all())
-                ->getOptionLabelUsing(fn ($value) => WorkLocation::where('is_active', true)->find($value)?->name),
-        ])->statePath('data');
+        return [
+            'employee' => $employee,
+            'locations' => $this->geofenceEnabled
+                ? WorkLocation::where('is_active', true)->orderBy('name')->pluck('name', 'id')
+                : collect(),
+            'today' => $today,
+            'timezone' => $timezone,
+            'firstIn' => $firstIn?->format('h:i A') ?? '—',
+            'lastOut' => $lastOut?->format('h:i A') ?? '—',
+            'logged' => AttendanceDayDisplay::forDay($day)['clock'].'h',
+        ];
     }
 
     public function lastPunch(): ?PortalPunch
