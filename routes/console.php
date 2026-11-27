@@ -12,7 +12,9 @@ Schedule::command('attendance:recalculate-nightly --due')->everyMinute()->withou
 
 Schedule::command('attendance:recover-runs')->everyMinute()->withoutOverlapping(10);
 
-Schedule::command('ebio:replay-receipts')->everyMinute()->withoutOverlapping();
+if (! config('desktop.enabled')) {
+    Schedule::command('ebio:replay-receipts')->everyMinute()->withoutOverlapping();
+}
 
 Schedule::command('users:prune-imports')->hourly()->withoutOverlapping();
 
@@ -20,6 +22,8 @@ Schedule::command('gateway:recover')->everyMinute()->withoutOverlapping();
 
 Schedule::command('leave:sync-balances')->hourly()->withoutOverlapping();
 
-Schedule::command('frappe:queue-checkins')->everyMinute()->withoutOverlapping();
+if (! config('desktop.enabled')) {
+    Schedule::command('frappe:queue-checkins')->everyMinute()->withoutOverlapping();
+}
 
 Schedule::command('organisations:queue-backups')->everyMinute()->withoutOverlapping();

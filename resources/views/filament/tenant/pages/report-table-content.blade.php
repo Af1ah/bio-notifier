@@ -1,5 +1,6 @@
 @php
-    $reportData = $this->generateReportData();
+    $reportData = $this->generateReportPage();
+    $firstRow = $this->getTableRecords()->firstItem();
 @endphp
 
 @if($reportData)
@@ -54,7 +55,7 @@
             <tbody>
                 @foreach ($reportData['data'] as $index => $row)
                 <tr>
-                    <td class="center print:text-[10px]">{{ $index + 1 }}</td>
+                    <td class="center print:text-[10px]">{{ $firstRow + $index }}</td>
                     <td class="font-medium text-gray-950 dark:text-white print:text-[10px] print:text-black">
                         {{ $row['user_name'] }}
                     </td>

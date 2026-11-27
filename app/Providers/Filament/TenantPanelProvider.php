@@ -74,7 +74,7 @@ class TenantPanelProvider extends PanelProvider
             ->discoverResources(in: app_path('Filament/Tenant/Resources'), for: 'App\Filament\Tenant\Resources')
             ->discoverPages(in: app_path('Filament/Tenant/Pages'), for: 'App\Filament\Tenant\Pages')
             ->pages([
-                Dashboard::class,
+                config('desktop.enabled') ? \App\Filament\Tenant\Desktop\Dashboard::class : Dashboard::class,
             ])
             ->navigationGroups([
                 NavigationGroup::make()

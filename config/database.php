@@ -38,10 +38,10 @@ return [
             'database' => env('DB_DATABASE', database_path('database.sqlite')),
             'prefix' => '',
             'foreign_key_constraints' => env('DB_FOREIGN_KEYS', true),
-            'busy_timeout' => null,
-            'journal_mode' => null,
+            'busy_timeout' => env('BIO_DESKTOP') ? 5000 : null,
+            'journal_mode' => env('BIO_DESKTOP') ? 'WAL' : null,
             'synchronous' => null,
-            'transaction_mode' => 'DEFERRED',
+            'transaction_mode' => env('BIO_DESKTOP') ? 'IMMEDIATE' : 'DEFERRED',
         ],
 
         'mysql' => [

@@ -6,16 +6,29 @@ use App\Models\AttendanceDay;
 use App\Models\User;
 use App\Services\Support\TenantTimezone;
 use Carbon\CarbonPeriod;
+use Illuminate\Database\Eloquent\Collection;
 
 class ReportService
 {
     public function generateReport(array $userIds, string $fromDate, string $toDate): array
     {
+        return $this->generateForEmployees(User::employees()->whereIn('id', $userIds)->get(), $fromDate, $toDate);
+    }
+
+    /** @param Collection<int, User> $users */
+    public function generateForEmployees(Collection $users, string $fromDate, string $toDate): array
+    {
         $start = TenantTimezone::parse($fromDate)->startOfDay();
         $end = TenantTimezone::parse($toDate)->endOfDay();
         $period = CarbonPeriod::create($start, $end);
-        $users = User::employees()->whereIn('id', $userIds)->get();
-        $results = AttendanceDay::with(['occurrences.schedule', 'approvals'])->whereIn('user_id', $userIds)->whereDate('work_date', '>=', $start->toDateString())->whereDate('work_date', '<=', $end->toDateString())->get()->groupBy('user_id');
+        $results = AttendanceDay::with(['occurrences', 'approvals'])
+            ->whereIn('user_id', $users->modelKeys())
+            ->where('work_date', '>=', $start->toDateString())
+            ->where('work_date', '<', $end->copy()->addDay()->toDateString())
+            ->get()
+            ->groupBy('user_id')
+            ->map(fn ($days) => $days->keyBy(fn (AttendanceDay $day): string => $day->work_date->toDateString()));
+        $notCalculated = array_replace(AttendanceDayDisplay::forDay(null), ['status' => 'N', 'display' => '00:00', 'ot_minutes' => 0]);
         $rows = [];
         foreach ($users as $user) {
             $daily = [];
@@ -26,9 +39,9 @@ class ReportService
             $absent = 0;
             foreach ($period as $date) {
                 $key = $date->toDateString();
-                $day = $results->get($user->id, collect())->first(fn ($r) => $r->work_date->toDateString() === $key);
+                $day = $results->get($user->id)?->get($key);
                 if (! $day) {
-                    $daily[$key] = array_replace(AttendanceDayDisplay::forDay(null), ['status' => 'N', 'display' => '00:00', 'ot_minutes' => 0]);
+                    $daily[$key] = $notCalculated;
 
                     continue;
                 }

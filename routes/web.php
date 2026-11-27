@@ -13,7 +13,7 @@ Route::get('/oauth/google-drive/callback', [\App\Http\Controllers\ConnectOrganis
     ->middleware('throttle:30,1')->name('backups.google.callback');
 
 Route::get('/', function () {
-    return redirect('/master');
+    return redirect(config('desktop.enabled') ? '/company/admin' : '/master');
 });
 
 Route::get('/manifest.json', function () {
@@ -47,6 +47,7 @@ Route::get('/manifest.json', function () {
     ]);
 });
 
+if (! config('desktop.enabled')) {
 // Keep signed, single-use company login; issue grants only after the master clicks Login.
 Route::post('/master/organisations/{organisation}/quick-login', function (\App\Models\Organisation $organisation) {
     abort_unless(auth('admin')->user()?->role === 'master', 403);
@@ -128,6 +129,7 @@ Route::get('/magic-login', function () {
 
     return redirect('/admin');
 })->middleware(['web', InitializeTenancyByDomain::class]);
+}
 
 // Redirect /{tenant} to /{tenant}/admin automatically
 Route::get('/{tenant}/employee/{page?}', fn (string $tenant, ?string $page = null) => redirect('/'.$tenant.'/ess'.($page ? '/'.$page : ''), 308))

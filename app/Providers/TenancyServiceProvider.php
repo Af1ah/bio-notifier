@@ -34,7 +34,7 @@ class TenancyServiceProvider extends ServiceProvider
 
                 ])->send(function (Events\TenantCreated $event) {
                     return $event->tenant;
-                })->shouldBeQueued(app()->isProduction()), // Automatically queue in production
+                })->shouldBeQueued(app()->isProduction() && ! config('desktop.enabled')),
             ],
             Events\SavingTenant::class => [],
             Events\TenantSaved::class => [],

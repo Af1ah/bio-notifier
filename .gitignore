@@ -59,3 +59,4 @@ Thumbs.db
 
 # Private, reusable local deployment tooling.
 /deploy-local/
+/.desktop/

@@ -2,6 +2,8 @@
 
 namespace App\Filament\Tenant\Widgets;
 
+use App\Models\AttendanceLog;
+use App\Models\User;
 use Filament\Widgets\ChartWidget;
 
 class AttendanceTrend extends ChartWidget
@@ -27,19 +29,25 @@ class AttendanceTrend extends ChartWidget
         $labels = [];
         $presentData = [];
         $absentData = [];
-        $totalUsers = \App\Models\User::employees()->count();
+        $employees = User::employees();
+        $totalUsers = (clone $employees)->count();
 
         $days = (int) $this->filter;
+        $today = now()->toImmutable();
+        $counts = AttendanceLog::query()
+            ->whereDate('punched_at', '>=', $today->subDays($days - 1)->toDateString())
+            ->whereDate('punched_at', '<=', $today->toDateString())
+            ->whereIn('pin', $employees->select('pin'))
+            ->selectRaw('DATE(punched_at) as punch_date, COUNT(DISTINCT pin) as present_count')
+            ->groupByRaw('DATE(punched_at)')
+            ->pluck('present_count', 'punch_date');
 
         for ($i = $days - 1; $i >= 0; $i--) {
-            $date = now()->subDays($i);
+            $date = $today->subDays($i);
             $dateString = $date->toDateString();
             $labels[] = $date->format('M d');
 
-            $present = \App\Models\AttendanceLog::whereDate('punched_at', $dateString)
-                ->whereIn('pin', \App\Models\User::employees()->select('pin'))
-                ->distinct('pin')
-                ->count('pin');
+            $present = (int) $counts->get($dateString, 0);
 
             $presentData[] = $present;
             $absentData[] = max(0, $totalUsers - $present);

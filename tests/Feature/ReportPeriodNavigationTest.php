@@ -3,11 +3,13 @@
 namespace Tests\Feature;
 
 use App\Filament\Tenant\Pages\Reports;
+use App\Models\Report;
 use App\Models\User;
 use App\Services\Attendance\ReportService;
 use Carbon\Carbon;
 use Filament\Facades\Filament;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\URL;
 use Livewire\Livewire;
 use Tests\TestCase;
@@ -83,5 +85,55 @@ class ReportPeriodNavigationTest extends TestCase
             ->filterTable('date_range', ['from_date' => '2026-08-01', 'to_date' => '2026-09-30'])
             ->assertSet('tableFilters.date_range.from_date', '2026-08-01')
             ->assertSet('tableFilters.date_range.to_date', '2026-09-30');
+    }
+
+    public function test_only_the_selected_report_page_reads_calculated_attendance(): void
+    {
+        User::query()->insert(array_map(fn (int $i): array => [
+            'name' => "Report employee {$i}",
+            'pin' => "R{$i}",
+        ], range(1, 205)));
+        Report::query()->insert(array_map(fn (int $i): array => [
+            'name' => "Report template {$i}",
+            'type' => 'daily',
+            'date_range' => '2026-10-01',
+        ], range(1, 12)));
+
+        $attendanceQueries = [];
+        DB::listen(function ($query) use (&$attendanceQueries): void {
+            if (preg_match('/\battendance_(days|logs)\b/', $query->sql)) {
+                $attendanceQueries[] = $query;
+            }
+        });
+
+        $page = Livewire::test(Reports::class)
+            ->assertSee('Choose a date to load the report');
+        $this->assertSame([], $attendanceQueries);
+
+        $page->callTableAction('selectReportDate', data: ['date' => '2026-10-01']);
+        $this->assertEquals(206, $page->instance()->getTableRecords()->total());
+        $this->assertCount(10, $page->instance()->getTableRecords()->items());
+        $this->assertCount(1, $attendanceQueries);
+        $this->assertStringContainsString('attendance_days', $attendanceQueries[0]->sql);
+        $this->assertCount(12, $attendanceQueries[0]->bindings);
+
+        $attendanceQueries = [];
+        $page->call('setPage', 2);
+        $this->assertSame(2, $page->instance()->getTableRecords()->currentPage());
+        $this->assertCount(1, $attendanceQueries);
+
+        $attendanceQueries = [];
+        $page->set('activeTab', 'weekly')->assertSee('Choose a date to load the report');
+        $page->set('activeTab', 'monthly')->assertSee('Choose a date to load the report');
+        $this->assertSame([], $attendanceQueries);
+        $page->callTableAction('selectReportMonth', data: ['month' => 10, 'year' => 2026]);
+        $this->assertCount(10, $page->instance()->getTableRecords()->items());
+        $this->assertCount(1, $attendanceQueries);
+
+        $attendanceQueries = [];
+        $page->set('activeTab', 'templates')->assertDontSee('Choose a date to load the report');
+        $this->assertEquals(12, $page->instance()->getTableRecords()->total());
+        $this->assertCount(10, $page->instance()->getTableRecords()->items());
+        $this->assertSame([], $attendanceQueries);
     }
 }

@@ -9,7 +9,7 @@ use App\Providers\TenancyServiceProvider;
 return [
     AppServiceProvider::class,
     EmployeePanelProvider::class,
-    MasterPanelProvider::class,
+    ...(! config('desktop.enabled') ? [MasterPanelProvider::class] : []),
     TenantPanelProvider::class,
     TenancyServiceProvider::class,
 ];

@@ -13,6 +13,10 @@ final class DeviceTransportResolver
     {
         abort_unless(tenant(), 403);
 
+        if (config('desktop.enabled')) {
+            return app(GatewayTransport::class);
+        }
+
         return match (tenant()->device_integration ?? DeviceIntegration::EBIO) {
             DeviceIntegration::GATEWAY => app(GatewayTransport::class),
             DeviceIntegration::EBIO => app(EbioTransport::class),

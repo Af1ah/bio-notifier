@@ -19,17 +19,24 @@ use Filament\Forms\Components\TextInput;
 use Filament\Forms\Concerns\InteractsWithForms;
 use Filament\Forms\Contracts\HasForms;
 use Filament\Pages\Page;
+use Filament\Support\Components\Attributes\Unexposed;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Filters\Filter;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\Validator;
+use Livewire\Attributes\Locked;
 
 class Reports extends Page implements HasForms, HasTable
 {
-    use InteractsWithForms, InteractsWithTable;
+    use InteractsWithForms;
+    use InteractsWithTable {
+        applyTableFilters as private applyFilamentFilters;
+    }
 
     protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-chart-bar';
 
@@ -62,6 +69,9 @@ class Reports extends Page implements HasForms, HasTable
     // Filament Table State
     public ?array $tableFilters = null;
 
+    #[Locked]
+    public bool $reportRequested = false;
+
     public function mount()
     {
         $this->tableFilters['date_range']['from_date'] = now(TenantTimezone::get())->format('Y-m-d');
@@ -70,9 +80,11 @@ class Reports extends Page implements HasForms, HasTable
 
     public function updatedActiveTab()
     {
-        if (in_array($this->activeTab, ['daily', 'weekly', 'monthly'], true)) {
-            $this->selectReportDate(now(TenantTimezone::get())->toDateString());
-        }
+        abort_unless(in_array($this->activeTab, ['daily', 'weekly', 'monthly', 'templates'], true), 422);
+
+        $this->reportRequested = false;
+        unset($this->tableFilters['date_range']);
+        $this->resetTable();
     }
 
     public function selectReportDate(string $date): void
@@ -96,8 +108,22 @@ class Reports extends Page implements HasForms, HasTable
             'from_date' => $start->toDateString(),
             'to_date' => $end->toDateString(),
         ];
+        $this->reportRequested = true;
         // Use Filament's filter lifecycle to synchronize the popover and reset pagination.
         $this->updatedTableFilters();
+        $this->flushCachedTableRecords();
+    }
+
+    public function applyTableFilters(): void
+    {
+        $dates = $this->tableDeferredFilters['date_range'] ?? [];
+        $appliedDates = $this->tableFilters['date_range'] ?? [];
+        if ($dates !== $appliedDates) {
+            $this->reportRequested = filled($dates['from_date'] ?? null) || filled($dates['to_date'] ?? null);
+        }
+
+        $this->applyFilamentFilters();
+        $this->flushCachedTableRecords();
     }
 
     public function previousReportWeek(): void
@@ -121,32 +147,40 @@ class Reports extends Page implements HasForms, HasTable
 
     public function generateReportData()
     {
-        $branchIds = $this->getTableFilterState('branch_id')['values'] ?? [];
-        $departmentIds = $this->getTableFilterState('department_id')['values'] ?? [];
-        $userIds = $this->getTableFilterState('user_ids')['values'] ?? [];
-        $dateRange = $this->getTableFilterState('date_range') ?? [];
-
-        $query = User::employees();
-        if (! empty($branchIds)) {
-            $query->whereIn('branch_id', $branchIds);
-        }
-        if (! empty($departmentIds)) {
-            $query->whereIn('department_id', $departmentIds);
-        }
-        if (! empty($userIds)) {
-            $query->whereIn('id', $userIds);
-        }
-
-        $finalUserIds = $query->pluck('id')->toArray();
-
-        if (empty($finalUserIds)) {
+        if (! $this->hasReportDate()) {
             return null;
         }
 
-        $service = new ReportService;
+        return $this->reportForEmployees($this->getTableQueryForExport()->get());
+    }
 
-        return $service->generateReport(
-            $finalUserIds,
+    #[Unexposed]
+    public function generateReportPage(): ?array
+    {
+        if (! $this->hasReportDate()) {
+            return null;
+        }
+
+        return $this->reportForEmployees($this->getTableRecords()->getCollection());
+    }
+
+    private function hasReportDate(): bool
+    {
+        return $this->reportRequested && $this->activeTab !== 'templates'
+            && (filled($this->tableFilters['date_range']['from_date'] ?? null)
+                || filled($this->tableFilters['date_range']['to_date'] ?? null));
+    }
+
+    private function reportForEmployees(Collection $employees): ?array
+    {
+        if ($employees->isEmpty()) {
+            return null;
+        }
+
+        $dateRange = $this->getTableFilterState('date_range') ?? [];
+
+        return app(ReportService::class)->generateForEmployees(
+            $employees,
             $dateRange['from_date'] ?? now(TenantTimezone::get())->format('Y-m-d'),
             $dateRange['to_date'] ?? now(TenantTimezone::get())->format('Y-m-d')
         );
@@ -216,6 +250,8 @@ class Reports extends Page implements HasForms, HasTable
 
     public function table(Table $table): Table
     {
+        $table->paginated([10, 25, 50])->defaultPaginationPageOption(10)->enforcePaginationPageOptions();
+
         if ($this->activeTab === 'templates') {
             return $table
                 ->query(Report::query()->where('is_template', true))
@@ -241,17 +277,23 @@ class Reports extends Page implements HasForms, HasTable
                 SelectFilter::make('branch_id')
                     ->label('Branch')
                     ->multiple()
-                    ->options(Branch::all()->pluck('display_name', 'id')),
+                    ->options(fn () => Branch::all()->pluck('display_name', 'id')),
                 SelectFilter::make('department_id')
                     ->label('Department')
                     ->multiple()
-                    ->options(Department::pluck('name', 'id')),
-                SelectFilter::make('user_ids')
-                    ->attribute('id')
+                    ->options(fn () => Department::pluck('name', 'id')),
+                Filter::make('user_ids')
                     ->label('Employees')
-                    ->multiple()
-                    ->options(User::employees()->pluck('name', 'id')),
+                    ->schema([
+                        Select::make('values')->label('Employees')->multiple()->searchable()
+                            ->getSearchResultsUsing(fn (string $search): array => User::employees()->whereLike('name', '%'.$search.'%')
+                                ->orderBy('name')->limit(50)->pluck('name', 'id')->all())
+                            ->getOptionLabelsUsing(fn (array $values): array => User::employees()->whereKey($values)->pluck('name', 'id')->all()),
+                    ])
+                    ->query(fn (Builder $query, array $data) => $query->when($data['values'] ?? [], fn (Builder $query, array $ids) => $query->whereKey($ids)))
+                    ->indicateUsing(fn (array $data) => empty($data['values']) ? null : 'Employees: '.count($data['values'])),
                 Filter::make('date_range')
+                    ->query(fn (Builder $query) => $query->when(! $this->hasReportDate(), fn (Builder $query) => $query->whereRaw('1 = 0')))
                     ->form([
                         DatePicker::make('from_date')->label('From Date'),
                         DatePicker::make('to_date')->label('To Date'),
@@ -306,17 +348,20 @@ class Reports extends Page implements HasForms, HasTable
                         ->label('Print PDF')
                         ->icon('heroicon-o-printer')
                         ->color('danger')
+                        ->disabled(fn (): bool => ! $this->hasReportDate())
                         ->action('downloadPdf'),
                     Action::make('downloadCsv')
                         ->label('Download CSV')
                         ->icon('heroicon-o-document-text')
                         ->color('success')
+                        ->disabled(fn (): bool => ! $this->hasReportDate())
                         ->action('downloadCsv'),
                 ])
                     ->label('Export Options')
                     ->icon('heroicon-m-arrow-down-tray')
                     ->button(),
             ])
+            ->emptyStateHeading(fn (): string => $this->hasReportDate() ? 'No matching employees' : 'Choose a date to load the report')
             ->content(fn () => view('filament.tenant.pages.report-table-content', [
                 'activeTab' => $this->activeTab,
             ]));
