@@ -60,3 +60,6 @@ Thumbs.db
 # Private, reusable local deployment tooling.
 /deploy-local/
 /.desktop/
+
+# Built private photo validator; source and licensed models live under tools/.
+/bin/photo-validator

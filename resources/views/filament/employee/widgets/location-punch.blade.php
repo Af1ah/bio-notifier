@@ -6,6 +6,17 @@
             location: '', note: '', step: 'setup',
             busy: false, starting: false, error: '', request: null,
             nativeCamera: false, ready: false, stream: null, kind: null, receipt: null,
+            gpsPromise: null, lastPosition: null,
+            prepareLocation() {
+                if (this.lastPosition && Date.now() - this.lastPosition.timestamp < 60000) return Promise.resolve(this.lastPosition);
+                if (this.gpsPromise) return this.gpsPromise;
+                if (!navigator.geolocation || !window.isSecureContext) return Promise.reject(new Error(this.labels.secureLocation));
+                this.gpsPromise = new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition(resolve, reject, {
+                    enableHighAccuracy: true, maximumAge: 30000, timeout: 15000,
+                })).then(position => { this.lastPosition = position; return position; })
+                    .finally(() => { this.gpsPromise = null; });
+                return this.gpsPromise;
+            },
             openPunch(kind = 'in') {
                 if (this.busy || this.starting) return;
                 this.kind = kind;
@@ -13,6 +24,7 @@
                 this.error = '';
                 this.nativeCamera = window.matchMedia('(pointer: coarse)').matches;
                 this.$refs.cameraDialog.showModal();
+                this.prepareLocation().catch(() => {});
             },
             continueToCamera() {
                 this.step = 'camera';
@@ -93,9 +105,7 @@
                     canvas.height = Math.round(height * scale);
                     canvas.getContext('2d').drawImage(source, 0, 0, canvas.width, canvas.height);
                     const photo = canvas.toDataURL('image/jpeg', 0.8);
-                    const position = await new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition(resolve, reject, {
-                        enableHighAccuracy: true, maximumAge: 0, timeout: 20000,
-                    }));
+                    const position = await this.prepareLocation();
                     if (!this.$refs.cameraDialog?.open) return;
                     if (!this.request || this.request.kind !== this.kind) {
                         this.request = { kind: this.kind, id: crypto.randomUUID() };

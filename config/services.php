@@ -42,4 +42,13 @@ return [
 
     'ebio' => ['allow_device_discovery' => env('EBIO_ALLOW_DEVICE_DISCOVERY', true)],
 
+    'punch_photo' => [
+        'enabled' => (bool) env('PUNCH_FACE_VALIDATION_ENABLED', true),
+        'binary' => env('PUNCH_FACE_VALIDATOR_BINARY', base_path(
+            PHP_OS_FAMILY === 'Windows' && env('BIO_DESKTOP', false)
+                ? '.desktop/photo-validator.exe'
+                : 'bin/photo-validator'
+        )),
+    ],
+
 ];

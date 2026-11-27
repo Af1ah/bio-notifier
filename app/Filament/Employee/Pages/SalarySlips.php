@@ -44,35 +44,34 @@ class SalarySlips extends PortalPage implements HasTable
             ->contentGrid(['default' => 1])
             ->columns([Split::make([
                 Stack::make([
-                    TextColumn::make('period_start')->label('Month')->date('M')->weight('bold'),
-                    TextColumn::make('status')->badge()->formatStateUsing(fn ($record) => $record->display_status)->color(fn ($state) => match ($state) {
-                        'paid' => 'success', 'draft' => 'gray', default => 'primary',
-                    }),
+                    TextColumn::make('period_start')->label('Month')->date('M')->weight('bold')
+                        ->action(ViewAction::make()->slideOver()->modalWidth('5xl')
+                            ->schema(fn (Schema $schema) => SalarySlipInfolist::configure($schema))),
                     TextColumn::make('reviewed_at')->label('Reviewed')->date('d M Y')->visibleFrom('md'),
                 ])->space(1),
                 TextColumn::make('net_pay_minor')->label('Net pay')->extraAttributes(['class' => 'portal-number'])
                     ->formatStateUsing(fn (SalarySlip $record) => $record->currency === 'INR'
                         ? '₹'.number_format(((int) $record->net_pay_minor) / 100, 2)
                         : $record->formattedMoney('net_pay_minor')),
+                TextColumn::make('status')->badge()->formatStateUsing(fn ($record) => $record->display_status)->color(fn ($state) => match ($state) {
+                    'paid' => 'success', 'draft' => 'gray', default => 'primary',
+                }),
             ])])
             ->filters([
                 PayrollMonthFilter::make(fn () => $this->availableSlips())->default('all')
-                    ->indicateUsing(fn (array $data): ?string => is_string($data['value'] ?? null) && $data['value'] !== 'all'
-                        ? $data['value'] : null),
+                ->indicateUsing(fn (array $data): ?string => is_string($data['value'] ?? null) && $data['value'] !== 'all'
+                    ? $data['value'] : null),
             ])
             ->recordActions([
-                ViewAction::make()->button()->slideOver()->modalWidth('5xl')
-                    ->schema(fn (Schema $schema) => SalarySlipInfolist::configure($schema)),
                 Action::make('download')->label('Download PDF')->icon('heroicon-o-arrow-down-tray')->iconButton()
-                    ->action(function (SalarySlip $record) {
-                        $slip = $this->availableSlips()->findOrFail($record->id);
+                ->action(function (SalarySlip $record) {
+                    $slip = $this->availableSlips()->findOrFail($record->id);
 
-                        return app(SalarySlipExportService::class)->pdf(
-                            $this->availableSlips()->whereKey($slip->id), tenant()->name, $slip->period_start
-                        );
-                    }),
+                    return app(SalarySlipExportService::class)->pdf(
+                        $this->availableSlips()->whereKey($slip->id), tenant()->name, $slip->period_start
+                    );
+                }),
             ])
-            ->recordAction('view')
             ->defaultSort('period_start', 'desc')->defaultKeySort()
             ->paginated([10, 25, 50])->defaultPaginationPageOption(10)->enforcePaginationPageOptions()
             ->emptyStateHeading('No salary slips yet');

@@ -23,6 +23,7 @@ use App\Models\AttendanceDay;
 use App\Models\AttendanceLog;
 use App\Models\Branch;
 use App\Models\Department;
+use App\Models\Device;
 use App\Models\EmployeeLeave;
 use App\Models\EmployeePortalSetting;
 use App\Models\LeaveType;
@@ -75,6 +76,7 @@ class EmployeePortalTest extends TestCase
     {
         parent::setUp();
         Storage::fake('local');
+        config(['services.punch_photo.enabled' => false]);
         Artisan::call('migrate:fresh', ['--path' => database_path('migrations/tenant'), '--realpath' => true, '--force' => true]);
         config(['tenancy.bootstrappers' => [], 'tenancy.database.central_connection' => 'sqlite']);
         Schema::create('organisations', function (Blueprint $table) {
@@ -934,7 +936,7 @@ class EmployeePortalTest extends TestCase
         ]);
 
         AttendanceLog::withoutEvents(function () use ($now, $manual) {
-            $device = \App\Models\Device::create(['name' => 'Activity fixture', 'serial_number' => 'ESS-ACTIVITY']);
+            $device = Device::create(['name' => 'Activity fixture', 'serial_number' => 'ESS-ACTIVITY']);
             foreach (range(1, 11) as $minutes) {
                 AttendanceLog::create(['device_id' => $device->id, 'pin' => $this->employee->pin,
                     'punched_at' => $now->copy()->subMinutes($minutes), 'status' => 0, 'verify_type' => 1]);
