@@ -15,6 +15,7 @@ use App\Services\Support\TenantTimezone;
 use Filament\Facades\Filament;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
@@ -206,6 +207,85 @@ class OrganisationSettingsPagesTest extends TestCase
             $this->assertDatabaseCount('frappe_checkin_deliveries', 5001);
             $this->assertDatabaseCount('attendance_logs', 5001);
         });
+    }
+
+    private function queuedFrappeHistory(int $count): FrappeCheckins
+    {
+        $this->organisation->run(function () use ($count) {
+            FrappeSetting::create(['id' => 1, 'hostname' => 'hr.example.com', 'api_key' => 'testkey', 'api_secret' => 'testsecret', 'enabled' => true]);
+            $device = Device::create(['name' => 'Queue device', 'serial_number' => 'QUEUE01']);
+            DB::table('attendance_logs')->insert(array_map(fn ($pin) => [
+                'device_id' => $device->id, 'pin' => 'QUEUE-'.$pin, 'punched_at' => '2020-01-01 09:00:00',
+            ], range(1, $count)));
+            app(FrappeCheckins::class)->queueHistory('2020-01-01', '2020-01-01');
+        });
+        $frappe = \Mockery::mock(FrappeCheckins::class)->makePartial();
+        $frappe->shouldReceive('resolvePublicAddress')->with('hr.example.com')->atMost()->once()->andReturn('93.184.216.34');
+
+        return $frappe;
+    }
+
+    public function test_delivery_drains_multiple_batches_without_waiting_for_the_scheduler(): void
+    {
+        Queue::fake();
+        $frappe = $this->queuedFrappeHistory(25);
+        Http::fake(fn (Request $request) => Http::response(['message' => [
+            'name' => 'CHECKIN-'.$request['employee_field_value'], 'time' => $request['timestamp'],
+            'device_id' => $request['device_id'], 'log_type' => $request['log_type'],
+        ]]));
+        $job = new PushFrappeCheckins($this->organisation->id);
+        $job->handle($frappe);
+        $job->handle($frappe);
+        Http::assertSentCount(25);
+        $this->organisation->run(fn () => $this->assertSame(25, DB::table('frappe_checkin_deliveries')->whereNotNull('sent_at')->count()));
+        Queue::assertNotPushed(PushFrappeCheckins::class);
+    }
+
+    public function test_delivery_yields_after_its_time_budget_and_queues_a_continuation(): void
+    {
+        Queue::fake();
+        $frappe = $this->queuedFrappeHistory(2);
+        Http::fake(function (Request $request) {
+            $this->travel(11)->seconds();
+
+            return Http::response(['message' => [
+                'name' => 'CHECKIN-1', 'time' => $request['timestamp'],
+                'device_id' => $request['device_id'], 'log_type' => $request['log_type'],
+            ]]);
+        });
+        try {
+            (new PushFrappeCheckins($this->organisation->id))->handle($frappe);
+            Http::assertSentCount(1);
+            Queue::assertPushed(PushFrappeCheckins::class, fn ($job) => $job->tenantId === $this->organisation->id
+                && $job->connection === 'gateway' && $job->queue === 'exports-notifications' && $job->delay === 1);
+            $this->organisation->run(function () {
+                $this->assertSame(1, DB::table('frappe_checkin_deliveries')->whereNotNull('sent_at')->count());
+                $this->assertSame(1, DB::table('frappe_checkin_deliveries')->where('attempts', 0)->count());
+            });
+        } finally {
+            $this->travelBack();
+        }
+    }
+
+    public function test_delivery_stops_on_rate_limits_and_respects_the_existing_tenant_lock(): void
+    {
+        Queue::fake();
+        $frappe = $this->queuedFrappeHistory(25);
+        Http::fake(fn () => Http::response([], 429, ['Retry-After' => '180']));
+        $job = new PushFrappeCheckins($this->organisation->id);
+        $this->organisation->run(function () use ($job, $frappe) {
+            Cache::lock(FrappeCheckins::LOCK, 115)->get(fn () => $job->handle($frappe));
+        });
+        Http::assertNothingSent();
+        $job->handle($frappe);
+        $job->handle($frappe);
+        Http::assertSentCount(1);
+        $this->organisation->run(function () {
+            $this->assertTrue(FrappeSetting::findOrFail(1)->cooldown_until->isFuture());
+            $this->assertSame(24, DB::table('frappe_checkin_deliveries')->where('attempts', 0)->count());
+            $this->assertDatabaseHas('frappe_checkin_deliveries', ['attempts' => 1, 'error' => 'http_429']);
+        });
+        Queue::assertNotPushed(PushFrappeCheckins::class);
     }
 
     public function test_ebio_punches_create_one_delivery_and_unsafe_destinations_are_blocked(): void

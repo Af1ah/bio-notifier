@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
 
-final class FrappeCheckins
+class FrappeCheckins
 {
     public const LOCK = 'frappe-checkin-delivery';
 
